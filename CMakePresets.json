@@ -13,7 +13,7 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
       },
-      "binaryDir": "cmake-build-Release"
+      "binaryDir": "build"
     },
     {
       "name": "Debug",
@@ -22,7 +22,7 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug"
       },
-      "binaryDir": "cmake-build-Debug"
+      "binaryDir": "build"
     }
   ]
 }
