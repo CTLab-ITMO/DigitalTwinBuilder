@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.21)
+cmake_minimum_required(VERSION 3.30)
 
 project(digital_twin)
 
@@ -9,9 +9,11 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++23 -O3")
 set(CMAKE_INSTALL_PREFIX ${PROJECT_SOURCE_DIR})
 
 find_package(GTest REQUIRED)
-find_package(Boost REQUIRED)
+find_package(Boost-)
+find_package(Boost REQUIRED COMPONENTS asio)
 
 add_executable(tests)
+add_executable(main)
 
 add_subdirectory(test)
 add_subdirectory(src)
@@ -28,4 +30,4 @@ if(CMAKE_BUILD_TYPE MATCHES "Debug")
 endif()
 
 target_link_libraries(tests GTest::gtest GTest::gtest_main)
-
+target_link_libraries(main PRIVATE Boost::boost Boost::asio)
