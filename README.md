@@ -1,7 +1,7 @@
 # DigitalTwinOfProduction
 ## Автоматизированное построение цифрового двойника производства
 
-In this repository, an open source library is being developed, including LLM, which will analyze the documentation and conduct a survey of factory employees, combining this with the analysis of data from surveillance cameras to build a digital production twin. A multi-agent system designed for the automated construction of digital twins will be used. The library includes a constructor for building a digital twin, as well as recommendations for controlling production processes.
+В данном репозитории разрабатывается библиотека с открытым кодом, включающую LLM, которая проанализирует документацию и проведет опрос работников завода, совместив это с анализом данных с камер видеонаблюдения для построения цифрового двойника производства. Будет использована мультиагентная система, предназначенная для автоматизированного построения цифровых двойников. Библиотека включает конструктор для построения цифрового двойника, а также рекомендации по контролю производственных процессов.
 
 ## License
 
