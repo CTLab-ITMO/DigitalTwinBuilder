@@ -9,8 +9,8 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++23 -O3")
 set(CMAKE_INSTALL_PREFIX ${PROJECT_SOURCE_DIR})
 
 find_package(GTest REQUIRED)
-find_package(Boost-)
-find_package(Boost REQUIRED COMPONENTS asio)
+find_package(Boost CONFIG REQUIRED COMPONENTS system regex)
+include_directories(${Boost_INCLUDE_DIRS})
 
 add_executable(tests)
 add_executable(main)
@@ -30,4 +30,4 @@ if(CMAKE_BUILD_TYPE MATCHES "Debug")
 endif()
 
 target_link_libraries(tests GTest::gtest GTest::gtest_main)
-target_link_libraries(main PRIVATE Boost::boost Boost::asio)
+target_link_libraries(main PRIVATE Boost::boost Boost::system Boost::regex)
