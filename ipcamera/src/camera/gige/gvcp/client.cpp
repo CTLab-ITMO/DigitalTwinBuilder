@@ -14,6 +14,7 @@ bool client::get_control() {
 }
 
 void client::execute(const cmd::command& cmd) {
-    boost::asio::write(socket_, cmd.get_buffer());
+    
+    //boost::asio::write(socket_, cmd.get_buffer());
 }
 }
