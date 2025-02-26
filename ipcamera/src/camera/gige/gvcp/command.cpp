@@ -1,6 +1,5 @@
 #include "command.hpp"
 #include <cstdint>
-#include <filesystem>
 
 namespace camera::gige::gvcp::cmd {
 
@@ -8,14 +7,24 @@ const std::string port("3956");
 const std::byte header{0x42};
 const std::byte zero{0x00};
 
-using boost::asio::ip::udp;
-
 byteint int2bytes(uint32_t v) {
     return std::array<std::byte, 4>{std::byte(v >> 24), std::byte((v >> 16) & 0xff), std::byte((v >> 8) & 0xff), std::byte(v & 0xff)};
 }
 
 boost::asio::const_buffer command::get_buffer() const {
     return boost::asio::buffer(content_);
+}
+
+void command::writeint(uint32_t val) {
+    for (int i = 3; i >= 0; --i) {
+        content_.push_back(std::byte((val >> (8 * i)) & 0xff));
+    }
+}
+
+void command::writeint(byteint val) {
+    for (std::byte byte : val) {
+         content_.push_back(byte);
+    }
 }
 
 discovery::discovery(uint16_t req_id) {
