@@ -1,5 +1,6 @@
 #include <cstdint>
 
+namespace camera::gige::gvcp {
 enum registers : uint16_t {
     version_major = 0x0000,
     version_minor = 0x0000,
@@ -60,3 +61,4 @@ enum registers : uint16_t {
     timestamp_value_at_set = 0xb8e0,
     user_set_load_user_set1 = 0xd368,
 };
+}

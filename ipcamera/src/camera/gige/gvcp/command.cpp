@@ -1,4 +1,5 @@
 #include "command.hpp"
+#include <algorithm>
 #include <cstdint>
 
 namespace camera::gige::gvcp::cmd {
@@ -10,6 +11,7 @@ const std::byte zero{0x00};
 byteint int2bytes(uint32_t v) {
     return std::array<std::byte, 4>{std::byte(v >> 24), std::byte((v >> 16) & 0xff), std::byte((v >> 8) & 0xff), std::byte(v & 0xff)};
 }
+
 
 boost::asio::const_buffer command::get_buffer() const {
     return boost::asio::buffer(content_);
@@ -70,7 +72,7 @@ readreg::readreg(uint16_t req_id, const std::vector<byteint>& addresses) : readr
 
 readreg::readreg(uint16_t req_id, const std::vector<uint32_t>& addresses) : readreg(req_id, addresses.size()) {
     for (auto& address : addresses) {
-        writeint(address & 0b00);
+        writeint(address & 0b00);// TODO: maybe exception when address invalid
     }
 }
 
@@ -109,7 +111,7 @@ writereg::writereg(uint16_t req_id, const std::vector<std::pair<byteint, byteint
 
 writereg::writereg(uint16_t req_id, const std::vector<std::pair<uint32_t, uint32_t>>& addresses) : writereg(req_id, addresses.size()) {
     for (auto& address : addresses) {
-        writeint(address.first & 0b00);
+        writeint(address.first & 0b00);// TODO: maybe exception when address invalid
         writeint(address.second);
     }
 }

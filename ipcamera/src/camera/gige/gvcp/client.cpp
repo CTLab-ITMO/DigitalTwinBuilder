@@ -13,8 +13,11 @@ bool client::get_control() {
     return true;
 }
 
+bool client::start_streaming() {
+    return true;
+}
+
 void client::execute(const cmd::command& cmd) {
-    
-    //boost::asio::write(socket_, cmd.get_buffer());
+    socket_.send(cmd.get_buffer());
 }
 }

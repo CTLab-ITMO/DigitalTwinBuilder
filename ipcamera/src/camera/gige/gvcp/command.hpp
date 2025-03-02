@@ -1,5 +1,6 @@
-#include "boost/asio.hpp"
+#include <boost/asio.hpp>
 #include <cstdint>
+#include "ack.hpp"
 
 namespace camera::gige::gvcp::cmd {
 
@@ -10,6 +11,7 @@ byteint int2bytes(uint32_t v);
 class command {
 public:
     boost::asio::const_buffer get_buffer() const;
+    ack get_ack() const;
 protected:
     void writeint(uint32_t val);
     void writeint(byteint val);
