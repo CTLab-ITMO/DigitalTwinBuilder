@@ -1,3 +1,5 @@
+build.sh 
+
 CMakeLists.txt.user
 CMakeCache.txt
 CMakeFiles
