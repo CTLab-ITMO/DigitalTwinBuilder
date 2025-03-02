@@ -6,7 +6,7 @@ class ack {
 public:
     ack(boost::asio::ip::udp::socket& socket);
 private:
-    status status_; // TODO: status enum
+    status status_;
     uint16_t answer_;
     uint16_t length_;
     uint16_t ack_id_;
