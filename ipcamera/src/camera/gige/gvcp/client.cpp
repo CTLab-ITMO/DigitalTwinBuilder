@@ -8,8 +8,8 @@ client::client(const std::string& address) {
 }
 
 bool client::get_control() {
-    execute(cmd::readreg(req_id_++, std::vector<uint32_t>{registers::gev_ccp}));
-    execute(cmd::writereg(req_id_++, {{registers::gev_ccp, 2}}));
+    execute(cmd::readreg(req_id_++, std::vector<uint32_t>{registers::control_channel_privilege}));
+    execute(cmd::writereg(req_id_++, {{registers::control_channel_privilege, 0b10}}));
     return true;
 }
 
