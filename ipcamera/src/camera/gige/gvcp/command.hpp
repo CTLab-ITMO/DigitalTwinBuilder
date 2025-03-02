@@ -11,7 +11,7 @@ byteint int2bytes(uint32_t v);
 class command {
 public:
     boost::asio::const_buffer get_buffer() const;
-    ack get_ack() const;
+    ack get_ack(boost::asio::ip::udp::socket& socket) const;
 protected:
     void writeint(uint32_t val);
     void writeint(byteint val);

@@ -17,6 +17,10 @@ boost::asio::const_buffer command::get_buffer() const {
     return boost::asio::buffer(content_);
 }
 
+ack command::get_ack(boost::asio::ip::udp::socket& socket) const {
+    return ack(socket);
+}
+
 void command::writeint(uint32_t val) {
     for (int i = 3; i >= 0; --i) {
         content_.push_back(std::byte((val >> (8 * i)) & 0xff));

@@ -19,5 +19,6 @@ bool client::start_streaming() {
 
 void client::execute(const cmd::command& cmd) {
     socket_.send(cmd.get_buffer());
+    cmd.get_ack(socket_);
 }
 }
