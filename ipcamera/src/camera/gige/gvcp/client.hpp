@@ -13,6 +13,7 @@ class client {
 public:
     client(const std::string& address);
     bool get_control();
+    bool start_streaming();
     void execute(const cmd::command& cmd);
 private:
     uint16_t req_id_ = 1;
