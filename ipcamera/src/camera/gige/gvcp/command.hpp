@@ -6,7 +6,7 @@
 
 namespace camera::gige::gvcp::cmd {
 
-enum command_values : uint16_t {
+enum class command_values : uint16_t {
     discovery_cmd = 0x0002,
     forceip_cmd = 0x0004,
     packetresend_cmd = 0x0040,

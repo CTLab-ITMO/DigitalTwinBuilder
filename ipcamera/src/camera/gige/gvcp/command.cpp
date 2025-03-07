@@ -46,7 +46,7 @@ discovery::discovery(uint16_t req_id) {
         header, 
         std::byte{0x11},
     };
-    writeint(0x0002);
+    writeint(static_cast<uint16_t>(command_values::discovery_cmd));
     writeint(uint32_t(0));
     writeint(req_id);
 }
@@ -56,7 +56,7 @@ readmem::readmem(uint16_t req_id, const byteint<4>& address, uint16_t count) {
         header,
         std::byte{0x01},
     };
-    writeint(0x0084);
+    writeint(static_cast<uint16_t>(command_values::readmem_cmd));
     writeint(0x0008);
     writeint(req_id);
     writebyteint(address);
@@ -71,7 +71,7 @@ readreg::readreg(uint16_t req_id, uint16_t length) {
         header,
         std::byte{0x01},
     };
-    writeint(0x0080);
+    writeint(static_cast<uint16_t>(command_values::readreg_cmd));
     writeint(length);
     writeint(req_id);
 }
@@ -93,7 +93,7 @@ writemem::writemem(uint16_t req_id, const byteint<4>& address, const std::vector
         header,
         std::byte{0x01},
     };
-    writeint(0x0084);
+    writeint(static_cast<uint16_t>(command_values::writemem_cmd));
     writeint(0x0008);
     writeint(req_id);
     writebyteint(address);// TODO: check clear 30 and 31 bits
@@ -109,7 +109,7 @@ writereg::writereg(uint16_t req_id, uint16_t length) {
         header,
         std::byte{0x01},
     };
-    writeint(0x0080);
+    writeint(static_cast<uint16_t>(command_values::writereg_cmd));
     writeint(length);
     writeint(req_id);
 }
