@@ -1,6 +1,8 @@
 #include "command.hpp"
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <type_traits>
 
 namespace camera::gige::gvcp::cmd {
 
@@ -8,10 +10,14 @@ const std::string port("3956");
 const std::byte header{0x42};
 const std::byte zero{0x00};
 
-byteint int2bytes(uint32_t v) {
-    return std::array<std::byte, 4>{std::byte(v >> 24), std::byte((v >> 16) & 0xff), std::byte((v >> 8) & 0xff), std::byte(v & 0xff)};
+template <typename T>
+std::enable_if_t<std::is_integral_v<T>, byteint<sizeof(T)>> int2bytes(T val) {
+    byteint<sizeof(T)> res;
+    for (std::size_t i = res.size(); i > 0; --i) {
+        res[i] = std::byte((val >> (8 * (i - 1))) & 0xff);
+    }
+    return res;
 }
-
 
 boost::asio::const_buffer command::get_buffer() const {
     return boost::asio::buffer(content_);
@@ -21,13 +27,15 @@ ack command::get_ack(boost::asio::ip::udp::socket& socket) const {
     return ack(socket);
 }
 
-void command::writeint(uint32_t val) {
-    for (int i = 3; i >= 0; --i) {
-        content_.push_back(std::byte((val >> (8 * i)) & 0xff));
+template <class T>
+std::enable_if_t<std::is_integral_v<T>> command::writeint(T val) {
+    for (std::size_t i = sizeof(T); i > 0; --i) {
+        content_.push_back(std::byte((val >> (8 * (i - 1))) & 0xff));
     }
 }
 
-void command::writeint(byteint val) {
+template<std::size_t S>
+void command::writebyteint(byteint<S> val) {
     for (std::byte byte : val) {
          content_.push_back(byte);
     }
@@ -37,23 +45,23 @@ discovery::discovery(uint16_t req_id) {
     content_ = {
         header, 
         std::byte{0x11},
-        zero, std::byte{0x02},
-        zero, zero,
-        std::byte(req_id >> 8), std::byte(req_id & 0xff)
     };
+    writeint(0x0002);
+    writeint(uint32_t(0));
+    writeint(req_id);
 }
 
-readmem::readmem(uint16_t req_id, const byteint& address, uint16_t count) {
+readmem::readmem(uint16_t req_id, const byteint<4>& address, uint16_t count) {
     content_ = {
         header,
         std::byte{0x01},
-        zero, std::byte{0x84},
-        zero, std::byte{0x08},
-        std::byte(req_id >> 8), std::byte(req_id & 0xff),
-        address[0], address[1], address[2], address[3],// TODO: check clear 30 and 31 bits
-        zero, zero, 
-        std::byte(count >> 8), std::byte(count & 0xff)// TODO: check multiple of four (cleared last two bits)
     };
+    writeint(0x0084);
+    writeint(0x0008);
+    writeint(req_id);
+    writebyteint(address);
+    writeint(uint32_t(0));
+    writeint(count);
 }
 
 readmem::readmem(uint16_t req_id, uint32_t address, uint16_t count) : readmem(req_id, int2bytes(address), count) {}
@@ -62,15 +70,15 @@ readreg::readreg(uint16_t req_id, uint16_t length) {
     content_ = {
         header,
         std::byte{0x01},
-        zero, std::byte{0x80},
-        std::byte(length >> 8), std::byte(length & 0xff),
-        std::byte(req_id >> 8), std::byte(req_id & 0xff)
     };
+    writeint(0x0080);
+    writeint(length);
+    writeint(req_id);
 }
 
-readreg::readreg(uint16_t req_id, const std::vector<byteint>& addresses) : readreg(req_id, addresses.size()) {
+readreg::readreg(uint16_t req_id, const std::vector<byteint<4>>& addresses) : readreg(req_id, addresses.size()) {
     for (auto& address : addresses) {
-        writeint(address);// TODO: check multiple of four (cleared last two bits)
+        writebyteint(address);// TODO: check multiple of four (cleared last two bits)
     }
 }
 
@@ -80,15 +88,15 @@ readreg::readreg(uint16_t req_id, const std::vector<uint32_t>& addresses) : read
     }
 }
 
-writemem::writemem(uint16_t req_id, const byteint& address, const std::vector<std::byte>& data) {
+writemem::writemem(uint16_t req_id, const byteint<4>& address, const std::vector<std::byte>& data) {
     content_ = {
         header,
         std::byte{0x01},
-        zero, std::byte{0x84},
-        zero, std::byte{0x08},
-        std::byte(req_id >> 8), std::byte(req_id & 0xff),
-        address[0], address[1], address[2], address[3]// TODO: check clear 30 and 31 bits
     };
+    writeint(0x0084);
+    writeint(0x0008);
+    writeint(req_id);
+    writebyteint(address);// TODO: check clear 30 and 31 bits
     for (auto byte : data) {
         content_.push_back(byte);
     }
@@ -100,16 +108,16 @@ writereg::writereg(uint16_t req_id, uint16_t length) {
     content_ = {
         header,
         std::byte{0x01},
-        zero, std::byte{0x80},
-        std::byte(length >> 8), std::byte(length & 0xff),
-        std::byte(req_id >> 8), std::byte(req_id & 0xff)
     };
+    writeint(0x0080);
+    writeint(length);
+    writeint(req_id);
 }
 
-writereg::writereg(uint16_t req_id, const std::vector<std::pair<byteint, byteint>>& addresses) : writereg(req_id, addresses.size()) {
+writereg::writereg(uint16_t req_id, const std::vector<std::pair<byteint<4>, byteint<4>>>& addresses) : writereg(req_id, addresses.size()) {
     for (auto& address : addresses) {
-        writeint(address.first);// TODO: check multiple of four (cleared last two bits)
-        writeint(address.second);
+        writebyteint(address.first);// TODO: check multiple of four (cleared last two bits)
+        writebyteint(address.second);
     }
 }
 
