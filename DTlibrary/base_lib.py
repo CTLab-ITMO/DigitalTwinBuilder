@@ -33,3 +33,19 @@ class DatabaseManager:
         self.logger.info(f"Создание схемы базы данных на основе конфигурации: {config}")
         # TODO: Реализовать создание схемы базы данных на основе результата от llm
         print("Создание схемы базы данных (заглушка)...")
+
+class InformationModel:
+    def __init__(self):
+        self.logger = logging.getLogger("InformationModel")
+
+    def create_graph(self, data: List[Dict[str, Any]]) -> Any:
+        self.logger.info("Создание графового представления данных.")
+        # TODO: Реализовать создание графового представления данных
+        print("Создание графового представления данных (заглушка)...")
+        return data
+
+    def validate_data(self, data: Any, schema: Dict[str, Any]) -> bool:
+        self.logger.info("Валидация данных.")
+        # TODO: Реализовать валидацию данных
+        print("Валидация данных (заглушка)...")
+        return True
