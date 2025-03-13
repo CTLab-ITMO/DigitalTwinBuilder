@@ -24,3 +24,12 @@ class DataInterface:
         self.logger.info("Обработка потоковых данных.")
         # TODO: Реализовать обработку потоковых данных
         return stream 
+
+class DatabaseManager:
+    def __init__(self):
+        self.logger = logging.getLogger("DatabaseManager")
+
+    def create_schema(self, config: Dict[str, Any]):
+        self.logger.info(f"Создание схемы базы данных на основе конфигурации: {config}")
+        # TODO: Реализовать создание схемы базы данных на основе результата от llm
+        print("Создание схемы базы данных (заглушка)...")
