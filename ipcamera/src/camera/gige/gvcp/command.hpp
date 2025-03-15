@@ -1,8 +1,9 @@
+#pragma once
+
+#include "ack.hpp"
 #include <boost/asio.hpp>
 #include <cstdint>
-#include <iterator>
 #include <type_traits>
-#include "ack.hpp"
 
 namespace camera::gige::gvcp::cmd {
 

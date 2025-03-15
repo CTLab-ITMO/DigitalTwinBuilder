@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <iostream>
 #include <type_traits>
 
 namespace camera::gige::gvcp::cmd {
@@ -20,6 +21,7 @@ std::enable_if_t<std::is_integral_v<T>, byteint<sizeof(T)>> int2bytes(T val) {
 }
 
 boost::asio::const_buffer command::get_buffer() const {
+    std::cout.write(content_.data(), content_.size());
     return boost::asio::buffer(content_);
 }
 
@@ -84,7 +86,7 @@ readreg::readreg(uint16_t req_id, const std::vector<byteint<4>>& addresses) : re
 
 readreg::readreg(uint16_t req_id, const std::vector<uint32_t>& addresses) : readreg(req_id, addresses.size()) {
     for (auto& address : addresses) {
-        writeint(address & 0b00);// TODO: maybe exception when address invalid
+        writeint(address);// TODO: check multiple of four (cleared last two bits)
     }
 }
 
@@ -123,7 +125,7 @@ writereg::writereg(uint16_t req_id, const std::vector<std::pair<byteint<4>, byte
 
 writereg::writereg(uint16_t req_id, const std::vector<std::pair<uint32_t, uint32_t>>& addresses) : writereg(req_id, addresses.size()) {
     for (auto& address : addresses) {
-        writeint(address.first & 0b00);// TODO: maybe exception when address invalid
+        writeint(address.first);// TODO: check multiple of four (cleared last two bits)
         writeint(address.second);
     }
 }

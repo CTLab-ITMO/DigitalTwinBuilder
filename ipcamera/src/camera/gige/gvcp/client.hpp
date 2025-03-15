@@ -1,7 +1,9 @@
-#include "boost/asio.hpp"
+#pragma once
 
 #include "command.hpp"
 #include "registers.hpp"
+#include <cstdint>
+#include <string>
 
 
 namespace camera::gige::gvcp {
@@ -13,12 +15,15 @@ class client {
 public:
     client(const std::string& address);
     bool get_control();
-    bool start_streaming();
-    void execute(const cmd::command& cmd);
+    bool drop_control();
+    uint16_t start_streaming(const std::string& rx_address, uint16_t rx_port);
+    ack execute(const cmd::command& cmd);
+    const std::string& address() const;
 private:
+    std::string address_;
     uint16_t req_id_ = 1;
 
     boost::asio::io_context io_context_;
-    udp::socket socket_{ io_context_ };
+    udp::socket socket_ { io_context_ };
 };
 }
