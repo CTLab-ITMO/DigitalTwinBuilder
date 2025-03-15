@@ -39,7 +39,7 @@ ack::ack(boost::asio::ip::udp::socket& socket) {
     std::array<std::byte, max_packet_size> buf;
     std::size_t len = socket.receive(boost::asio::buffer(buf));
     byte_iterator it = buf.begin();
-    header_.status = static_cast<status>(utils::read_uint16(it));
+    header_.status = static_cast<status_codes>(utils::read_uint16(it));
     header_.answer = static_cast<ack_values>(utils::read_uint16(it));
     header_.length = read_uint16(it);
     header_.ack_id = read_uint16(it);

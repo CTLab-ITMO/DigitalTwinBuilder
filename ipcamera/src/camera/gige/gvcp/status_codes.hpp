@@ -2,7 +2,7 @@
 #include <cstdint>
 
 namespace camera::gige::gvcp {
-enum status : uint16_t {
+enum status_codes : uint16_t {
         GEV_STATUS_SUCCESS = 0x0000,
         GEV_STATUS_PACKET_RESEND = 0x0100,
         GEV_STATUS_NOT_IMPLEMENTED = 0x8001,
