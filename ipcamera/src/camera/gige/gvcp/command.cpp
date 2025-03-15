@@ -21,7 +21,7 @@ std::enable_if_t<std::is_integral_v<T>, byteint<sizeof(T)>> int2bytes(T val) {
 }
 
 boost::asio::const_buffer command::get_buffer() const {
-    std::cout.write(content_.data(), content_.size());
+    std::cout.write((const char*)content_.data(), content_.size());
     return boost::asio::buffer(content_);
 }
 
