@@ -1,6 +1,6 @@
 #pragma once
 
-#include "status.hpp"
+#include "status_codes.hpp"
 #include <boost/asio.hpp>
 #include <cstdint>
 #include <variant>
@@ -25,7 +25,7 @@ enum class ack_values : uint16_t {
 class ack {
 public:
     struct header {
-        status status;
+        status_codes status;
         ack_values answer;
         uint16_t length;
         uint16_t ack_id;
