@@ -19,7 +19,9 @@ void client::start_recieve() {
 
 void client::handle_recieve(const boost::system::error_code& error, std::size_t bytes) {
     if (!error && bytes > 0) {
-        std::cout << "Recieved:" << bytes << std::endl;
+        std::cout << "Recieved: " << bytes << std::endl;
+    } else {
+        std::cout << "Error: " << error << " " << bytes << std::endl;
     }
 
     start_recieve();

@@ -38,13 +38,14 @@ ack::ack(boost::asio::ip::udp::socket& socket) {
     constexpr std::size_t max_packet_size = 576;
     std::array<std::byte, max_packet_size> buf;
     std::size_t len = socket.receive(boost::asio::buffer(buf));
+    for (int i = 0; i < len; ++i) {
+        std::cout << std::to_string(std::to_integer<uint16_t>(buf[i])) << " ";
+    }
     byte_iterator it = buf.begin();
     header_.status = static_cast<status_codes>(utils::read_uint16(it));
     header_.answer = static_cast<ack_values>(utils::read_uint16(it));
     header_.length = read_uint16(it);
     header_.ack_id = read_uint16(it);
-    std::cout << header_.length << len << std::endl;
-    std::cout.write(reinterpret_cast<char*>(buf.data()), len);
     switch (header_.answer) {
         case(ack_values::discovery_ack): {
             discovery discovery;
@@ -72,7 +73,8 @@ ack::ack(boost::asio::ip::udp::socket& socket) {
             break;
         } case(ack_values::readreg_ack): {
             readreg readreg;
-            for (int i = 0; i < header_.length; i += 4) {
+            std::cout << "why are you here, header_.length: " << header_.length << std::endl;
+            for (std::size_t i = 0; i < header_.length; i += 4) {
                 readreg.register_data.push_back(read_integer<uint32_t>(it));
             }
             content_ = readreg;

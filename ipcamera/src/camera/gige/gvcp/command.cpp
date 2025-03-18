@@ -21,7 +21,11 @@ std::enable_if_t<std::is_integral_v<T>, byteint<sizeof(T)>> int2bytes(T val) {
 }
 
 boost::asio::const_buffer command::get_buffer() const {
-    std::cout.write((const char*)content_.data(), content_.size());
+
+    for (int i = 0; i < content_.size(); ++i) {
+        std::cout << std::to_string(std::to_integer<uint16_t>(content_[i])) << " ";
+    }
+    std::cout << std::endl;
     return boost::asio::buffer(content_);
 }
 
@@ -49,7 +53,7 @@ discovery::discovery(uint16_t req_id) {
         std::byte{0x11},
     };
     writeint(static_cast<uint16_t>(command_values::discovery_cmd));
-    writeint(uint32_t(0));
+    writeint(uint16_t(0));
     writeint(req_id);
 }
 
@@ -62,7 +66,7 @@ readmem::readmem(uint16_t req_id, const byteint<4>& address, uint16_t count) {
     writeint(0x0008);
     writeint(req_id);
     writebyteint(address);
-    writeint(uint32_t(0));
+    writeint(uint16_t(0));
     writeint(count);
 }
 
@@ -78,13 +82,13 @@ readreg::readreg(uint16_t req_id, uint16_t length) {
     writeint(req_id);
 }
 
-readreg::readreg(uint16_t req_id, const std::vector<byteint<4>>& addresses) : readreg(req_id, addresses.size()) {
+readreg::readreg(uint16_t req_id, const std::vector<byteint<4>>& addresses) : readreg(req_id, addresses.size() * 4) {
     for (auto& address : addresses) {
         writebyteint(address);// TODO: check multiple of four (cleared last two bits)
     }
 }
 
-readreg::readreg(uint16_t req_id, const std::vector<uint32_t>& addresses) : readreg(req_id, addresses.size()) {
+readreg::readreg(uint16_t req_id, const std::vector<uint32_t>& addresses) : readreg(req_id, addresses.size() * 4) {
     for (auto& address : addresses) {
         writeint(address);// TODO: check multiple of four (cleared last two bits)
     }
@@ -116,14 +120,14 @@ writereg::writereg(uint16_t req_id, uint16_t length) {
     writeint(req_id);
 }
 
-writereg::writereg(uint16_t req_id, const std::vector<std::pair<byteint<4>, byteint<4>>>& addresses) : writereg(req_id, addresses.size()) {
+writereg::writereg(uint16_t req_id, const std::vector<std::pair<byteint<4>, byteint<4>>>& addresses) : writereg(req_id, addresses.size() * 8) {
     for (auto& address : addresses) {
         writebyteint(address.first);// TODO: check multiple of four (cleared last two bits)
         writebyteint(address.second);
     }
 }
 
-writereg::writereg(uint16_t req_id, const std::vector<std::pair<uint32_t, uint32_t>>& addresses) : writereg(req_id, addresses.size()) {
+writereg::writereg(uint16_t req_id, const std::vector<std::pair<uint32_t, uint32_t>>& addresses) : writereg(req_id, addresses.size() * 8) {
     for (auto& address : addresses) {
         writeint(address.first);// TODO: check multiple of four (cleared last two bits)
         writeint(address.second);
