@@ -4,6 +4,7 @@
 #include "registers.hpp"
 #include <cstdint>
 #include <string>
+#include <thread>
 
 
 namespace camera::gige::gvcp {
@@ -17,11 +18,15 @@ public:
     bool get_control();
     bool drop_control();
     uint16_t start_streaming(const std::string& rx_address, uint16_t rx_port);
+    void stop_streaming();
     ack execute(const cmd::command& cmd);
     const std::string& get_address() const;
+    void start_heartbeat();
 private:
     std::string address_;
     uint16_t req_id_ = 1;
+    bool keepalive_ = false;
+    std::thread heartbeat_thread_;
 
     boost::asio::io_context io_context_;
     udp::socket socket_ { io_context_ };
