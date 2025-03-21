@@ -52,7 +52,7 @@ ack client::execute(const cmd::command& cmd) {
     return cmd.get_ack(socket_);
 }
 
-const std::string& client::address() const {
+const std::string& client::get_address() const {
     return address_;
 }
 }

@@ -4,15 +4,23 @@
 #include <iostream>
 
 namespace camera::gige::gvsp {
-client::client(const std::string& tx_address, 
-               uint16_t tx_port,
-               uint16_t rx_port
-               ) :  
+client::client(const std::string& rx_address, uint16_t rx_port) :  
+    rx_address_(rx_address),
     rx_port_(rx_port),
-    socket_(io_context_, udp::endpoint(udp::v4(), rx_port_)),
-    tx_endpoint_(boost::asio::ip::make_address(tx_address), tx_port) {
-    start_recieve();
+    socket_(io_context_, udp::endpoint(udp::v4(), rx_port_)) {
 }
+
+void client::set_endpoint(const udp::endpoint& tx_endpoint) {
+    tx_endpoint_ = tx_endpoint;
+}
+const std::string& client::get_rx_address() const {
+    return rx_address_;
+}
+
+uint16_t client::get_rx_port() const {
+    return rx_port_;
+}
+
 void client::start_recieve() {
     socket_.async_receive_from(boost::asio::buffer(buffer_), tx_endpoint_, boost::bind(&client::handle_recieve, this, boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred));
 }

@@ -2,8 +2,12 @@
 #include <cstdint>
 
 namespace camera::gige {
-gvsp::client start_stream(gvcp::client& gvcp, const std::string& rx_address, uint16_t rx_port) {
-    uint16_t port = gvcp.start_streaming(rx_address, rx_port);
-    return gvsp::client(gvcp.address(), port, rx_port);
+client::client(const std::string& tx_address, const std::string& rx_address, uint16_t rx_port) : gvcp_(tx_address), gvsp_(rx_address, rx_port) {
+}
+
+void client::start_stream() {
+    uint16_t tx_port = gvcp_.start_streaming(gvsp_.get_rx_address(), gvsp_.get_rx_port());
+    gvsp_.set_endpoint(boost::asio::ip::udp::endpoint(boost::asio::ip::make_address_v4(gvcp_.get_address()), tx_port));
+    gvsp_.start_recieve();
 }
 }
