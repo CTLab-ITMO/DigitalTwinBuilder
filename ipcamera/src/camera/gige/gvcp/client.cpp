@@ -1,7 +1,9 @@
 #include "client.hpp"
+#include "registers.hpp"
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <thread>
 
 namespace camera::gige::gvcp {
 
@@ -40,11 +42,25 @@ uint16_t client::start_streaming(const std::string& rx_address, uint16_t rx_port
     if (response_port_address_write.get_header().status != status_codes::GEV_STATUS_SUCCESS) {
         return 0;
     }
-    do {
-        response_port_address_write = execute(cmd::readreg(req_id_++, std::vector<uint32_t>{registers::stream_channel_port_0}));
-        std::cout << "still" << std::endl;
-    } while (response_port_address_write.get_header().status == status_codes::GEV_STATUS_SUCCESS);
+    keepalive_ = true;
+    heartbeat_thread_ = std::thread(&client::start_heartbeat, this);
     return std::get<ack::readreg>(response_stream_channel_source_port.get_content()).register_data[0];
+}
+
+void client::stop_streaming() {
+    keepalive_ = false;
+    ack response_port_address_write = execute(cmd::writereg(req_id_++, { {registers::stream_channel_port_0, 0}, {registers::stream_channel_destination_address_0, 0} }));
+    drop_control();
+    heartbeat_thread_.join();
+}
+
+void client::start_heartbeat() {
+    while (keepalive_) {
+        ack response = execute(cmd::readreg(req_id_++, std::vector<uint32_t>{registers::heartbeat_timeout}));
+        std::this_thread::sleep_for(std::chrono::milliseconds(std::get<ack::readreg>(response.get_content()).register_data[0]));
+
+    }
+
 }
 
 ack client::execute(const cmd::command& cmd) {
