@@ -1,5 +1,6 @@
 #include "client.hpp"
 #include "registers.hpp"
+#include <boost/asio/io_context.hpp>
 #include <cstdint>
 #include <exception>
 #include <iostream>
@@ -28,17 +29,18 @@ bool client::drop_control() {
     return response_ccp_write.get_header().status == status_codes::GEV_STATUS_SUCCESS;
 }
 
-uint16_t client::start_streaming(const std::string& rx_address, uint16_t rx_port) {
+uint16_t client::start_streaming(const std::string& rx_address, uint16_t rx_port, uint16_t stream_channel_no) {
     if (!get_control()) {
         return 0;
     }
+    uint16_t stream_channel_offset = 0x40 * stream_channel_no;
     std::cout << "reading stream port" << '\n';
-    ack response_stream_channel_source_port = execute(cmd::readreg(req_id_++, std::vector<uint32_t>{registers::stream_channel_source_port_0}));
+    ack response_stream_channel_source_port = execute(cmd::readreg(req_id_++, std::vector<uint32_t>{registers::stream_channel_source_port_0 + stream_channel_offset}));
     if (response_stream_channel_source_port.get_header().status != status_codes::GEV_STATUS_SUCCESS) {
         return 0;
     }
     std::cout << "writing stream port and address" << '\n';
-    ack response_port_address_write = execute(cmd::writereg(req_id_++, {{registers::stream_channel_destination_address_0, boost::asio::ip::make_address_v4(rx_address).to_uint()}, {registers::stream_channel_port_0, rx_port} }));
+    ack response_port_address_write = execute(cmd::writereg(req_id_++, {{registers::stream_channel_destination_address_0 + stream_channel_offset, boost::asio::ip::make_address_v4(rx_address).to_uint()}, {registers::stream_channel_port_0 + stream_channel_offset, static_cast<uint32_t>(rx_port) + (1u<<31)} }));
     if (response_port_address_write.get_header().status != status_codes::GEV_STATUS_SUCCESS) {
         return 0;
     }
@@ -47,17 +49,18 @@ uint16_t client::start_streaming(const std::string& rx_address, uint16_t rx_port
     return std::get<ack::readreg>(response_stream_channel_source_port.get_content()).register_data[0];
 }
 
-void client::stop_streaming() {
+void client::stop_streaming(uint16_t stream_channel_no) {
     keepalive_ = false;
-    ack response_port_address_write = execute(cmd::writereg(req_id_++, { {registers::stream_channel_port_0, 0}, {registers::stream_channel_destination_address_0, 0} }));
+    uint16_t stream_channel_offset = 0x40 * stream_channel_no;
+    ack response_port_address_write = execute(cmd::writereg(req_id_++, { {registers::stream_channel_port_0 + stream_channel_offset, 0}, {registers::stream_channel_destination_address_0 + stream_channel_offset, 0} }));
     drop_control();
     heartbeat_thread_.join();
 }
 
 void client::start_heartbeat() {
     while (keepalive_) {
-        ack response = execute(cmd::readreg(req_id_++, std::vector<uint32_t>{registers::heartbeat_timeout}));
-        std::this_thread::sleep_for(std::chrono::milliseconds(std::get<ack::readreg>(response.get_content()).register_data[0]));
+        ack response = execute(cmd::readreg(req_id_++, std::vector<uint32_t>{registers::control_channel_privilege}));
+        std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 
     }
 
@@ -70,5 +73,19 @@ ack client::execute(const cmd::command& cmd) {
 
 const std::string& client::get_address() const {
     return address_;
+}
+
+std::vector<std::string> client::get_all_gige_devices() {
+    boost::asio::io_context io_context;
+    udp::resolver resolver(io_context);
+    auto res=resolver.resolve(udp::v4(), boost::asio::ip::host_name(),"");
+    auto it = res.begin();
+
+    while(it!=res.end())
+    {
+        boost::asio::ip::address addr=(it++)->endpoint().address();
+
+        std::cout<<addr.to_string()<<std::endl;
+    }
 }
 }

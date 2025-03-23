@@ -41,6 +41,7 @@ ack::ack(boost::asio::ip::udp::socket& socket) {
     for (int i = 0; i < len; ++i) {
         std::cout << std::to_string(std::to_integer<uint16_t>(buf[i])) << " ";
     }
+    std::cout << std::endl;
     byte_iterator it = buf.begin();
     header_.status = static_cast<status_codes>(utils::read_uint16(it));
     header_.answer = static_cast<ack_values>(utils::read_uint16(it));
@@ -73,7 +74,6 @@ ack::ack(boost::asio::ip::udp::socket& socket) {
             break;
         } case(ack_values::readreg_ack): {
             readreg readreg;
-            std::cout << "why are you here, header_.length: " << header_.length << std::endl;
             for (std::size_t i = 0; i < header_.length; i += 4) {
                 readreg.register_data.push_back(read_integer<uint32_t>(it));
             }

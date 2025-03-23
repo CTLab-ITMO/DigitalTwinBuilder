@@ -1,20 +1,18 @@
 #include "camera/gige/gvcp/client.hpp"
 #include "camera/gige/client.hpp"
+#include "gige/gvcp/command.hpp"
 #include <cstdint>
 #include <iostream>
 
 
 int main() {
-    std::cout << "creating client" << '\n';
-    camera::gige::gvcp::client gvcp("192.168.150.15");
-    std::cout << "starting stream" << '\n';
-    uint16_t port = gvcp.start_streaming("192.168.1.12", 13);
-    std::cout << "stream started on port " << port << '\n';
+    camera::gige::client gige("192.168.1.38", "192.168.1.94", 49999);
+    gige.start_stream();
     std::string input;
     while(true) {
         std::cin >> input;
         if (input == ":q") {
-            gvcp.drop_control();
+            gige.stop_stream();
             break;
         }
         std::cout << "To leave enter :q" << std::endl;
