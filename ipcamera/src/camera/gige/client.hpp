@@ -9,8 +9,9 @@ public:
     client(gvcp::client&& gvcp, gvsp::client&& gvsp); // TODO:Maybe remove this constructor because it does same as second one
     client(const std::string& tx_address, const std::string& rx_address, uint16_t rx_port);
     void start_stream();
+    void stop_stream();
 private:
-    gvsp::client gvsp_;
     gvcp::client gvcp_;
+    gvsp::client gvsp_;
 };
 }

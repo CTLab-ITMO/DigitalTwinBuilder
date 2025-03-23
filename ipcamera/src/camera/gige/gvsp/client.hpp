@@ -22,7 +22,7 @@ private:
     std::string rx_address_;
     uint16_t rx_port_;
 
-    boost::asio::io_context io_context_;
     udp::socket socket_;
+    boost::asio::io_context io_context_;
 };
 }
