@@ -10,8 +10,8 @@ public:
     client(const std::string& tx_address, const std::string& rx_address, uint16_t rx_port);
     void start_stream();
     void stop_stream();
-private:
-    gvcp::client gvcp_;
     gvsp::client gvsp_;
+    gvcp::client gvcp_;
+private:
 };
 }

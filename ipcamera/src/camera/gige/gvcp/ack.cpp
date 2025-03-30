@@ -6,6 +6,7 @@
 #include <vector>
 #include <boost/asio.hpp>
 #include "ack.hpp"
+#include "status_codes.hpp"
 
 namespace camera::gige::gvcp {
 using byte_iterator = std::byte*;
@@ -21,14 +22,16 @@ namespace utils {
     }
     constexpr uint16_t(*read_uint16)(byte_iterator& it) = &read_integer<uint16_t>;
     std::vector<std::byte> read_n_bytes(byte_iterator& it, std::size_t n) {
-        std::vector<std::byte> res;
+        std::vector<std::byte> res(n);
         std::copy_n(it, n, res.begin());
+        it += n;
         return res;
     }
     template <std::size_t S>
     bytearr<S> read_bytearr(byte_iterator& it) {
         bytearr<S> res;
         std::copy_n(it, S, res.begin());
+        it += S;
         return res;
     }
 }
@@ -38,15 +41,18 @@ ack::ack(boost::asio::ip::udp::socket& socket) {
     constexpr std::size_t max_packet_size = 576;
     std::array<std::byte, max_packet_size> buf;
     std::size_t len = socket.receive(boost::asio::buffer(buf));
-    for (int i = 0; i < len; ++i) {
-        std::cout << std::to_string(std::to_integer<uint16_t>(buf[i])) << " ";
+    if (true) {
+        for (int i = 0; i < len; ++i) {
+           std::cout << std::to_string(std::to_integer<uint16_t>(buf[i])) << " ";
+        }
+        std::cout << std::endl;
     }
-    std::cout << std::endl;
     byte_iterator it = buf.begin();
     header_.status = static_cast<status_codes>(utils::read_uint16(it));
     header_.answer = static_cast<ack_values>(utils::read_uint16(it));
     header_.length = read_uint16(it);
     header_.ack_id = read_uint16(it);
+    if (get_header().status == status_codes::GEV_STATUS_SUCCESS) {
     switch (header_.answer) {
         case(ack_values::discovery_ack): {
             discovery discovery;
@@ -84,6 +90,7 @@ ack::ack(boost::asio::ip::udp::socket& socket) {
             content_ = writereg{ read_uint16(it) };
             break;
         case(ack_values::readmem_ack):
+            std::cout << "length " << header_.length << '\n';
             content_ = readmem{ read_bytearr<4>(it), read_n_bytes(it, header_.length - 4) };
             break;
         case(ack_values::writemem_ack):
@@ -93,6 +100,9 @@ ack::ack(boost::asio::ip::udp::socket& socket) {
         default:
             // TODO: not implemented
             break;
+    }
+    } else {
+        std::cout << get_header().status - 0x8000 << '\n';
     }
 }
 }

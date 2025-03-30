@@ -21,6 +21,10 @@ std::enable_if_t<std::is_integral_v<T>, byteint<sizeof(T)>> int2bytes(T val) {
 }
 
 boost::asio::const_buffer command::get_buffer() const {
+    for (auto c : content_) {
+        std::cout << std::to_string(std::to_integer<uint16_t>(c)) << " ";
+    }
+    std::cout << '\n';
     return boost::asio::buffer(content_);
 }
 
@@ -58,14 +62,23 @@ readmem::readmem(uint16_t req_id, const byteint<4>& address, uint16_t count) {
         std::byte{0x01},
     };
     writeint(static_cast<uint16_t>(command_values::readmem_cmd));
-    writeint(0x0008);
+    writeint(uint16_t(0x08));
     writeint(req_id);
     writebyteint(address);
-    writeint(uint16_t(0));
-    writeint(count);
+    writeint(uint32_t(count));
 }
 
-readmem::readmem(uint16_t req_id, uint32_t address, uint16_t count) : readmem(req_id, int2bytes(address), count) {}
+readmem::readmem(uint16_t req_id, uint32_t address, uint16_t count) : readmem(req_id, int2bytes(address), count) {
+    content_ = {
+        header,
+        std::byte{0x01},
+    };
+    writeint(static_cast<uint16_t>(command_values::readmem_cmd));
+    writeint(uint16_t(0x08));
+    writeint(req_id);
+    writeint(address);
+    writeint(uint32_t(count));
+}
 
 readreg::readreg(uint16_t req_id, uint16_t length) {
     content_ = {
@@ -95,7 +108,7 @@ writemem::writemem(uint16_t req_id, const byteint<4>& address, const std::vector
         std::byte{0x01},
     };
     writeint(static_cast<uint16_t>(command_values::writemem_cmd));
-    writeint(0x0008);
+    writeint(uint16_t(0x08));
     writeint(req_id);
     writebyteint(address);// TODO: check clear 30 and 31 bits
     for (auto byte : data) {

@@ -10,8 +10,8 @@ client::client(const std::string& rx_address, uint16_t rx_port) :
     socket_(io_context_, udp::endpoint(udp::v4(), rx_port_)) {
 }
 
-void client::set_endpoint(const udp::endpoint& tx_endpoint) {
-    tx_endpoint_ = tx_endpoint;
+void client::set_endpoint(udp::endpoint&& tx_endpoint) {
+    tx_endpoint_ = std::move(tx_endpoint);
 }
 const std::string& client::get_rx_address() const {
     return rx_address_;
@@ -26,10 +26,10 @@ void client::start_recieve() {
 }
 
 void client::handle_recieve(const boost::system::error_code& error, std::size_t bytes) {
-    if (!error && bytes > 0) {
+    if (bytes > 0) {
         std::cout << "Recieved: " << bytes << std::endl;
     } else {
-        std::cout << "Error: " << error << " " << bytes << std::endl;
+        std::cout << "Error: " << bytes << std::endl;
     }
 
     start_recieve();
