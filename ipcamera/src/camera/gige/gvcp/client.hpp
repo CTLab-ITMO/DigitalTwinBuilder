@@ -23,9 +23,9 @@ public:
     const std::string& get_address() const;
     void start_heartbeat();
     static std::vector<std::string> get_all_gige_devices();
+    uint16_t req_id_ = 1;
 private:
     std::string address_;
-    uint16_t req_id_ = 1;
     bool keepalive_ = false;
     std::thread heartbeat_thread_;
 

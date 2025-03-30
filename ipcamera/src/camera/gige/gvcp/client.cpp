@@ -39,11 +39,14 @@ uint16_t client::start_streaming(const std::string& rx_address, uint16_t rx_port
     if (response_stream_channel_source_port.get_header().status != status_codes::GEV_STATUS_SUCCESS) {
         return 0;
     }
-    std::cout << "writing stream port and address" << '\n';
-    ack response_port_address_write = execute(cmd::writereg(req_id_++, {{registers::stream_channel_destination_address_0 + stream_channel_offset, boost::asio::ip::make_address_v4(rx_address).to_uint()}, {registers::stream_channel_port_0 + stream_channel_offset, static_cast<uint32_t>(rx_port) + (1u<<31)} }));
-    if (response_port_address_write.get_header().status != status_codes::GEV_STATUS_SUCCESS) {
+    std::cout << "writing stream address " <<  boost::asio::ip::make_address_v4(rx_address).to_uint()<< '\n';
+    ack response_address_write = execute(cmd::writereg(req_id_++, {{registers::stream_channel_destination_address_0 + stream_channel_offset, boost::asio::ip::make_address_v4(rx_address).to_uint()}}));
+    std::cout << "writing stream port" << '\n';
+    ack response_port_write = execute(cmd::writereg(req_id_++, {{registers::stream_channel_port_0 + stream_channel_offset, static_cast<uint32_t>(rx_port)} }));
+    if (response_port_write.get_header().status != status_codes::GEV_STATUS_SUCCESS) {
         return 0;
     }
+    ack response_acq_write = execute(cmd::writereg(req_id_++, {{0x00030804, 1}}));
     keepalive_ = true;
     heartbeat_thread_ = std::thread(&client::start_heartbeat, this);
     return std::get<ack::readreg>(response_stream_channel_source_port.get_content()).register_data[0];
