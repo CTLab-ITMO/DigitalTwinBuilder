@@ -92,3 +92,26 @@ class SimulationModel:
         print("Создание имитационной модели (заглушка)...")
         model = {"status": "created", "config": config}
         return model
+
+class Agent(object):
+    def __init__(self, name: str):
+        self.name = name
+        self.logger = logging.getLogger(self.name)
+
+    def run(self, *args, **kwargs):
+        # Метод для запуска работы агента.
+        raise NotImplementedError
+
+class DatabaseConfigurationAgent(Agent):
+    def __init__(self, name: str = "DatabaseConfigurationAgent"):
+        super().__init__(name)
+
+    def run(self, digital_twin: Any) -> None:
+        self.logger.info("Конфигурация базы данных для цифрового двойника.")
+        self._configure_database(digital_twin)
+        self.logger.info("База данных успешно сконфигурирована.")
+
+    def _configure_database(self, digital_twin: Any) -> None:
+        # TODO: Реализовать логику конфигурации базы данных
+        print("Конфигурация базы данных (заглушка)...")
+        print(f"Цифровой двойник для конфигурации БД: {digital_twin}")
