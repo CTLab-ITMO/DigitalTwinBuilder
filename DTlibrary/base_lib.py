@@ -81,3 +81,14 @@ class SimulationInterface:
         self.logger.info("Визуализация результатов моделирования.")
         # TODO: Реализовать визуализацию результатов моделирования 
         print(f"Результаты моделирования: {results}")
+
+class SimulationModel:
+    def __init__(self):
+        self.logger = logging.getLogger("SimulationModel")
+
+    def create_model(self, config: Dict[str, Any]) -> Any:
+        self.logger.info(f"Создание имитационной модели на основе конфигурации: {config}")
+        # TODO: Реализовать создание имитационной модели
+        print("Создание имитационной модели (заглушка)...")
+        model = {"status": "created", "config": config}
+        return model
