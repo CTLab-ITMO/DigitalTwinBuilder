@@ -5,6 +5,7 @@
 #include <exception>
 #include <iostream>
 #include <thread>
+#include <fstream>
 
 namespace camera::gige::gvcp {
 
@@ -46,7 +47,7 @@ uint16_t client::start_streaming(const std::string& rx_address, uint16_t rx_port
     if (response_port_write.get_header().status != status_codes::GEV_STATUS_SUCCESS) {
         return 0;
     }
-    ack response_acq_write = execute(cmd::writereg(req_id_++, {{0x00030804, 1}}));
+    ack response_acq_write = execute(cmd::writereg(req_id_++, {{0x00030804, 1}})); //TODO: replace magic number with genicam register
     keepalive_ = true;
     heartbeat_thread_ = std::thread(&client::start_heartbeat, this);
     return std::get<ack::readreg>(response_stream_channel_source_port.get_content()).register_data[0];
@@ -90,5 +91,44 @@ std::vector<std::string> client::get_all_gige_devices() {
 
         std::cout<<addr.to_string()<<std::endl;
     }
+}
+
+std::string client::get_xml_genicam(const std::string& path) {
+    auto res = execute(cmd::readreg(req_id_++, std::vector<uint32_t>{0x0934}));
+    if (res.get_header().status == status_codes::GEV_STATUS_SUCCESS && !(std::get<ack::readreg>(res.get_content()).register_data[0] & (1 << 28))) {
+        std::cout << "manifest table is supported" << '\n';
+        return 0;
+    }
+    auto response = execute(cmd::readmem(req_id_++, registers::second_url, 512));
+    if (response.get_header().status != status_codes::GEV_STATUS_SUCCESS) {
+        std::cout << "readmem failed with status: " << response.get_header().status << '\n';
+    }
+    std::stringstream sstream(std::string(reinterpret_cast<const char*>(std::get<ack::readmem>(response.get_content()).data.data())));
+    std::string location, filename, extension, temp;
+    std::cout << sstream.view() << '\n';
+    getline(sstream, location, ':');
+    getline(sstream, filename, '.');
+    getline(sstream, extension, ';');
+    getline(sstream, temp, ';');
+    std::cout << temp << '\n';
+    uint32_t address = std::stoi(temp, nullptr, 16);
+    getline(sstream, temp);
+    std::cout << temp << '\n';
+    uint32_t length = std::stoi(temp, nullptr, 16);
+    std::cout << address << " " << length << std::endl;
+    std::ofstream zip_out;
+    zip_out.open(path + filename + std::string(".") + extension);
+    uint32_t batch_length = 512;
+    uint32_t count = length / batch_length + 1;
+    std::cout << count << '\n';
+    for (int i = 0; i < count; ++i) {
+        std::cout << i << '\n';
+        auto xml_response = execute(cmd::readmem(req_id_++, address + i * batch_length, batch_length));
+        if (xml_response.get_header().status == status_codes::GEV_STATUS_SUCCESS) {
+            zip_out.write(reinterpret_cast<const char*>(std::get<ack::readmem>(xml_response.get_content()).data.data()), batch_length);
+        }
+    }
+    zip_out.close();
+    return path + filename + std::string(".xml");
 }
 }

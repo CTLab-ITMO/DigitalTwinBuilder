@@ -20,12 +20,6 @@ enum class command_values : uint16_t {
     action_cmd = 0x0100
 };
 
-template <std::size_t S>
-using byteint = std::array<std::byte, S>;
-
-template<typename T>
-std::enable_if_t<std::is_integral_v<T>, byteint<sizeof(T)>> int2bytes(T val);
-
 class command {
 public:
     boost::asio::const_buffer get_buffer() const;
@@ -33,8 +27,6 @@ public:
 protected:
     template <class T>
     std::enable_if_t<std::is_integral_v<T>> writeint(T val); // TODO: SFINAE restrict non integral
-    template <std::size_t S>
-    void writebyteint(byteint<S> val);
     std::vector<std::byte> content_;
 };
 
@@ -45,30 +37,22 @@ public:
 
 class readmem : public command {
 public:
-    readmem(uint16_t req_id, const byteint<4>& address, uint16_t count);
     readmem(uint16_t req_id, uint32_t address, uint16_t count);
 };
 
 class readreg : public command {
 public:
-    readreg(uint16_t req_id, const std::vector<byteint<4>>& addresses);
     readreg(uint16_t req_id, const std::vector<uint32_t>& addresses);
-private:
-    readreg(uint16_t req_id, uint16_t length);
 };
 
 class writemem : public command {
 public:
-    writemem(uint16_t req_id, const byteint<4>& address, const std::vector<std::byte>& data);
     writemem(uint16_t req_id, uint32_t address, const std::vector<std::byte>& data);
 };
 
 class writereg : public command {
 public:
-    writereg(uint16_t req_id, const std::vector<std::pair<byteint<4>, byteint<4>>>& addresses);
     writereg(uint16_t req_id, const std::vector<std::pair<uint32_t, uint32_t>>& addresses);
-private:
-    writereg(uint16_t req_id, uint16_t length);
 };
 
 }
