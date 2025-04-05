@@ -11,15 +11,6 @@ const std::string port("3956");
 const std::byte header{0x42};
 const std::byte zero{0x00};
 
-template <typename T>
-std::enable_if_t<std::is_integral_v<T>, byteint<sizeof(T)>> int2bytes(T val) {
-    byteint<sizeof(T)> res;
-    for (std::size_t i = res.size(); i > 0; --i) {
-        res[i] = std::byte((val >> (8 * (i - 1))) & 0xff);
-    }
-    return res;
-}
-
 boost::asio::const_buffer command::get_buffer() const {
     for (auto c : content_) {
         std::cout << std::to_string(std::to_integer<uint16_t>(c)) << " ";
@@ -39,13 +30,6 @@ std::enable_if_t<std::is_integral_v<T>> command::writeint(T val) {
     }
 }
 
-template<std::size_t S>
-void command::writebyteint(byteint<S> val) {
-    for (std::byte byte : val) {
-         content_.push_back(byte);
-    }
-}
-
 discovery::discovery(uint16_t req_id) {
     content_ = {
         header, 
@@ -56,19 +40,7 @@ discovery::discovery(uint16_t req_id) {
     writeint(req_id);
 }
 
-readmem::readmem(uint16_t req_id, const byteint<4>& address, uint16_t count) {
-    content_ = {
-        header,
-        std::byte{0x01},
-    };
-    writeint(static_cast<uint16_t>(command_values::readmem_cmd));
-    writeint(uint16_t(0x08));
-    writeint(req_id);
-    writebyteint(address);
-    writeint(uint32_t(count));
-}
-
-readmem::readmem(uint16_t req_id, uint32_t address, uint16_t count) : readmem(req_id, int2bytes(address), count) {
+readmem::readmem(uint16_t req_id, uint32_t address, uint16_t count) {
     content_ = {
         header,
         std::byte{0x01},
@@ -80,7 +52,8 @@ readmem::readmem(uint16_t req_id, uint32_t address, uint16_t count) : readmem(re
     writeint(uint32_t(count));
 }
 
-readreg::readreg(uint16_t req_id, uint16_t length) {
+readreg::readreg(uint16_t req_id, const std::vector<uint32_t>& addresses) {
+    uint16_t length = addresses.size() * 4;
     content_ = {
         header,
         std::byte{0x01},
@@ -88,21 +61,12 @@ readreg::readreg(uint16_t req_id, uint16_t length) {
     writeint(static_cast<uint16_t>(command_values::readreg_cmd));
     writeint(length);
     writeint(req_id);
-}
-
-readreg::readreg(uint16_t req_id, const std::vector<byteint<4>>& addresses) : readreg(req_id, addresses.size() * 4) {
-    for (auto& address : addresses) {
-        writebyteint(address);// TODO: check multiple of four (cleared last two bits)
-    }
-}
-
-readreg::readreg(uint16_t req_id, const std::vector<uint32_t>& addresses) : readreg(req_id, addresses.size() * 4) {
     for (auto& address : addresses) {
         writeint(address);// TODO: check multiple of four (cleared last two bits)
     }
 }
 
-writemem::writemem(uint16_t req_id, const byteint<4>& address, const std::vector<std::byte>& data) {
+writemem::writemem(uint16_t req_id, uint32_t address, const std::vector<std::byte>& data) {
     content_ = {
         header,
         std::byte{0x01},
@@ -110,15 +74,14 @@ writemem::writemem(uint16_t req_id, const byteint<4>& address, const std::vector
     writeint(static_cast<uint16_t>(command_values::writemem_cmd));
     writeint(uint16_t(0x08));
     writeint(req_id);
-    writebyteint(address);// TODO: check clear 30 and 31 bits
+    writeint(address);// TODO: check clear 30 and 31 bits
     for (auto byte : data) {
         content_.push_back(byte);
     }
 }
 
-writemem::writemem(uint16_t req_id, uint32_t address, const std::vector<std::byte>& data) : writemem(req_id, int2bytes(address), data) {}
-
-writereg::writereg(uint16_t req_id, uint16_t length) {
+writereg::writereg(uint16_t req_id, const std::vector<std::pair<uint32_t, uint32_t>>& addresses) {
+    uint16_t length = addresses.size() * 8;
     content_ = {
         header,
         std::byte{0x01},
@@ -126,16 +89,6 @@ writereg::writereg(uint16_t req_id, uint16_t length) {
     writeint(static_cast<uint16_t>(command_values::writereg_cmd));
     writeint(length);
     writeint(req_id);
-}
-
-writereg::writereg(uint16_t req_id, const std::vector<std::pair<byteint<4>, byteint<4>>>& addresses) : writereg(req_id, addresses.size() * 8) {
-    for (auto& address : addresses) {
-        writebyteint(address.first);// TODO: check multiple of four (cleared last two bits)
-        writebyteint(address.second);
-    }
-}
-
-writereg::writereg(uint16_t req_id, const std::vector<std::pair<uint32_t, uint32_t>>& addresses) : writereg(req_id, addresses.size() * 8) {
     for (auto& address : addresses) {
         writeint(address.first);// TODO: check multiple of four (cleared last two bits)
         writeint(address.second);
