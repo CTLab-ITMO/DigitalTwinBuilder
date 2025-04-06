@@ -9,8 +9,8 @@
 #include "status_codes.hpp"
 
 namespace camera::gige::gvcp {
-using byte_iterator = std::byte*;
 namespace utils {
+    using byte_iterator = std::byte*;
     template <class Integer>
     std::enable_if_t<std::is_integral_v<Integer>, Integer> read_integer(byte_iterator& it) {
         Integer res = 0;

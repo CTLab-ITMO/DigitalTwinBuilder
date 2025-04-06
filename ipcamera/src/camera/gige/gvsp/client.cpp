@@ -1,4 +1,6 @@
 #include "client.hpp"
+#include "payload.hpp"
+#include "utils.hpp"
 #include <boost/bind/bind.hpp>
 #include <cstdint>
 #include <iostream>
@@ -26,16 +28,83 @@ void client::start_recieve() {
 }
 
 void client::handle_recieve(const boost::system::error_code& error, std::size_t bytes) {
+    using namespace utils;
     if (bytes > 0) {
-        std::cout << "Recieved: " << bytes << std::endl;
-        for (int i = 0; i < bytes; ++i) {
-            std::cout << (uint32_t)buffer_[i] << " ";
+        auto it = buffer_.begin();
+        auto status = read_uint16(it);
+        uint64_t block_id = read_uint16(it);
+        uint16_t flag;
+        auto packet_format = read_uint8(it);
+        bool ei_flag = packet_format & (1 << 7);
+        packet_format &= ~(1 << 7);
+        uint32_t packet_id = read_uint24(it);
+        if (ei_flag) {
+            flag = block_id;
+            block_id = read_uint64(it);
+            packet_id = read_uint32(it);
         }
-        std::cout << std::endl;
+        switch (packet_format) {
+            case 1: {
+                auto payload_specific = read_uint16(it);
+                auto payload_type = read_uint16(it);
+                switch (payload_type) {
+                    case 1: {
+                        std::cout << "Image leader" << std::endl;
+                        payload::image* image = new payload::image();
+                        image->timestamp = read_uint64(it);
+                        image->pixel_format = read_uint32(it);
+                        image->size_x = read_uint32(it);
+                        image->size_y = read_uint32(it);
+                        image->offset_x = read_uint32(it);
+                        image->offset_y = read_uint32(it);
+                        image->padding_x = read_uint16(it);
+                        image->padding_y = read_uint16(it);
+                        payloads_.push_back(std::unique_ptr<payload::image>(image));
+                        break;
+                    } default:
+                        std::cerr << "Not implemented payload type" << std::endl;
+                        break;
+                }
+                break;
+            } case 2: {
+                it += 2;
+                auto payload_type = read_uint16(it);
+                switch (payload_type) {
+                    case 1: {
+                        std::cout << "Image trailer" << std::endl;
+                        auto size_y = read_uint32(it);
+                        dynamic_cast<payload::image*>(payloads_.back().get())->write_file("tmp/" + std::to_string(meta_.payload_count));
+                        break;
+                    } default:
+                        std::cerr << "Not implemented payload type" << std::endl;
+                        break;
+                }
+                ++meta_.payload_count;
+                break;
+            } case 3:
+                payloads_.back()->read(it, bytes - 16);
+                break;
+            case 5:
+                // TODO:H264 payload
+                break;
+            case 6:
+                // TODO:MultiZone payload
+                break;
+            case 7:
+                // TODO:MultiPart payload
+                break;
+            case 8:
+                // TODO:GenDC payload
+                break;
+            default:
+                std::cerr << "Invalid packet format" << std::endl;
+                break;
+        }
     } else {
         std::cout << "Error: " << bytes << std::endl;
     }
-
-    start_recieve();
+    if (meta_.payload_count < 10) {
+        start_recieve();
+    }
 }
 }
