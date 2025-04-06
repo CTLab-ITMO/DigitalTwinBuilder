@@ -1,4 +1,6 @@
 #pragma once
+
+#include "payload.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -18,6 +20,10 @@ public:
     void handle_recieve(const boost::system::error_code& error, std::size_t bytes);
     boost::asio::io_context io_context_;
 private:
+    struct meta {
+        std::size_t payload_count = 0;
+    } meta_;
+    std::vector<std::unique_ptr<payload::payload_type>> payloads_;
     std::array<std::byte, BUFFER_SIZE> buffer_;
     udp::endpoint tx_endpoint_;
     std::string rx_address_;

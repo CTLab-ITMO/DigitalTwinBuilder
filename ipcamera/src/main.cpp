@@ -10,7 +10,7 @@
 
 
 int main() {
-    camera::gige::client gige("192.168.150.15", "192.168.1.94", 53211);
+    camera::gige::client gige("192.168.1.38", "192.168.1.94", 53211);
     auto res = gige.gvcp_.execute(camera::gige::gvcp::cmd::readreg(gige.gvcp_.req_id_++, std::vector<uint32_t>{0x0934}));
     if (res.get_header().status == camera::gige::gvcp::status_codes::GEV_STATUS_SUCCESS && !(std::get<camera::gige::gvcp::ack::readreg>(res.get_content()).register_data[0] & (1 << 28))) {
         std::cout << "manifest table is supported" << '\n';
