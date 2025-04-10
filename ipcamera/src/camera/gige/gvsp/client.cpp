@@ -59,6 +59,7 @@ void client::handle_recieve(const boost::system::error_code& error, std::size_t 
                         image->offset_y = read_uint32(it);
                         image->padding_x = read_uint16(it);
                         image->padding_y = read_uint16(it);
+                        std::cout << image->size_x << " " << image->size_y << std::endl;
                         payloads_.push_back(std::unique_ptr<payload::image>(image));
                         break;
                     } default:
@@ -82,7 +83,7 @@ void client::handle_recieve(const boost::system::error_code& error, std::size_t 
                 ++meta_.payload_count;
                 break;
             } case 3:
-                payloads_.back()->read(it, bytes - 16);
+                payloads_.back()->read(it, bytes - 8);
                 break;
             case 5:
                 // TODO:H264 payload
