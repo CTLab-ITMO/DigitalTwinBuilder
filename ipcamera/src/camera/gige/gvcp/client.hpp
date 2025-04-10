@@ -23,6 +23,7 @@ public:
     void start_heartbeat();
     static std::vector<std::string> get_all_gige_devices();
     std::string get_xml_genicam(const std::string& path);
+    void parse_xml_genicam(const std::string& filename) const;
     uint16_t req_id_ = 1;
 private:
     std::string address_;

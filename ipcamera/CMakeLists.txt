@@ -10,7 +10,7 @@ set(CMAKE_INSTALL_PREFIX ${PROJECT_SOURCE_DIR})
 set(Boost_USE_STATIC_LIBS   ON)
 
 find_package(Boost CONFIG REQUIRED COMPONENTS system)
-find_package(unofficial-minizip CONFIG REQUIRED)
+find_package(libzip CONFIG REQUIRED)
 
 # add_executable(tests)
 add_executable(main)
@@ -33,4 +33,4 @@ endif()
 target_include_directories(main PUBLIC ${Boost_INCLUDE_DIRS})
 # target_include_directories(tests PUBLIC ${Boost_INCLUDE_DIRS})
 
-target_link_libraries(main Boost::boost Boost::system camera unofficial::minizip::minizip)
+target_link_libraries(main Boost::boost Boost::system camera libzip::zip)

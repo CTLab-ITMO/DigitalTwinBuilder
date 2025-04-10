@@ -1,6 +1,8 @@
 #include "client.hpp"
 #include "registers.hpp"
 #include <boost/asio/io_context.hpp>
+#include <zip.h>
+#include <pugixml.hpp>
 #include <cstdint>
 #include <exception>
 #include <iostream>
@@ -104,10 +106,10 @@ std::string client::get_xml_genicam(const std::string& path) {
         std::cout << "readmem failed with status: " << response.get_header().status << '\n';
     }
     std::stringstream sstream(std::string(reinterpret_cast<const char*>(std::get<ack::readmem>(response.get_content()).data.data())));
-    std::string location, filename, extension, temp;
+    std::string location, name, extension, temp;
     std::cout << sstream.view() << '\n';
     getline(sstream, location, ':');
-    getline(sstream, filename, '.');
+    getline(sstream, name, '.');
     getline(sstream, extension, ';');
     getline(sstream, temp, ';');
     std::cout << temp << '\n';
@@ -116,8 +118,10 @@ std::string client::get_xml_genicam(const std::string& path) {
     std::cout << temp << '\n';
     uint32_t length = std::stoi(temp, nullptr, 16);
     std::cout << address << " " << length << std::endl;
-    std::ofstream zip_out;
-    zip_out.open(path + filename + std::string(".") + extension);
+
+    std::string filename = path + name + std::string(".") + extension;
+    std::string unzipped_filename = path + name + ".xml";
+    std::ofstream file_out(filename);
     uint32_t batch_length = 512;
     uint32_t count = length / batch_length + 1;
     std::cout << count << '\n';
@@ -125,10 +129,42 @@ std::string client::get_xml_genicam(const std::string& path) {
         std::cout << i << '\n';
         auto xml_response = execute(cmd::readmem(req_id_++, address + i * batch_length, batch_length));
         if (xml_response.get_header().status == status_codes::GEV_STATUS_SUCCESS) {
-            zip_out.write(reinterpret_cast<const char*>(std::get<ack::readmem>(xml_response.get_content()).data.data()), batch_length);
+            file_out.write(reinterpret_cast<const char*>(std::get<ack::readmem>(xml_response.get_content()).data.data()), batch_length);
         }
     }
-    zip_out.close();
-    return path + filename + std::string(".xml");
+    file_out.close();
+
+    if (extension == "zip") {
+        struct zip *zip_file; // дескриптор zip файла
+        struct zip_file *zipped_file;
+        int err; // переменая для возврата кодов ошибок
+
+        zip_file = zip_open(filename.c_str(), 0, &err);
+        if (!zip_file) {
+            throw std::runtime_error("can't open zip file " + filename); // TODO: custom error
+        };
+
+        zipped_file = zip_fopen_index(zip_file, 0, 0);
+        if (!zipped_file) {
+            throw std::runtime_error("can't unzip zip file " + unzipped_filename); // TODO: custom error
+        }
+        std::ofstream unzipped_file(unzipped_filename);
+        constexpr std::size_t buffer_size = 4096;
+        std::array<char, buffer_size> buffer;
+        std::size_t acquired_size;
+        while ((acquired_size = zip_fread(zipped_file, buffer.data(), buffer_size)) > 0) {
+            unzipped_file.write(buffer.data(), acquired_size);
+        }
+        unzipped_file.close();
+        zip_fclose(zipped_file);
+        zip_close(zip_file);
+        std::remove(filename.c_str());
+    }
+    return unzipped_filename;
+}
+
+
+void client::parse_xml_genicam(const std::string& filename) const {
+
 }
 }

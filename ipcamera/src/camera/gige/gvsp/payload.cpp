@@ -10,8 +10,7 @@ void image::write_file(const std::string& path) const {
 
     int maxColorValue = 255;
     f << "P5\n" << size_x << " " << size_y << "\n" << maxColorValue << "\n";
-
-    f.write(reinterpret_cast<const char*>(data.data()), size_x);
+    f.write(reinterpret_cast<const char*>(data.data()), data.size());
 }
 
 void image::read(std::byte* it, std::size_t size) {
