@@ -167,4 +167,12 @@ std::string client::get_xml_genicam(const std::string& path) {
 void client::parse_xml_genicam(const std::string& filename) const {
 
 }
+
+uint16_t client::req_id_inc() {
+    if (++req_id_ == 0) [[unlikely]] {
+        return ++req_id_;
+    } else [[likely]] {
+        return req_id_;
+    }
+}
 }

@@ -1,7 +1,6 @@
 #pragma once
 
 #include "command.hpp"
-#include "registers.hpp"
 #include <cstdint>
 #include <string>
 #include <thread>
@@ -24,8 +23,9 @@ public:
     static std::vector<std::string> get_all_gige_devices();
     std::string get_xml_genicam(const std::string& path);
     void parse_xml_genicam(const std::string& filename) const;
-    uint16_t req_id_ = 1;
+    uint16_t req_id_inc();
 private:
+    uint16_t req_id_{0};
     std::string address_;
     bool keepalive_ = false;
     std::thread heartbeat_thread_;
