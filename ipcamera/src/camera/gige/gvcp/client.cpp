@@ -18,17 +18,17 @@ client::client(const std::string& address) : address_(address) {
 
 bool client::get_control() {
     std::cout << "reading control port" << '\n';
-    ack response_ccp_read = execute(cmd::readreg(req_id_++, std::vector<uint32_t>{registers::control_channel_privilege}));
+    ack response_ccp_read = execute(cmd::readreg(req_id_inc(), std::vector<uint32_t>{registers::control_channel_privilege}));
     if (response_ccp_read.get_header().status == status_codes::GEV_STATUS_SUCCESS && std::get<ack::readreg>(response_ccp_read.get_content()).register_data[0] == 0) {
         std::cout << "writing control port" << '\n';
-        ack response_ccp_write = execute(cmd::writereg(req_id_++, {{registers::control_channel_privilege, 0b10}}));
+        ack response_ccp_write = execute(cmd::writereg(req_id_inc(), {{registers::control_channel_privilege, 0b10}}));
         return response_ccp_write.get_header().status == status_codes::GEV_STATUS_SUCCESS;
     }
     return false;
 }
 
 bool client::drop_control() {
-    ack response_ccp_write = execute(cmd::writereg(req_id_++, {{registers::control_channel_privilege, 0}}));
+    ack response_ccp_write = execute(cmd::writereg(req_id_inc(), {{registers::control_channel_privilege, 0}}));
     return response_ccp_write.get_header().status == status_codes::GEV_STATUS_SUCCESS;
 }
 
@@ -38,18 +38,18 @@ uint16_t client::start_streaming(const std::string& rx_address, uint16_t rx_port
     }
     uint16_t stream_channel_offset = 0x40 * stream_channel_no;
     std::cout << "reading stream port" << '\n';
-    ack response_stream_channel_source_port = execute(cmd::readreg(req_id_++, std::vector<uint32_t>{registers::stream_channel_source_port_0 + stream_channel_offset}));
+    ack response_stream_channel_source_port = execute(cmd::readreg(req_id_inc(), std::vector<uint32_t>{registers::stream_channel_source_port_0 + stream_channel_offset}));
     if (response_stream_channel_source_port.get_header().status != status_codes::GEV_STATUS_SUCCESS) {
         return 0;
     }
     std::cout << "writing stream address " <<  boost::asio::ip::make_address_v4(rx_address).to_uint()<< '\n';
-    ack response_address_write = execute(cmd::writereg(req_id_++, {{registers::stream_channel_destination_address_0 + stream_channel_offset, boost::asio::ip::make_address_v4(rx_address).to_uint()}}));
+    ack response_address_write = execute(cmd::writereg(req_id_inc(), {{registers::stream_channel_destination_address_0 + stream_channel_offset, boost::asio::ip::make_address_v4(rx_address).to_uint()}}));
     std::cout << "writing stream port" << '\n';
-    ack response_port_write = execute(cmd::writereg(req_id_++, {{registers::stream_channel_port_0 + stream_channel_offset, static_cast<uint32_t>(rx_port)} }));
+    ack response_port_write = execute(cmd::writereg(req_id_inc(), {{registers::stream_channel_port_0 + stream_channel_offset, static_cast<uint32_t>(rx_port)} }));
     if (response_port_write.get_header().status != status_codes::GEV_STATUS_SUCCESS) {
         return 0;
     }
-    ack response_acq_write = execute(cmd::writereg(req_id_++, {{0x00030804, 1}})); //TODO: replace magic number with genicam register
+    ack response_acq_write = execute(cmd::writereg(req_id_inc(), {{0x00030804, 1}})); //TODO: replace magic number with genicam register
     keepalive_ = true;
     heartbeat_thread_ = std::thread(&client::start_heartbeat, this);
     return std::get<ack::readreg>(response_stream_channel_source_port.get_content()).register_data[0];
@@ -58,14 +58,14 @@ uint16_t client::start_streaming(const std::string& rx_address, uint16_t rx_port
 void client::stop_streaming(uint16_t stream_channel_no) {
     keepalive_ = false;
     uint16_t stream_channel_offset = 0x40 * stream_channel_no;
-    ack response_port_address_write = execute(cmd::writereg(req_id_++, { {registers::stream_channel_port_0 + stream_channel_offset, 0}, {registers::stream_channel_destination_address_0 + stream_channel_offset, 0} }));
+    ack response_port_address_write = execute(cmd::writereg(req_id_inc(), { {registers::stream_channel_port_0 + stream_channel_offset, 0}, {registers::stream_channel_destination_address_0 + stream_channel_offset, 0} }));
     drop_control();
     heartbeat_thread_.join();
 }
 
 void client::start_heartbeat() {
     while (keepalive_) {
-        ack response = execute(cmd::readreg(req_id_++, std::vector<uint32_t>{registers::control_channel_privilege}));
+        ack response = execute(cmd::readreg(req_id_inc(), std::vector<uint32_t>{registers::control_channel_privilege}));
         std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 
     }
@@ -96,12 +96,12 @@ std::vector<std::string> client::get_all_gige_devices() {
 }
 
 std::string client::get_xml_genicam(const std::string& path) {
-    auto res = execute(cmd::readreg(req_id_++, std::vector<uint32_t>{0x0934}));
+    auto res = execute(cmd::readreg(req_id_inc(), std::vector<uint32_t>{0x0934}));
     if (res.get_header().status == status_codes::GEV_STATUS_SUCCESS && !(std::get<ack::readreg>(res.get_content()).register_data[0] & (1 << 28))) {
         std::cout << "manifest table is supported" << '\n';
         return 0;
     }
-    auto response = execute(cmd::readmem(req_id_++, registers::second_url, 512));
+    auto response = execute(cmd::readmem(req_id_inc(), registers::second_url, 512));
     if (response.get_header().status != status_codes::GEV_STATUS_SUCCESS) {
         std::cout << "readmem failed with status: " << response.get_header().status << '\n';
     }
@@ -127,7 +127,7 @@ std::string client::get_xml_genicam(const std::string& path) {
     std::cout << count << '\n';
     for (int i = 0; i < count; ++i) {
         std::cout << i << '\n';
-        auto xml_response = execute(cmd::readmem(req_id_++, address + i * batch_length, batch_length));
+        auto xml_response = execute(cmd::readmem(req_id_inc(), address + i * batch_length, batch_length));
         if (xml_response.get_header().status == status_codes::GEV_STATUS_SUCCESS) {
             file_out.write(reinterpret_cast<const char*>(std::get<ack::readmem>(xml_response.get_content()).data.data()), batch_length);
         }
