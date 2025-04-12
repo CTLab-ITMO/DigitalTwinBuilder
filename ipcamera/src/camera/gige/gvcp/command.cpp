@@ -9,7 +9,6 @@ namespace camera::gige::gvcp::cmd {
 
 const std::string port("3956");
 const std::byte header{0x42};
-const std::byte zero{0x00};
 
 boost::asio::const_buffer command::get_buffer() const {
     for (auto c : content_) {
