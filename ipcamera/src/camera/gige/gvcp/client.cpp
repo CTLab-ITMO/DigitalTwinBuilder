@@ -42,14 +42,10 @@ uint16_t client::start_streaming(const std::string& rx_address, uint16_t rx_port
     if (response_stream_channel_source_port.get_header().status != status_codes::GEV_STATUS_SUCCESS) {
         return 0;
     }
-    std::cout << "writing stream address " <<  boost::asio::ip::make_address_v4(rx_address).to_uint()<< '\n';
-    ack response_address_write = execute(cmd::writereg(req_id_inc(), {{registers::stream_channel_destination_address_0 + stream_channel_offset, boost::asio::ip::make_address_v4(rx_address).to_uint()}}));
-    std::cout << "writing stream port" << '\n';
-    ack response_port_write = execute(cmd::writereg(req_id_inc(), {{registers::stream_channel_port_0 + stream_channel_offset, static_cast<uint32_t>(rx_port)} }));
-    if (response_port_write.get_header().status != status_codes::GEV_STATUS_SUCCESS) {
-        return 0;
-    }
-    ack response_acq_write = execute(cmd::writereg(req_id_inc(), {{genicam_regs["AcquisitionStart"], 1}})); //TODO: replace magic number with genicam register
+    std::cout << "writing stream info" << '\n';
+    ack response_write = execute(cmd::writereg(req_id_inc(), {
+        {registers::stream_channel_destination_address_0 + stream_channel_offset, boost::asio::ip::make_address_v4(rx_address).to_uint()},
+        {genicam_regs["AcquisitionStart"], 1}, {registers::stream_channel_port_0 + stream_channel_offset, static_cast<uint32_t>(rx_port)} }));
     keepalive_ = true;
     heartbeat_thread_ = std::thread(&client::start_heartbeat, this);
     return std::get<ack::readreg>(response_stream_channel_source_port.get_content()).register_data[0];
@@ -58,7 +54,7 @@ uint16_t client::start_streaming(const std::string& rx_address, uint16_t rx_port
 void client::stop_streaming(uint16_t stream_channel_no) {
     keepalive_ = false;
     uint16_t stream_channel_offset = 0x40 * stream_channel_no;
-    ack response_port_address_write = execute(cmd::writereg(req_id_inc(), { {registers::stream_channel_port_0 + stream_channel_offset, 0}, {registers::stream_channel_destination_address_0 + stream_channel_offset, 0} }));
+    ack response_port_address_write = execute(cmd::writereg(req_id_inc(), { {registers::stream_channel_port_0 + stream_channel_offset, 0}, {genicam_regs["AcquisitionStop"]}, {registers::stream_channel_destination_address_0 + stream_channel_offset, 0} }));
     drop_control();
     heartbeat_thread_.join();
 }
@@ -99,12 +95,9 @@ std::string client::get_xml_genicam(const std::string& path) {
     auto res = execute(cmd::readreg(req_id_inc(), std::vector<uint32_t>{0x0934}));
     if (res.get_header().status == status_codes::GEV_STATUS_SUCCESS && !(std::get<ack::readreg>(res.get_content()).register_data[0] & (1 << 28))) {
         std::cout << "manifest table is supported" << '\n';
-        return 0;
+        throw std::runtime_error("Not implemented"); // TODO: manifest table
     }
     auto response = execute(cmd::readmem(req_id_inc(), registers::second_url, 512));
-    if (response.get_header().status != status_codes::GEV_STATUS_SUCCESS) {
-        std::cout << "readmem failed with status: " << response.get_header().status << '\n';
-    }
     std::stringstream sstream(std::string(reinterpret_cast<const char*>(std::get<ack::readmem>(response.get_content()).data.data())));
     std::string location, name, extension, temp;
     std::cout << sstream.view() << '\n';
@@ -135,9 +128,9 @@ std::string client::get_xml_genicam(const std::string& path) {
     file_out.close();
 
     if (extension == "zip") {
-        struct zip *zip_file; // дескриптор zip файла
+        struct zip *zip_file;
         struct zip_file *zipped_file;
-        int err; // переменая для возврата кодов ошибок
+        int err;
 
         zip_file = zip_open(filename.c_str(), 0, &err);
         if (!zip_file) {
