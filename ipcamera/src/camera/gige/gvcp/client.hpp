@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 #include <thread>
+#include <unordered_map>
 
 namespace camera::gige::gvcp {
 using boost::asio::ip::udp;
@@ -22,9 +23,10 @@ public:
     void start_heartbeat();
     static std::vector<std::string> get_all_gige_devices();
     std::string get_xml_genicam(const std::string& path);
-    void parse_xml_genicam(const std::string& filename) const;
+    void parse_xml_genicam(const std::string& filename);
     uint16_t req_id_inc();
 private:
+    std::unordered_map<std::string, uint32_t> genicam_regs;
     uint16_t req_id_{0};
     std::string address_;
     bool keepalive_ = false;

@@ -49,7 +49,7 @@ uint16_t client::start_streaming(const std::string& rx_address, uint16_t rx_port
     if (response_port_write.get_header().status != status_codes::GEV_STATUS_SUCCESS) {
         return 0;
     }
-    ack response_acq_write = execute(cmd::writereg(req_id_inc(), {{0x00030804, 1}})); //TODO: replace magic number with genicam register
+    ack response_acq_write = execute(cmd::writereg(req_id_inc(), {{genicam_regs["AcquisitionStart"], 1}})); //TODO: replace magic number with genicam register
     keepalive_ = true;
     heartbeat_thread_ = std::thread(&client::start_heartbeat, this);
     return std::get<ack::readreg>(response_stream_channel_source_port.get_content()).register_data[0];
@@ -164,8 +164,30 @@ std::string client::get_xml_genicam(const std::string& path) {
 }
 
 
-void client::parse_xml_genicam(const std::string& filename) const {
+void client::parse_xml_genicam(const std::string& filename) {
+    pugi::xml_document doc;
+    pugi::xml_parse_result result = doc.load_file(filename.c_str(), filename.length(), pugi::xml_encoding::encoding_utf8);
+    if (!result)
+        throw std::runtime_error("can't parse xml file " + filename);
 
+    pugi::xpath_node_set root_categories = doc.select_nodes("/RegisterDescription/Category[@Name='Root']/pFeature");
+    for (pugi::xpath_node category : root_categories) {
+        std::string category_value = category.node().child_value(); 
+        pugi::xpath_node_set category_features = doc.select_nodes(("/RegisterDescription/Category[@Name='" + category_value + "']/pFeature").c_str());
+        for (pugi::xpath_node feature : category_features) {
+            std::string feature_name = feature.node().child_value();
+            std::string group = "/RegisterDescription/Group[@Comment='" + category_value + "']/*[@Name='";
+            pugi::xml_node feature_node = doc.select_node((group + feature_name + "']").c_str()).node();
+            std::cout << feature_name << " ";
+            std::string feature_node_pvalue = feature_node.child("pValue").child_value();
+            std::string feature_reg = doc.select_node((group + feature_node_pvalue + "']/pAddress").c_str()).node().child_value();
+            std::string feature_reg_addr = doc.select_node(("/RegisterDescription/Group[@Comment='RegAddr']/Group[@Comment='Inq RegAddr']/Integer[@Name='" + feature_reg + "']/Value").c_str()).node().child_value();
+            std::cout << feature_node_pvalue << " " << feature_reg << " " << feature_reg_addr << '\n';
+            if (feature_reg_addr != "") {
+                genicam_regs[feature_name] = std::stoi(feature_reg_addr, nullptr, 16);
+            }
+        }
+    }
 }
 
 uint16_t client::req_id_inc() {

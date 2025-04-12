@@ -11,6 +11,7 @@ set(Boost_USE_STATIC_LIBS   ON)
 
 find_package(Boost CONFIG REQUIRED COMPONENTS system)
 find_package(libzip CONFIG REQUIRED)
+find_package(pugixml CONFIG REQUIRED)
 
 # add_executable(tests)
 add_executable(main)
@@ -33,4 +34,4 @@ endif()
 target_include_directories(main PUBLIC ${Boost_INCLUDE_DIRS})
 # target_include_directories(tests PUBLIC ${Boost_INCLUDE_DIRS})
 
-target_link_libraries(main Boost::boost Boost::system camera libzip::zip)
+target_link_libraries(main Boost::boost Boost::system camera libzip::zip pugixml::static pugixml::pugixml)
