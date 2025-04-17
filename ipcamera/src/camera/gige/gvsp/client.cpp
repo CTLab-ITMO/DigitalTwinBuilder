@@ -1,5 +1,4 @@
 #include "client.hpp"
-#include "payload.hpp"
 #include "utils.hpp"
 #include <boost/bind/bind.hpp>
 #include <cstdint>
@@ -50,17 +49,7 @@ void client::handle_recieve(const boost::system::error_code& error, std::size_t 
                 switch (payload_type) {
                     case 1: {
                         std::cout << "Image leader" << std::endl;
-                        payload::image* image = new payload::image();
-                        image->timestamp = read_uint64(it);
-                        image->pixel_format = read_uint32(it);
-                        image->size_x = read_uint32(it);
-                        image->size_y = read_uint32(it);
-                        image->offset_x = read_uint32(it);
-                        image->offset_y = read_uint32(it);
-                        image->padding_x = read_uint16(it);
-                        image->padding_y = read_uint16(it);
-                        std::cout << image->size_x << " " << image->size_y << std::endl;
-                        payloads_.push_back(std::unique_ptr<payload::image>(image));
+                        payloads_.push_back(std::unique_ptr<payload::image>(new payload::image(it)));
                         break;
                     } default:
                         std::cerr << "Not implemented payload type" << std::endl;

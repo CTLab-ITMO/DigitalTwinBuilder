@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "pixel_formats.hpp"
 #include <cstdint>
 #include <vector>
 #include <string>
@@ -37,6 +38,8 @@ struct payload_type {
  * Contains image data and metadata received through GVSP protocol.
  */
 struct image : public payload_type {
+    image(std::byte*& it);
+
     /**
      * @brief Reads image data from a byte stream
      * @param it Iterator pointing to the beginning of the byte stream
@@ -52,7 +55,7 @@ struct image : public payload_type {
 
     std::vector<std::byte> data;      ///< Raw image pixel data
     uint64_t timestamp;               ///< Timestamp of image capture (in nanoseconds)
-    uint32_t pixel_format;            ///< Pixel format code (GVSP_PIXEL_FORMAT)
+    pixel_formats pixel_format;            ///< Pixel format code (GVSP_PIXEL_FORMAT)
     uint32_t size_x;                  ///< Width of the image in pixels
     uint32_t size_y;                  ///< Height of the image in pixels 
     uint32_t offset_x;                ///< X offset of ROI (Region of Interest)

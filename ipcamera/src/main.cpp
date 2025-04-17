@@ -10,7 +10,7 @@
 
 
 int main() {
-    camera::gige::client gige("192.168.150.15", "192.168.1.94", 10000);
+    camera::gige::client gige("192.168.1.38", "192.168.1.94", 10000);
     auto filename = gige.gvcp_.get_xml_genicam("tmp/");
     gige.gvcp_.parse_xml_genicam(filename);
     gige.start_stream();
