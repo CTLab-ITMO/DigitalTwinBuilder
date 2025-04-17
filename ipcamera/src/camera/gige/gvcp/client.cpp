@@ -54,7 +54,10 @@ uint16_t client::start_streaming(const std::string& rx_address, uint16_t rx_port
 void client::stop_streaming(uint16_t stream_channel_no) {
     keepalive_ = false;
     uint16_t stream_channel_offset = 0x40 * stream_channel_no;
-    ack response_port_address_write = execute(cmd::writereg(req_id_inc(), { {registers::stream_channel_port_0 + stream_channel_offset, 0}, {genicam_regs["AcquisitionStop"]}, {registers::stream_channel_destination_address_0 + stream_channel_offset, 0} }));
+    ack response_write = execute(cmd::writereg(req_id_inc(), { 
+        {registers::stream_channel_port_0 + stream_channel_offset, 0}, 
+        {genicam_regs["AcquisitionStop"], 1}, 
+        {registers::stream_channel_destination_address_0 + stream_channel_offset, 0} }));
     drop_control();
     heartbeat_thread_.join();
 }

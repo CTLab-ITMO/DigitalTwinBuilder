@@ -8,10 +8,21 @@
  */
 
 #include "payload.hpp"
+#include "utils.hpp"
+#include <cassert>
 #include <iostream>
 #include <fstream>
 
 namespace camera::gige::gvsp::payload {
+image::image(std::byte*& it) {
+    timestamp = utils::read_uint64(it);
+    pixel_format = static_cast<pixel_formats>(utils::read_uint32(it));
+    size_x = utils::read_uint32(it);
+    size_y = utils::read_uint32(it);
+    offset_x = utils::read_uint32(it);
+    offset_y = utils::read_uint32(it);
+    padding_x = utils::read_uint16(it);
+}
 
 /**
  * @brief Writes the image data to a PGM (Portable GrayMap) file
@@ -23,10 +34,15 @@ namespace camera::gige::gvsp::payload {
  * @throw std::ios_base::failure If file operations fail
  */
 void image::write_file(const std::string& path) const {
+    // std::ofstream f(path + ".bmp", std::ios_base::out
+    //                              | std::ios_base::binary
+    //                              | std::ios_base::trunc);
+    
+    assert(size_x * size_y == data.size());
     std::ofstream f(path + ".pgm",std::ios_base::out
                                  |std::ios_base::binary
                                  |std::ios_base::trunc);
-
+    
     int maxColorValue = 255;
     f << "P5\n" << size_x << " " << size_y << "\n" << maxColorValue << "\n";
     f.write(reinterpret_cast<const char*>(data.data()), data.size());
@@ -36,15 +52,12 @@ void image::write_file(const std::string& path) const {
  * @brief Reads raw image data into the payload buffer
  *
  * This function copies raw image data from a byte iterator into the internal buffer.
- * Currently only supports mono8 pixel format (hardcoded).
  *
  * @param it Iterator pointing to the beginning of raw image data
  * @param size Number of bytes to read from the iterator
  *
- * @todo Implement support for different pixel formats beyond mono8
  */
 void image::read(std::byte* it, std::size_t size) {
-    // TODO: pixel_formats currently mono8 hard coded
     std::copy_n(it, size, std::back_inserter(data));
 }
 
