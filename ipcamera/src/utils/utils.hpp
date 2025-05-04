@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <vector>
-
+#include <algorithm>
 namespace utils {
     template <std::size_t S>
     using bytearr = std::array<std::byte, S>;
