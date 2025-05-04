@@ -1,7 +1,7 @@
 #include "utils.hpp"
 
 namespace utils {
-    template <class Integer, std::size_t S = sizeof(Integer)>
+    template <class Integer, std::size_t S>
     std::enable_if_t<std::is_integral_v<Integer>, Integer> read_integer(byte_iterator& it) {
         Integer res = 0;
         for (std::size_t i = 0; i < S; ++i) {
