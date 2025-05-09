@@ -47,7 +47,8 @@ def monitor_dir(dir: str):
         observer.stop()
     observer.join()
 
-def main():
+# TODO: async or threads
+def database_appending():
     dir = "../ipcamera/tmp/"
     conn = sqlite3.connect('../frames.db')
     cursor = conn.cursor()
@@ -58,5 +59,3 @@ def main():
     conn.close()
     monitor_dir(dir) 
 
-if __name__=="__main__":
-    main()

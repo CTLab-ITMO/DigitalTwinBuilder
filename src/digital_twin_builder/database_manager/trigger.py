@@ -27,17 +27,14 @@ def check_updates():
     conn.close()
     return current
 
-
-
-def main(): 
+# TODO: async or threads
+def database_trigger(func): 
     create_meta_table()
     last_updated = check_updates()
     while True:
         current = check_updates()
         if current > last_updated:
-            print("doing something here")
+            func()
             last_updated = current
         time.sleep(1)
 
-if __name__=="__main__":
-    main()
