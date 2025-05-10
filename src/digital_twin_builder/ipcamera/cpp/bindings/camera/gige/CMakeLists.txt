@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.28)
 message(STATUS "CMake: gige bindings")
 
-set(TARGET_OUTPUT_DIR ${CMAKE_SOURCE_DIR}/python/camera/gige)
+set(TARGET_OUTPUT_DIR ${CMAKE_SOURCE_DIR}/python/ipcamera/camera/gige)
 pybind11_add_module(_gige bindings.cpp)
 
 add_subdirectory(gvcp)

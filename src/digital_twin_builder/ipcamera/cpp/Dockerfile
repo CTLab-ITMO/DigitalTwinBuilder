@@ -51,4 +51,3 @@ RUN cmake "-DCMAKE_TOOLCHAIN_FILE=${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake
 RUN cmake --build ./build
 
 # Command to run the API when the container starts
-CMD ["./build/main"]
