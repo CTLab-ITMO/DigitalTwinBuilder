@@ -16,6 +16,62 @@
 * [RTSP](https://datatracker.ietf.org/doc/html/rfc7826) - протокол для организации трансляций и передачи медиаконтента
 * [ONVIF](https://www.onvif.org/profiles/) - протокол, который подробно описывает, как сетевые устройства передачи видео ( IP-камеры, видеорегистраторы), интегрируются с сетевыми программами обработки и отображения видеопотока.
 
+## Project structure
+
+```
+DigitalTwinBuilder/
+├── src/
+│   └── DigitalTwinBuilder/ 
+│       ├── __init__.py         
+│       ├── python_module1/  
+│       │   ├── __init__.py
+│       │   └── ...
+│       ├── python_module2/
+│       │   ├── __init__.py
+│       │   └── ...
+│       └── ipcamera/             # git submodule (later may be removed and added with PyPI package)
+│           ├── cpp/
+│           │   ├── src/
+│           │   │   └── camera/
+│           │   │       ├── client.cpp
+│           │   │       ├── client.hpp
+│           │   │       ├── CMakeLists.txt
+│           │   │       ├── gige
+│           │   │           └── ...
+│           │   │       └── rtsp
+│           │   │           └── ...
+│           │   │
+│           │   ├── bindings/
+│           │   │   └── camera/
+│           │   │       ├── bindings.cpp
+│           │   │       ├── CMakeLists.txt
+│           │   │       ├── gige
+│           │   │           └── ...
+│           │   │       └── rtsp
+│           │   │           └── ...
+│           │   │
+│           │   ├── python/
+│           │   │   └── ipcamera/
+│           │   │       ├── __init__.py
+│           │   │       └── camera/
+│           │   │           ├── __init__.py
+│           │   │           ├── camera.so
+│           │   │           ├── gige
+│           │   │           |   └── ...
+│           │   │           └── rtsp
+│           │   │               └── ...
+│           │   │
+│           │   └── CMakeLists.txt
+│           ├── __init__.py   
+│           └── _core.so 
+├── main.py 
+├── scripts/
+├── tests/
+├── setup.py
+├── requirements.txt
+└── README.md
+```
+
 ## Building from source
 ### Installing dependencies
 #### MacOS
