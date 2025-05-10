@@ -1,4 +1,7 @@
-add_library(gvsp ${CMAKE_CURRENT_SOURCE_DIR}/client.cpp ${CMAKE_CURRENT_SOURCE_DIR}/payload.cpp)
+cmake_minimum_required(VERSION 3.28)
+message(STATUS "CMake: gvsp")
+
+add_library(gvsp STATIC client.cpp payload.cpp)
 
 target_link_libraries(gvsp PUBLIC Boost::boost Boost::system utils)
 

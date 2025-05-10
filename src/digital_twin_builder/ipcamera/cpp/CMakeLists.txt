@@ -26,18 +26,7 @@ add_executable(main)
 
 # add_subdirectory(test)
 add_subdirectory(src)
-
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  message(STATUS "Enabling libc++...")
-  # target_compile_options(tests PUBLIC -stdlib=libc++)
-  # target_link_options(tests PUBLIC -stdlib=libc++)
-endif()
-
-if(CMAKE_BUILD_TYPE MATCHES "Debug")
-  message(STATUS "Enabling _GLIBCXX_DEBUG...")
-  # target_compile_options(tests PUBLIC -D_GLIBCXX_DEBUG)
-endif()
-
+add_subdirectory(bindings)
 
 target_include_directories(main PUBLIC ${Boost_INCLUDE_DIRS})
 # target_include_directories(tests PUBLIC ${Boost_INCLUDE_DIRS})
