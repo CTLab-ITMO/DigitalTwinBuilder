@@ -3,7 +3,7 @@
 #include <map>
 #include <boost/asio.hpp>
 
-namespace camera::rtsp::client {
+namespace camera::rtsp {
 
 struct response {
     std::string status;
