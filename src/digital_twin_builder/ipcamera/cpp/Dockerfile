@@ -1,7 +1,6 @@
 # Use the official Ubuntu image as the base image
 FROM ubuntu:latest
 
-
 # Install necessary dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
@@ -39,7 +38,11 @@ RUN ./bootstrap.sh --prefix=/usr/
 RUN ./b2 install
 
 WORKDIR /app
-# Copy the source code into the container
+
+COPY vcpkg.json .
+
+RUN ${VCPKG_ROOT}/vcpkg install
+
 COPY . .
 
 RUN mkdir -p build

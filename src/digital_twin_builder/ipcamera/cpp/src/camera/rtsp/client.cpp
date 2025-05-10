@@ -5,7 +5,7 @@
 
 #include "client.hpp"
 
-namespace camera::rtsp::client {
+namespace camera::rtsp {
 
 using boost::asio::ip::tcp;
 

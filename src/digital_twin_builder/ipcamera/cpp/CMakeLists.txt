@@ -21,6 +21,9 @@ FetchContent_Declare(
   GIT_TAG v2.11.1  # Specific version
 )
 FetchContent_MakeAvailable(pybind11)
+
+include_directories(${CMAKE_SOURCE_DIR}/src)
+
 # add_executable(tests)
 add_executable(main)
 
