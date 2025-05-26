@@ -1,6 +1,7 @@
 #pragma once
 
 #include "command.hpp"
+#include "ack.hpp"
 #include <cstdint>
 #include <string>
 #include <thread>
@@ -9,7 +10,7 @@
 namespace camera::gige::gvcp {
 using boost::asio::ip::udp;
 
-const std::string port{"3956"};
+const std::string gvcp_port{"3956"};
 
 class client {
 public:
@@ -18,7 +19,8 @@ public:
     bool drop_control();
     uint16_t start_streaming(const std::string& rx_address, uint16_t rx_port, uint16_t stream_channel_no = 0);
     void stop_streaming(uint16_t stream_channel_no = 0);
-    ack execute(const cmd::command& cmd);
+    template <class ack_content, class cmd_content>
+    ack_content execute(const cmd_content& cmd);
     const std::string& get_address() const;
     void start_heartbeat();
     static std::vector<std::string> get_all_gige_devices();
