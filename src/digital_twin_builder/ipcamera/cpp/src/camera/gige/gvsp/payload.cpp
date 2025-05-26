@@ -33,19 +33,23 @@ image::image(std::byte*& it) {
  * @param path The base path where the file should be saved (without extension)
  * @throw std::ios_base::failure If file operations fail
  */
-void image::write_file(const std::string& path) const {
-    // std::ofstream f(path + ".bmp", std::ios_base::out
-    //                              | std::ios_base::binary
-    //                              | std::ios_base::trunc);
-    
+void image::write_file(const std::string& path, image_formats format) const {
     assert(size_x * size_y == data.size());
-    std::ofstream f(path + ".pgm",std::ios_base::out
-                                 |std::ios_base::binary
-                                 |std::ios_base::trunc);
-    
-    int maxColorValue = 255;
-    f << "P5\n" << size_x << " " << size_y << "\n" << maxColorValue << "\n";
-    f.write(reinterpret_cast<const char*>(data.data()), data.size());
+    switch (format) {
+        case pgm:
+            std::ofstream f(path + ".pgm", std::ios_base::out
+                                         | std::ios_base::binary
+                                         | std::ios_base::trunc);
+            f << "P5\n" << size_x << " " << size_y << "\n" << 255 << "\n";
+            f.write(reinterpret_cast<const char*>(data.data()), data.size());
+            break;
+        case bmp:
+            std::ofstream f(path + ".bmp", std::ios_base::out
+                                         | std::ios_base::binary
+                                         | std::ios_base::trunc);
+            f << "BM\n";
+            return;
+    }
 }
 
 /**

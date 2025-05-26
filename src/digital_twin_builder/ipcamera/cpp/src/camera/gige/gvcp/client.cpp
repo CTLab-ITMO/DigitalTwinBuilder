@@ -1,4 +1,6 @@
 #include "client.hpp"
+#include "ack.hpp"
+#include "command.hpp"
 #include "registers.hpp"
 #include <boost/asio/io_context.hpp>
 #include <zip.h>
@@ -10,26 +12,81 @@
 #include <fstream>
 
 namespace camera::gige::gvcp {
+template <class ack_content, class cmd_content>
+ack_content client::execute(const cmd_content& cmd) = delete;
+
+template <>
+ack::discovery client::execute(const cmd::discovery& cmd) {
+    socket_.send(boost::asio::buffer(&cmd, sizeof(cmd::discovery)));
+    ack::discovery content;
+    socket_.receive(boost::asio::buffer(&content, sizeof(content)));
+    return content;
+}
+
+template <>
+ack::readreg client::execute(const cmd::readreg& cmd) {
+    socket_.send(boost::asio::buffer(reinterpret_cast<const char*>(&cmd), sizeof(cmd)));
+    for (int i = 0; i < 12; ++i) {
+        std::cout << (((uint16_t)reinterpret_cast<const char*>(&cmd)[i]) & 0x00ff) << " ";
+    }
+    std::cout << std::endl;
+    ack::readreg content;
+    socket_.receive(boost::asio::buffer(reinterpret_cast<char*>(&content), sizeof(content)));
+    return content;
+}
+
+template <>
+ack::writereg client::execute(const cmd::writereg& cmd) {
+    socket_.send(boost::asio::buffer(&cmd, sizeof(cmd)));
+    for (int i = 0; i < sizeof(cmd); ++i) {
+        std::cout << (((uint16_t)reinterpret_cast<const char*>(&cmd)[i]) & 0x00ff) << " ";
+    }
+    std::cout << std::endl;
+    ack::writereg content;
+    socket_.receive(boost::asio::buffer(&content, sizeof(content)));
+    for (int i = 0; i < sizeof(content); ++i) {
+        std::cout << (((uint16_t)reinterpret_cast<const char*>(&content)[i]) & 0x00ff) << " ";
+    }
+    std::cout << std::endl;
+    std::cout << (uint16_t)content.header.answer << '\n';
+    return content;
+}
+
+template <>
+ack::readmem client::execute(const cmd::readmem& cmd) {
+    socket_.send(boost::asio::buffer(&cmd, sizeof(cmd)));
+    ack::readmem content;
+    socket_.receive(boost::asio::buffer(&content, sizeof(content)));
+    return content;
+}
+
+template <>
+ack::writemem client::execute(const cmd::writemem& cmd) {
+    socket_.send(boost::asio::buffer(&cmd, sizeof(cmd::writemem)));
+    ack::writemem content;
+    socket_.receive(boost::asio::buffer(&content, sizeof(content)));
+    return content;
+}
 
 client::client(const std::string& address) : address_(address) {
     udp::resolver resolver(io_context_);
-    boost::asio::connect(socket_, resolver.resolve(address, port));
+    boost::asio::connect(socket_, resolver.resolve(address, gvcp_port));
 }
 
 bool client::get_control() {
     std::cout << "reading control port" << '\n';
-    ack response_ccp_read = execute(cmd::readreg(req_id_inc(), std::vector<uint32_t>{registers::control_channel_privilege}));
-    if (response_ccp_read.get_header().status == status_codes::GEV_STATUS_SUCCESS && std::get<ack::readreg>(response_ccp_read.get_content()).register_data[0] == 0) {
+    auto response_ccp_read = execute<ack::readreg>(cmd::readreg(req_id_inc(), std::vector<uint32_t>{registers::control_channel_privilege}));
+    if (response_ccp_read.header.status == status_codes::GEV_STATUS_SUCCESS && response_ccp_read.register_data[0] == 0) {
         std::cout << "writing control port" << '\n';
-        ack response_ccp_write = execute(cmd::writereg(req_id_inc(), {{registers::control_channel_privilege, 0b10}}));
-        return response_ccp_write.get_header().status == status_codes::GEV_STATUS_SUCCESS;
+        auto response_ccp_write = execute<ack::writereg>(cmd::writereg(req_id_inc(), {{registers::control_channel_privilege, 0b10}}));
+        return response_ccp_write.header.status == status_codes::GEV_STATUS_SUCCESS;
     }
     return false;
 }
 
 bool client::drop_control() {
-    ack response_ccp_write = execute(cmd::writereg(req_id_inc(), {{registers::control_channel_privilege, 0}}));
-    return response_ccp_write.get_header().status == status_codes::GEV_STATUS_SUCCESS;
+    auto response_ccp_write = execute<ack::writereg>(cmd::writereg(req_id_inc(), {{registers::control_channel_privilege, 0}}));
+    return response_ccp_write.header.status == status_codes::GEV_STATUS_SUCCESS;
 }
 
 uint16_t client::start_streaming(const std::string& rx_address, uint16_t rx_port, uint16_t stream_channel_no) {
@@ -38,23 +95,23 @@ uint16_t client::start_streaming(const std::string& rx_address, uint16_t rx_port
     }
     uint16_t stream_channel_offset = 0x40 * stream_channel_no;
     std::cout << "reading stream port" << '\n';
-    ack response_stream_channel_source_port = execute(cmd::readreg(req_id_inc(), std::vector<uint32_t>{registers::stream_channel_source_port_0 + stream_channel_offset}));
-    if (response_stream_channel_source_port.get_header().status != status_codes::GEV_STATUS_SUCCESS) {
+    auto response_stream_channel_source_port = execute<ack::readreg>(cmd::readreg(req_id_inc(), std::vector<uint32_t>{registers::stream_channel_source_port_0 + stream_channel_offset}));
+    if (response_stream_channel_source_port.header.status != status_codes::GEV_STATUS_SUCCESS) {
         return 0;
     }
     std::cout << "writing stream info" << '\n';
-    ack response_write = execute(cmd::writereg(req_id_inc(), {
+    auto response_write = execute<ack::writereg>(cmd::writereg(req_id_inc(), {
         {registers::stream_channel_destination_address_0 + stream_channel_offset, boost::asio::ip::make_address_v4(rx_address).to_uint()},
         {genicam_regs["AcquisitionStart"], 1}, {registers::stream_channel_port_0 + stream_channel_offset, static_cast<uint32_t>(rx_port)} }));
     keepalive_ = true;
     heartbeat_thread_ = std::thread(&client::start_heartbeat, this);
-    return std::get<ack::readreg>(response_stream_channel_source_port.get_content()).register_data[0];
+    return response_stream_channel_source_port.register_data[0];
 }
 
 void client::stop_streaming(uint16_t stream_channel_no) {
     keepalive_ = false;
     uint16_t stream_channel_offset = 0x40 * stream_channel_no;
-    ack response_write = execute(cmd::writereg(req_id_inc(), { 
+    auto response_write = execute<ack::writereg>(cmd::writereg(req_id_inc(), { 
         {registers::stream_channel_port_0 + stream_channel_offset, 0}, 
         {genicam_regs["AcquisitionStop"], 1}, 
         {registers::stream_channel_destination_address_0 + stream_channel_offset, 0} }));
@@ -64,16 +121,11 @@ void client::stop_streaming(uint16_t stream_channel_no) {
 
 void client::start_heartbeat() {
     while (keepalive_) {
-        ack response = execute(cmd::readreg(req_id_inc(), std::vector<uint32_t>{registers::control_channel_privilege}));
+        auto response = execute<ack::readreg>(cmd::readreg(req_id_inc(), std::vector<uint32_t>{registers::control_channel_privilege}));
         std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 
     }
 
-}
-
-ack client::execute(const cmd::command& cmd) {
-    socket_.send(cmd.get_buffer());
-    return cmd.get_ack(socket_);
 }
 
 const std::string& client::get_address() const {
@@ -92,16 +144,18 @@ std::vector<std::string> client::get_all_gige_devices() {
 
         std::cout<<addr.to_string()<<std::endl;
     }
+    return {};
 }
 
 std::string client::get_xml_genicam(const std::string& path) {
-    auto res = execute(cmd::readreg(req_id_inc(), std::vector<uint32_t>{0x0934}));
-    if (res.get_header().status == status_codes::GEV_STATUS_SUCCESS && !(std::get<ack::readreg>(res.get_content()).register_data[0] & (1 << 28))) {
+    auto res = execute<ack::readreg>(cmd::readreg(req_id_inc(), std::vector<uint32_t>{0x0934}));
+    std::cout << res.header.status << '\n';
+    if (res.header.status == status_codes::GEV_STATUS_SUCCESS && !res.register_data[0] & (1 << 28)) {
         std::cout << "manifest table is supported" << '\n';
         throw std::runtime_error("Not implemented"); // TODO: manifest table
     }
-    auto response = execute(cmd::readmem(req_id_inc(), registers::second_url, 512));
-    std::stringstream sstream(std::string(reinterpret_cast<const char*>(std::get<ack::readmem>(response.get_content()).data.data())));
+    ack::readmem response = execute<ack::readmem>(cmd::readmem(req_id_inc(), registers::second_url, 512));
+    std::stringstream sstream(std::string(reinterpret_cast<const char*>(response.data.data())));
     std::string location, name, extension, temp;
     std::cout << sstream.view() << '\n';
     getline(sstream, location, ':');
@@ -123,9 +177,9 @@ std::string client::get_xml_genicam(const std::string& path) {
     std::cout << count << '\n';
     for (int i = 0; i < count; ++i) {
         std::cout << i << '\n';
-        auto xml_response = execute(cmd::readmem(req_id_inc(), address + i * batch_length, batch_length));
-        if (xml_response.get_header().status == status_codes::GEV_STATUS_SUCCESS) {
-            file_out.write(reinterpret_cast<const char*>(std::get<ack::readmem>(xml_response.get_content()).data.data()), batch_length);
+        auto xml_response = execute<ack::readmem>(cmd::readmem(req_id_inc(), address + i * batch_length, batch_length));
+        if (xml_response.header.status == status_codes::GEV_STATUS_SUCCESS) {
+            file_out.write(reinterpret_cast<const char*>(xml_response.data.data()), batch_length);
         }
     }
     file_out.close();

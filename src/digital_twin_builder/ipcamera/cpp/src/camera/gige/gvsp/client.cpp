@@ -27,6 +27,7 @@ void client::start_recieve() {
 }
 
 void client::handle_recieve(const boost::system::error_code& error, std::size_t bytes) {
+    std::cout << "Recieved " << bytes << " bytes" << std::endl;
     using namespace utils;
     if (bytes > 0) {
         auto it = buffer_.begin();
@@ -75,15 +76,19 @@ void client::handle_recieve(const boost::system::error_code& error, std::size_t 
                 payloads_.back()->read(it, bytes - 8);
                 break;
             case 5:
+                throw std::runtime_error("Not implemented packet type");
                 // TODO:H264 payload
                 break;
             case 6:
+                throw std::runtime_error("Not implemented packet type");
                 // TODO:MultiZone payload
                 break;
             case 7:
+                throw std::runtime_error("Not implemented packet type");
                 // TODO:MultiPart payload
                 break;
             case 8:
+                throw std::runtime_error("Not implemented packet type");
                 // TODO:GenDC payload
                 break;
             default:

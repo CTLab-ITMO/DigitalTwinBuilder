@@ -15,6 +15,10 @@
  * @brief Namespace for GigE Vision Streaming Protocol payload handling
  */
 namespace camera::gige::gvsp::payload {
+enum image_formats : uint32_t {
+    pgm = 0,
+    bmp = 1
+};
 
 /**
  * @struct payload_type
