@@ -14,10 +14,10 @@ void client::start_stream() {
     std::cout << "tx_port: " << tx_port << std::endl;
     gvsp_.set_endpoint(boost::asio::ip::udp::endpoint(boost::asio::ip::make_address_v4(gvcp_.get_address()), tx_port));
     gvsp_.start_recieve();
-    gvsp_.io_context_.run();
 }
 
 void client::stop_stream() {
+    gvsp_.stop_recieve();
     gvcp_.stop_streaming();
 }
 }

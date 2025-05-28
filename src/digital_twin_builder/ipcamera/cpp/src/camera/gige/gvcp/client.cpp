@@ -26,10 +26,6 @@ ack::discovery client::execute(const cmd::discovery& cmd) {
 template <>
 ack::readreg client::execute(const cmd::readreg& cmd) {
     socket_.send(boost::asio::buffer(reinterpret_cast<const char*>(&cmd), sizeof(cmd)));
-    for (int i = 0; i < 12; ++i) {
-        std::cout << (((uint16_t)reinterpret_cast<const char*>(&cmd)[i]) & 0x00ff) << " ";
-    }
-    std::cout << std::endl;
     ack::readreg content;
     socket_.receive(boost::asio::buffer(reinterpret_cast<char*>(&content), sizeof(content)));
     return content;
@@ -38,17 +34,8 @@ ack::readreg client::execute(const cmd::readreg& cmd) {
 template <>
 ack::writereg client::execute(const cmd::writereg& cmd) {
     socket_.send(boost::asio::buffer(&cmd, sizeof(cmd)));
-    for (int i = 0; i < sizeof(cmd); ++i) {
-        std::cout << (((uint16_t)reinterpret_cast<const char*>(&cmd)[i]) & 0x00ff) << " ";
-    }
-    std::cout << std::endl;
     ack::writereg content;
     socket_.receive(boost::asio::buffer(&content, sizeof(content)));
-    for (int i = 0; i < sizeof(content); ++i) {
-        std::cout << (((uint16_t)reinterpret_cast<const char*>(&content)[i]) & 0x00ff) << " ";
-    }
-    std::cout << std::endl;
-    std::cout << (uint16_t)content.header.answer << '\n';
     return content;
 }
 
@@ -102,30 +89,45 @@ uint16_t client::start_streaming(const std::string& rx_address, uint16_t rx_port
     std::cout << "writing stream info" << '\n';
     auto response_write = execute<ack::writereg>(cmd::writereg(req_id_inc(), {
         {registers::stream_channel_destination_address_0 + stream_channel_offset, boost::asio::ip::make_address_v4(rx_address).to_uint()},
-        {genicam_regs["AcquisitionStart"], 1}, {registers::stream_channel_port_0 + stream_channel_offset, static_cast<uint32_t>(rx_port)} }));
-    keepalive_ = true;
-    heartbeat_thread_ = std::thread(&client::start_heartbeat, this);
+        {genicam_regs["AcquisitionStart"], 1}}));
+    if (response_write.header.status != status_codes::GEV_STATUS_SUCCESS) {
+        return 0;
+    }
+    auto response_port_write = execute<ack::writereg>(cmd::writereg(req_id_inc(), {
+        {registers::stream_channel_port_0 + stream_channel_offset, static_cast<uint32_t>(rx_port)}
+    }));
+    if (response_port_write.header.status != status_codes::GEV_STATUS_SUCCESS) {
+        return 0;
+    }
+    start_heartbeat();
     return response_stream_channel_source_port.register_data[0];
 }
 
 void client::stop_streaming(uint16_t stream_channel_no) {
-    keepalive_ = false;
     uint16_t stream_channel_offset = 0x40 * stream_channel_no;
     auto response_write = execute<ack::writereg>(cmd::writereg(req_id_inc(), { 
         {registers::stream_channel_port_0 + stream_channel_offset, 0}, 
         {genicam_regs["AcquisitionStop"], 1}, 
         {registers::stream_channel_destination_address_0 + stream_channel_offset, 0} }));
+    stop_heartbeat();
     drop_control();
-    heartbeat_thread_.join();
 }
 
-void client::start_heartbeat() {
+void client::heartbeat() {
     while (keepalive_) {
         auto response = execute<ack::readreg>(cmd::readreg(req_id_inc(), std::vector<uint32_t>{registers::control_channel_privilege}));
         std::this_thread::sleep_for(std::chrono::milliseconds(2000));
-
     }
+}
 
+void client::start_heartbeat() {
+    keepalive_ = true;
+    heartbeat_thread_ = std::jthread(&client::heartbeat, this);
+}
+
+void client::stop_heartbeat() {
+    keepalive_ = false;
+    heartbeat_thread_.join();
 }
 
 const std::string& client::get_address() const {
@@ -149,7 +151,7 @@ std::vector<std::string> client::get_all_gige_devices() {
 
 std::string client::get_xml_genicam(const std::string& path) {
     auto res = execute<ack::readreg>(cmd::readreg(req_id_inc(), std::vector<uint32_t>{0x0934}));
-    std::cout << res.header.status << '\n';
+    std::cout << "Status: " << res.header.status << '\n';
     if (res.header.status == status_codes::GEV_STATUS_SUCCESS && !res.register_data[0] & (1 << 28)) {
         std::cout << "manifest table is supported" << '\n';
         throw std::runtime_error("Not implemented"); // TODO: manifest table

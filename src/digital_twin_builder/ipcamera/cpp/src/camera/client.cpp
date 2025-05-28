@@ -2,7 +2,7 @@
 
 namespace camera {
 void client::start() {
-
+    
 }
 
 void client::stop() {

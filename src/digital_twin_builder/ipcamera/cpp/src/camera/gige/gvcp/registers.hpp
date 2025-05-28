@@ -45,7 +45,7 @@ enum registers : uint16_t {
     manufacture_name = 0x0048,                   ///< Manufacturer name string
     model_name = 0x0068,                         ///< Device model name string
     device_version = 0x0088,                     ///< Device version string
-    manufactura_info = 0x00a8,                   ///< Additional manufacturer information
+    manufacture_info = 0x00a8,                   ///< Additional manufacturer information
     serial_number = 0x00d8,                      ///< Device serial number string
     user_defined_name = 0x00d8,                  ///< User-assigned device name
 
