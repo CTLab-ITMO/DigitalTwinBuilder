@@ -23,16 +23,19 @@ public:
     ack_content execute(const cmd_content& cmd);
     const std::string& get_address() const;
     void start_heartbeat();
+    void stop_heartbeat();
     static std::vector<std::string> get_all_gige_devices();
     std::string get_xml_genicam(const std::string& path);
     void parse_xml_genicam(const std::string& filename);
-    uint16_t req_id_inc();
 private:
+    uint16_t req_id_inc();
+    void heartbeat();
+
     std::unordered_map<std::string, uint32_t> genicam_regs;
     uint16_t req_id_{0};
     std::string address_;
     bool keepalive_ = false;
-    std::thread heartbeat_thread_;
+    std::jthread heartbeat_thread_;
 
     boost::asio::io_context io_context_;
     udp::socket socket_ { io_context_ };
