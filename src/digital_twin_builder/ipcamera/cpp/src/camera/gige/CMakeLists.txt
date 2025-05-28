@@ -1,6 +1,7 @@
+cmake_minimum_required(VERSION 3.28)
 message(STATUS "CMake: gige")
 
-add_library(gige client.cpp)
+add_library(gige STATIC client.cpp)
 
 add_subdirectory(gvcp)
 add_subdirectory(gvsp)

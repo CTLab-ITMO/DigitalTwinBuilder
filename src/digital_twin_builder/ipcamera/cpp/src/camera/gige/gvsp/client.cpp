@@ -14,6 +14,11 @@ client::client(const std::string& rx_address, uint16_t rx_port) :
 void client::set_endpoint(udp::endpoint&& tx_endpoint) {
     tx_endpoint_ = std::move(tx_endpoint);
 }
+
+void client::set_tx_address_and_port(const std::string& tx_address, uint16_t tx_port) {
+    tx_endpoint_ = udp::endpoint(boost::asio::ip::make_address_v4(tx_address), tx_port);
+}
+
 const std::string& client::get_rx_address() const {
     return rx_address_;
 }
@@ -22,8 +27,19 @@ uint16_t client::get_rx_port() const {
     return rx_port_;
 }
 
-void client::start_recieve() {
+void client::recieve() {
     socket_.async_receive_from(boost::asio::buffer(buffer_), tx_endpoint_, boost::bind(&client::handle_recieve, this, boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred));
+}
+
+void client::start_recieve() {
+    running_ = true;
+    recieve();
+    stream_thread_ = std::jthread(boost::bind(&boost::asio::io_context::run, &io_context_));
+}
+
+void client::stop_recieve() {
+    running_ = false;
+    stream_thread_.join();
 }
 
 void client::handle_recieve(const boost::system::error_code& error, std::size_t bytes) {
@@ -48,7 +64,6 @@ void client::handle_recieve(const boost::system::error_code& error, std::size_t 
                 auto payload_type = read_uint16(it);
                 switch (payload_type) {
                     case 1: {
-                        std::cout << "Image leader" << std::endl;
                         payloads_.push_back(std::unique_ptr<payload::image>(new payload::image(it)));
                         break;
                     } default:
@@ -61,29 +76,36 @@ void client::handle_recieve(const boost::system::error_code& error, std::size_t 
                 auto payload_type = read_uint16(it);
                 switch (payload_type) {
                     case 1: {
-                        std::cout << "Image trailer" << std::endl;
                         auto size_y = read_uint32(it);
-                        dynamic_cast<payload::image*>(payloads_.back().get())->write_file("tmp/" + std::to_string(meta_.payload_count));
+                        payload::image_format::bmp::write_file("tmp/" + std::to_string(meta_.payload_count), *dynamic_cast<payload::image*>(payloads_.back().get()));
                         break;
                     } default:
                         std::cerr << "Not implemented payload type" << std::endl;
                         break;
                 }
                 ++meta_.payload_count;
+                if (!running_) {
+                    payloads_.clear();
+                    meta_.payload_count = 0;
+                }
                 break;
             } case 3:
                 payloads_.back()->read(it, bytes - 8);
                 break;
             case 5:
+                throw std::runtime_error("Not implemented packet type");
                 // TODO:H264 payload
                 break;
             case 6:
+                throw std::runtime_error("Not implemented packet type");
                 // TODO:MultiZone payload
                 break;
             case 7:
+                throw std::runtime_error("Not implemented packet type");
                 // TODO:MultiPart payload
                 break;
             case 8:
+                throw std::runtime_error("Not implemented packet type");
                 // TODO:GenDC payload
                 break;
             default:
@@ -93,8 +115,8 @@ void client::handle_recieve(const boost::system::error_code& error, std::size_t 
     } else {
         std::cout << "Error: " << bytes << std::endl;
     }
-    if (meta_.payload_count < 10) {
-        start_recieve();
+    if (running_ || !payloads_.empty()) {
+        recieve();
     }
 }
 }

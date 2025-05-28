@@ -5,92 +5,41 @@
 #include <iostream>
 #include <type_traits>
 
-namespace camera::gige::gvcp::cmd {
+namespace camera::gige::gvcp {
 
-const std::string port("3956");
-const std::byte header{0x42};
 
-boost::asio::const_buffer command::get_buffer() const {
-    for (auto c : content_) {
-        std::cout << std::to_string(std::to_integer<uint16_t>(c)) << " ";
-    }
-    std::cout << '\n';
-    return boost::asio::buffer(content_);
+template <class content>
+boost::asio::const_buffer command<content>::get_buffer() const {
+    return boost::asio::buffer(&content_, sizeof(content));
 }
 
-ack command::get_ack(boost::asio::ip::udp::socket& socket) const {
-    return ack(socket);
+// template <class T>
+// std::enable_if_t<std::is_integral_v<T>> command::writeint(T val) {
+//     for (std::size_t i = sizeof(T); i > 0; --i) {
+//         content_.push_back(std::byte((val >> (8 * (i - 1))) & 0xff));
+//     }
+// }
+
+template <class content>
+command<content>::command(content cmd_content) {
+    content_ = cmd_content;
 }
 
-template <class T>
-std::enable_if_t<std::is_integral_v<T>> command::writeint(T val) {
-    for (std::size_t i = sizeof(T); i > 0; --i) {
-        content_.push_back(std::byte((val >> (8 * (i - 1))) & 0xff));
-    }
+namespace cmd {
+discovery::discovery(uint16_t req_id) : header{.flag=0x11, .command=command_values::discovery_cmd, .length=static_cast<uint16_t>(0), .req_id=req_id} {}
+
+readmem::readmem(uint16_t req_id, uint32_t address, uint16_t count) : header{.command=command_values::readmem_cmd, .length=static_cast<uint16_t>(8), .req_id=req_id}, address(address), count(count) {}
+
+readreg::readreg(uint16_t req_id, const std::vector<uint32_t>& reg_addresses) : header{.command=command_values::readreg_cmd, .length=static_cast<uint16_t>(reg_addresses.size() * 4), .req_id=req_id} {
+    copy_n(reg_addresses.begin(), reg_addresses.size(), addresses.begin());
 }
 
-discovery::discovery(uint16_t req_id) {
-    content_ = {
-        header, 
-        std::byte{0x11},
-    };
-    writeint(static_cast<uint16_t>(command_values::discovery_cmd));
-    writeint(uint16_t(0));
-    writeint(req_id);
+writemem::writemem(uint16_t req_id, uint32_t address, const std::vector<std::byte>& memory_data) : header{.command=command_values::writemem_cmd, .length=static_cast<uint16_t>(memory_data.size() + 4), .req_id=req_id}, address(address) {
+    copy_n(memory_data.begin(), memory_data.size(), data.begin());
 }
 
-readmem::readmem(uint16_t req_id, uint32_t address, uint16_t count) {
-    content_ = {
-        header,
-        std::byte{0x01},
-    };
-    writeint(static_cast<uint16_t>(command_values::readmem_cmd));
-    writeint(uint16_t(0x08));
-    writeint(req_id);
-    writeint(address);
-    writeint(uint32_t(count));
+writereg::writereg(uint16_t req_id, const std::vector<std::pair<uint32_t, uint32_t>>& reg_addresses) : header{.command=command_values::writereg_cmd, .length=static_cast<uint16_t>(reg_addresses.size() * 8), .req_id=req_id} {
+    copy_n(reg_addresses.begin(), reg_addresses.size(), addresses.begin());
 }
-
-readreg::readreg(uint16_t req_id, const std::vector<uint32_t>& addresses) {
-    uint16_t length = addresses.size() * 4;
-    content_ = {
-        header,
-        std::byte{0x01},
-    };
-    writeint(static_cast<uint16_t>(command_values::readreg_cmd));
-    writeint(length);
-    writeint(req_id);
-    for (auto& address : addresses) {
-        writeint(address);// TODO: check multiple of four (cleared last two bits)
-    }
-}
-
-writemem::writemem(uint16_t req_id, uint32_t address, const std::vector<std::byte>& data) {
-    content_ = {
-        header,
-        std::byte{0x01},
-    };
-    writeint(static_cast<uint16_t>(command_values::writemem_cmd));
-    writeint(uint16_t(0x08));
-    writeint(req_id);
-    writeint(address);// TODO: check clear 30 and 31 bits
-    for (auto byte : data) {
-        content_.push_back(byte);
-    }
-}
-
-writereg::writereg(uint16_t req_id, const std::vector<std::pair<uint32_t, uint32_t>>& addresses) {
-    uint16_t length = addresses.size() * 8;
-    content_ = {
-        header,
-        std::byte{0x01},
-    };
-    writeint(static_cast<uint16_t>(command_values::writereg_cmd));
-    writeint(length);
-    writeint(req_id);
-    for (auto& address : addresses) {
-        writeint(address.first);// TODO: check multiple of four (cleared last two bits)
-        writeint(address.second);
-    }
 }
 }

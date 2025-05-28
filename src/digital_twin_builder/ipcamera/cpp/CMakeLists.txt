@@ -5,6 +5,8 @@ project(digital_twin)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE INTERNAL "")
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++20 -O3")
+set(GCC_COVERAGE_COMPILE_FLAGS "-fPIC")
+set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} ${GCC_COVERAGE_COMPILE_FLAGS}")
 
 set(CMAKE_INSTALL_PREFIX ${PROJECT_SOURCE_DIR})
 set(Boost_USE_STATIC_LIBS   ON)
@@ -21,23 +23,15 @@ FetchContent_Declare(
   GIT_TAG v2.11.1  # Specific version
 )
 FetchContent_MakeAvailable(pybind11)
+
+include_directories(${CMAKE_SOURCE_DIR}/src)
+
 # add_executable(tests)
 add_executable(main)
 
 # add_subdirectory(test)
 add_subdirectory(src)
-
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  message(STATUS "Enabling libc++...")
-  # target_compile_options(tests PUBLIC -stdlib=libc++)
-  # target_link_options(tests PUBLIC -stdlib=libc++)
-endif()
-
-if(CMAKE_BUILD_TYPE MATCHES "Debug")
-  message(STATUS "Enabling _GLIBCXX_DEBUG...")
-  # target_compile_options(tests PUBLIC -D_GLIBCXX_DEBUG)
-endif()
-
+add_subdirectory(bindings)
 
 target_include_directories(main PUBLIC ${Boost_INCLUDE_DIRS})
 # target_include_directories(tests PUBLIC ${Boost_INCLUDE_DIRS})

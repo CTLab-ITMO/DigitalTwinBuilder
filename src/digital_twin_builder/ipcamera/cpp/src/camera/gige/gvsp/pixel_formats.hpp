@@ -1,6 +1,6 @@
 #pragma once
-
 #include <cstdint>
+
 namespace camera::gige::gvsp {
 enum pixel_formats : uint32_t {
 Mono1p = 0x01010037, ///< 1-bit monochrome, unsigned, 8 pixels packed in one byte.

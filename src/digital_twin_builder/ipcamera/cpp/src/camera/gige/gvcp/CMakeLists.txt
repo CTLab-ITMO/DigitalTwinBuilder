@@ -1,5 +1,7 @@
+cmake_minimum_required(VERSION 3.28)
+message(STATUS "CMake: gvcp")
 
-add_library(gvcp ${CMAKE_CURRENT_SOURCE_DIR}/command.cpp ${CMAKE_CURRENT_SOURCE_DIR}/ack.cpp ${CMAKE_CURRENT_SOURCE_DIR}/client.cpp)
+add_library(gvcp STATIC command.cpp ack.cpp client.cpp)
 
 target_link_libraries(gvcp PRIVATE Boost::boost Boost::system libzip::zip pugixml::static pugixml::pugixml)
 

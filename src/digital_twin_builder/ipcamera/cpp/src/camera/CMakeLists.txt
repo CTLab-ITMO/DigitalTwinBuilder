@@ -1,5 +1,6 @@
+cmake_minimum_required(VERSION 3.28)
 message(STATUS "CMake: camera")
-add_library(camera client.cpp)
+add_library(camera STATIC client.cpp)
 
 add_subdirectory(gige)
 add_subdirectory(rtsp)
