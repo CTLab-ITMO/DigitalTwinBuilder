@@ -159,26 +159,20 @@ std::string client::get_xml_genicam(const std::string& path) {
     ack::readmem response = execute<ack::readmem>(cmd::readmem(req_id_inc(), registers::second_url, 512));
     std::stringstream sstream(std::string(reinterpret_cast<const char*>(response.data.data())));
     std::string location, name, extension, temp;
-    std::cout << sstream.view() << '\n';
     getline(sstream, location, ':');
     getline(sstream, name, '.');
     getline(sstream, extension, ';');
     getline(sstream, temp, ';');
-    std::cout << temp << '\n';
     uint32_t address = std::stoi(temp, nullptr, 16);
     getline(sstream, temp);
-    std::cout << temp << '\n';
     uint32_t length = std::stoi(temp, nullptr, 16);
-    std::cout << address << " " << length << std::endl;
 
     std::string filename = path + name + std::string(".") + extension;
     std::string unzipped_filename = path + name + ".xml";
     std::ofstream file_out(filename);
     uint32_t batch_length = 512;
     uint32_t count = length / batch_length + 1;
-    std::cout << count << '\n';
     for (int i = 0; i < count; ++i) {
-        std::cout << i << '\n';
         auto xml_response = execute<ack::readmem>(cmd::readmem(req_id_inc(), address + i * batch_length, batch_length));
         if (xml_response.header.status == status_codes::GEV_STATUS_SUCCESS) {
             file_out.write(reinterpret_cast<const char*>(xml_response.data.data()), batch_length);
@@ -230,11 +224,9 @@ void client::parse_xml_genicam(const std::string& filename) {
             std::string feature_name = feature.node().child_value();
             std::string group = "/RegisterDescription/Group[@Comment='" + category_value + "']/*[@Name='";
             pugi::xml_node feature_node = doc.select_node((group + feature_name + "']").c_str()).node();
-            std::cout << feature_name << " ";
             std::string feature_node_pvalue = feature_node.child("pValue").child_value();
             std::string feature_reg = doc.select_node((group + feature_node_pvalue + "']/pAddress").c_str()).node().child_value();
             std::string feature_reg_addr = doc.select_node(("/RegisterDescription/Group[@Comment='RegAddr']/Group[@Comment='Inq RegAddr']/Integer[@Name='" + feature_reg + "']/Value").c_str()).node().child_value();
-            std::cout << feature_node_pvalue << " " << feature_reg << " " << feature_reg_addr << '\n';
             if (feature_reg_addr != "") {
                 genicam_regs[feature_name] = std::stoi(feature_reg_addr, nullptr, 16);
             }
