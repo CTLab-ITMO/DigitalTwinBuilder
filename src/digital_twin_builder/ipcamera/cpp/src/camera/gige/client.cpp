@@ -3,9 +3,11 @@
 #include <boost/asio/detail/socket_ops.hpp>
 #include <cstdint>
 #include <iostream>
+#include <filesystem>
 
 namespace camera::gige {
 client::client(const std::string& tx_address, const std::string& rx_address, uint16_t rx_port) : gvcp_(tx_address), gvsp_(rx_address, rx_port) {
+    std::filesystem::create_directory("tmp/");
     auto filename = gvcp_.get_xml_genicam("tmp/");
     gvcp_.parse_xml_genicam(filename);
 }
