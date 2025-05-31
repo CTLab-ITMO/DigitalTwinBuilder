@@ -1,5 +1,4 @@
 build.sh 
-src/main.cpp
 
 CMakeLists.txt.user
 CMakeCache.txt
