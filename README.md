@@ -34,8 +34,7 @@ DigitalTwinBuilder/
 │       │   │   ├── __init__.py
 │       │   │   ├── database.py
 │       │   │   ├── models.py
-│       │   │   ├── sensor_manager.py
-│       │   │   └── data_processor.py
+│       │   │   └── sensor_manager.py
 │       │   │   
 │       │   ├── interfaces/
 │       │   │   ├── __init__.py
