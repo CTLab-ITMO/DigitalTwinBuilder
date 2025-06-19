@@ -34,12 +34,23 @@ DigitalTwinBuilder/
 │       │   │   ├── __init__.py
 │       │   │   ├── database.py
 │       │   │   ├── models.py
-│       │   │   └── sensors.py
+│       │   │   ├── sensor_manager.py
+│       │   │   └── data_processor.py
 │       │   │   
 │       │   ├── interfaces/
 │       │   │   ├── __init__.py
 │       │   │   └── web_interface.py
 │       │   │   
+│       │   ├── sensors/
+│       │   │   ├── __init__.py
+│       │   │   ├── base_sensor.py
+│       │   │   ├── level_sensor.py
+│       │   │   ├── pressure_sensor.py
+│       │   │   ├── rfid_sensor.py
+│       │   │   ├── temperature_sensor.py
+│       │   │   ├── vibration_sensor.py
+│       │   │   └── wear_sensor.py
+│       │   │ 
 │       │   ├── main.py   
 │       │   └── requirements.txt 
 │       │   
