@@ -1,16 +1,12 @@
+# digital_twin_agent.py
 from .base_agent import BaseAgent
-from transformers import pipeline
 import json
 from typing import Dict, Any
 
 class DigitalTwinAgent(BaseAgent):
     def __init__(self):
         super().__init__("DigitalTwinAgent")
-        try:
-            self.model = pipeline("text-generation", model="bigcode/starcoder2-3b") #bigcode/starcoder2-7b
-        except Exception as e:
-            self.log(f"Failed to load digital twin model: {str(e)}", "error")
-            raise
+        self.log("Using mock digital twin model")
 
     def run(self, requirements: Dict[str, Any] = None, db_schema: Dict[str, Any] = None) -> Dict[str, Any]:
         """Implementation of abstract method from BaseAgent"""
@@ -23,26 +19,47 @@ class DigitalTwinAgent(BaseAgent):
             raise
 
     def configure_twin(self, requirements: Dict[str, Any], db_schema: Dict[str, Any]) -> Dict[str, Any]:
-        """Configure digital twin from requirements and db schema"""
-        self.log("Configuring digital twin")
-        prompt = f"""Create digital twin configuration with:
-        Requirements: {json.dumps(requirements)}
-        Database Schema: {json.dumps(db_schema)}
-        Output JSON with components, data flows, and visualization setup."""
+        """Configure mock digital twin from requirements and db schema"""
+        self.log("Configuring mock digital twin")
         
-        try:
-            response = self.model(
-                prompt, 
-                max_length=2048, 
-                num_return_sequences=1
-            )[0]['generated_text']
-            return self._parse_response(response)
-        except Exception as e:
-            self.log(f"Configuration failed: {str(e)}", "error")
-            raise
+        mock_response = """{
+            "components": [
+                {
+                    "name": "sensor_monitoring",
+                    "type": "data_collection",
+                    "sensors": ["temperature", "pressure", "vibration", "level", "wear", "rfid"]
+                },
+                {
+                    "name": "data_visualization",
+                    "type": "dashboard",
+                    "charts": ["real-time_values", "historical_trends"]
+                }
+            ],
+            "data_flows": [
+                {
+                    "from": "sensors",
+                    "to": "database",
+                    "protocol": "MQTT",
+                    "frequency": "1s"
+                },
+                {
+                    "from": "database",
+                    "to": "dashboard",
+                    "protocol": "REST",
+                    "frequency": "1s"
+                }
+            ],
+            "visualization": {
+                "layout": "grid",
+                "refresh_rate": 1000,
+                "theme": "dark"
+            }
+        }"""
+        
+        return self._parse_response(mock_response)
 
     def _parse_response(self, response: str) -> Dict[str, Any]:
-        """Parse the model response into structured data"""
+        """Parse the mock response into structured data"""
         try:
             return json.loads(response)
         except json.JSONDecodeError:

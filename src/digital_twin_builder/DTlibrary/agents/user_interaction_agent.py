@@ -1,85 +1,29 @@
+# user_interaction_agent.py
 from .base_agent import BaseAgent
-from transformers import pipeline
 import json
 
 class UserInteractionAgent(BaseAgent):
     def __init__(self):
         super().__init__("UserInteractionAgent")
-        try:
-            self.model = pipeline("text-generation", model="MTSAIR/Cotype-Nano")
-        except Exception as e:
-            self.log(f"Model loading failed: {str(e)}", "error")
-            raise
+        self.log("Using mock user interaction model")
         
-        self.interview_template = """Задача: Ты - агент-интервьюер для сбора данных о предприятии (сотрудник - твой источник) для построения цифрового двойника производства. Проведи структурированное интервью, получая конкретные и детальные ответы.
-
-Контекст: Сотрудник обладает знаниями о производственных процессах, оборудовании и инфраструктуре.
-
-Инструкции:
-
-1. Представься, объясни цель (цифровой двойник), заверь в конфиденциальности.
-2. Общая информация:
-    * Деятельность предприятия (что производит/услуги)?
-    * Организационная структура (отделы, взаимодействие)?
-    * Площадь производства (приблизительно)?
-3. Цифровой двойник:
-    * Какой процесс/участок оцифровать в первую очередь? Почему?
-    * Подробное описание процесса/участка (шаг за шагом).
-    * KPI для мониторинга процесса?
-    * Проблемы процесса/участка?
-4. Оборудование и инфраструктура:
-    * Основное оборудование (название, модель, производитель, год)?
-    * Связь оборудования (материалы, энергия, информация)?
-    * Используемые системы автоматизации (SCADA, PLC, MES)?
-    * Схемы расположения оборудования (если есть)?
-5. Видеонаблюдение:
-    * Система видеонаблюдения (охват процесса)?
-    * Количество камер, расположение?
-    * Характеристики камер (разрешение, FPS, угол)?
-    * Сохранение видеопотока (где, срок)?
-    * Видеоаналитика (какая)?
-6. Датчики:
-    * Используемые датчики (тип, параметр, расположение)?
-    * Измеряемые параметры (температура, давление и т.д.)?
-    * Частота сбора данных?
-    * Передача данных (куда)?
-    * Спецификации датчиков (если есть)?
-7. База данных:
-    * Данные для хранения (датчики, видео, оборудование, логи)?
-    * Частота обновления данных?
-    * Требования к масштабируемости?
-8. Дополнительно:
-    * Важные данные (документация, чертежи, анализы)?
-    * Ограничения/требования (безопасность, конфиденциальность)?
-    * Контакты для консультаций?
-9. Завершение:
-    * Благодарность за участие.
-    * Информация об использовании данных.
-
-Стиль: Вежливо, внимательно, уточняющие вопросы, избегай тех. терминов (если сотрудник не владеет).
-
-Представь результаты интервью в виде JSON-объекта со следующей структурой:
-
-json
-{
-  "introduction": "Твое представление и объяснение цели интервью сотруднику.",
-  "general_information": {
-    "enterprise_activity": "Деятельность предприятия (производство/услуги).",
-    "organizational_structure": "Организационная структура (отделы, взаимодействие).",
-    "production_area": "Площадь производства (приблизительно)."
-  },
-  "digital_twin": {
-    "priority_process": {
-      "process_name": "Процесс/участок, который следует оцифровать в первую очередь.",
-      "reason": "Обоснование выбора процесса/участка."
-    },
-    "process_description": "Подробное описание процесса/участка (шаг за шагом).",
-    "problems": "Проблемы процесса/участка."
-  },
-  "conclusion": "Твои заключительные слова благодарности сотруднику."
-}
-Теперь, начни интервью с сотрудником.
-"""
+        self.mock_response = """{
+            "introduction": "Mock interview with employee ID 12345",
+            "general_information": {
+                "enterprise_activity": "Manufacturing of industrial equipment",
+                "organizational_structure": "Production, Quality Control, Maintenance, Logistics",
+                "production_area": "5000 sq.m."
+            },
+            "digital_twin": {
+                "priority_process": {
+                    "process_name": "Assembly line 3",
+                    "reason": "Most critical for production with highest failure rate"
+                },
+                "process_description": "1. Parts arrival 2. Pre-assembly 3. Main assembly 4. Quality check 5. Packaging",
+                "problems": "Frequent delays at quality check station"
+            },
+            "conclusion": "Thank you for participating in the digital twin interview"
+        }"""
 
     def run(self, input_data=None):
         """Implementation of abstract method from BaseAgent"""
@@ -90,18 +34,12 @@ json
             raise
 
     def conduct_interview(self):
-        """Conduct the digital twin configuration interview"""
-        self.log("Starting digital twin configuration interview")
+        """Return mock interview results"""
+        self.log("Returning mock interview results")
         try:
-            response = self.model(
-                self.interview_template,
-                max_length=1024,
-                num_return_sequences=1
-            )[0]['generated_text']
-            
-            return json.loads(response)
+            return json.loads(self.mock_response)
         except json.JSONDecodeError:
-            return {"response": response}
+            return {"response": self.mock_response}
         except Exception as e:
-            self.log(f"Interview failed: {str(e)}", "error")
+            self.log(f"Mock interview failed: {str(e)}", "error")
             raise
