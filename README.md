@@ -22,13 +22,27 @@
 DigitalTwinBuilder/
 ├── src/
 │   └── DigitalTwinBuilder/ 
-│       ├── __init__.py         
-│       ├── python_module1/  
-│       │   ├── __init__.py
-│       │   └── ...
-│       ├── python_module2/
-│       │   ├── __init__.py
-│       │   └── ...
+│       ├── DTlibrary/
+│       │   ├── agents/
+│       │   │   ├── __init__.py
+│       │   │   ├── base_agent.py
+│       │   │   ├── user_interaction_agent.py
+│       │   │   ├── database_agent.py
+│       │   │   └── digital_twin_agent.py
+│       │   │   
+│       │   ├── core/
+│       │   │   ├── __init__.py
+│       │   │   ├── database.py
+│       │   │   ├── models.py
+│       │   │   └── sensors.py
+│       │   │   
+│       │   ├── interfaces/
+│       │   │   ├── __init__.py
+│       │   │   └── web_interface.py
+│       │   │   
+│       │   ├── main.py   
+│       │   └── requirements.txt 
+│       │   
 │       └── ipcamera/             # git submodule (later may be removed and added with PyPI package)
 │           ├── cpp/
 │           │   ├── src/
