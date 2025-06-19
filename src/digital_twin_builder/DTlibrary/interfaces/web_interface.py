@@ -2,12 +2,12 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import datetime, timedelta
-from agents.user_interaction_agent import UserInteractionAgent
-from agents.database_agent import DatabaseAgent
-from agents.digital_twin_agent import DigitalTwinAgent
 from cores.database import DatabaseManager
 from cores.sensor_manager import SensorManager
 import json
+from agents.user_interaction_agent import UserInteractionAgent
+from agents.database_agent import DatabaseAgent
+from agents.digital_twin_agent import DigitalTwinAgent
 
 class DigitalTwinInterface:
     def __init__(self):
@@ -185,5 +185,4 @@ class DigitalTwinInterface:
         except Exception as e:
             st.error(f"Failed to fetch historical data: {str(e)}")
 
-if __name__ == "__main__":
-    interface = DigitalTwinInterface()
+interface = DigitalTwinInterface()

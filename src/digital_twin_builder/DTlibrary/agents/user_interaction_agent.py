@@ -5,7 +5,11 @@ import json
 class UserInteractionAgent(BaseAgent):
     def __init__(self):
         super().__init__("UserInteractionAgent")
-        self.model = pipeline("text-generation", model="MTSAIR/Cotype-Nano")
+        try:
+            self.model = pipeline("text-generation", model="MTSAIR/Cotype-Nano")
+        except Exception as e:
+            self.log(f"Model loading failed: {str(e)}", "error")
+            raise
         
         self.interview_template = """Задача: Ты - агент-интервьюер для сбора данных о предприятии (сотрудник - твой источник) для построения цифрового двойника производства. Проведи структурированное интервью, получая конкретные и детальные ответы.
 
@@ -77,12 +81,27 @@ json
 Теперь, начни интервью с сотрудником.
 """
 
-    def conduct_interview(self):
-        self.log("Starting digital twin configuration interview")
-        prompt = self.interview_template
-        response = self.model(prompt, max_length=1024, num_return_sequences=1)[0]['generated_text']
-        
+    def run(self, input_data=None):
+        """Implementation of abstract method from BaseAgent"""
         try:
+            return self.conduct_interview()
+        except Exception as e:
+            self.log(f"Error in run method: {str(e)}", "error")
+            raise
+
+    def conduct_interview(self):
+        """Conduct the digital twin configuration interview"""
+        self.log("Starting digital twin configuration interview")
+        try:
+            response = self.model(
+                self.interview_template,
+                max_length=1024,
+                num_return_sequences=1
+            )[0]['generated_text']
+            
             return json.loads(response)
         except json.JSONDecodeError:
             return {"response": response}
+        except Exception as e:
+            self.log(f"Interview failed: {str(e)}", "error")
+            raise

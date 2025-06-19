@@ -1,5 +1,8 @@
-from .interfaces.web_interface import DigitalTwinInterface
-import streamlit as st
+import sys
+from os.path import dirname, join
+sys.path.append(join(dirname(__file__), 'DTlibrary'))
+
+from interfaces.web_interface import DigitalTwinInterface
 
 def main():
     interface = DigitalTwinInterface()

@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 try:
     import OPi.GPIO as GPIO
 except ImportError:
-    print("OPi.GPIO not installed. Using fake GPIO.")
+    print("OPi.GPIO not installed. Using simulated sensors.")
     class FakeGPIO:
         def setmode(self, mode): pass
         def setup(self, pin, mode): pass
