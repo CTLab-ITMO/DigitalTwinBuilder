@@ -6,7 +6,7 @@
 namespace py = pybind11;
 
 PYBIND11_MODULE(_camera, m) {
-    py::class_<camera::client>(m, "camera")
+    py::class_<camera::client>(m, "camera_client")
         .def(py::init<>())
         .def("start", &camera::client::start)
         .def("stop", &camera::client::stop)

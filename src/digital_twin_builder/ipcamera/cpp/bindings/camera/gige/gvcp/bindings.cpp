@@ -8,7 +8,7 @@
 namespace py = pybind11;
 
 PYBIND11_MODULE(_gvcp, m) {
-    py::class_<camera::gige::gvcp::client>(m, "gvcp")
+    py::class_<camera::gige::gvcp::client>(m, "gvcp_client")
         .def(py::init<const std::string&>(), py::arg("tx_address"))
         .def("get_control", &camera::gige::gvcp::client::get_control)
         .def("drop_control", &camera::gige::gvcp::client::drop_control)

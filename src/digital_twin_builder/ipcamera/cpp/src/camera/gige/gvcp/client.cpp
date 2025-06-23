@@ -10,6 +10,7 @@
 #include <iostream>
 #include <thread>
 #include <fstream>
+#include <ranges>
 
 namespace camera::gige::gvcp {
 template <class ack_content, class cmd_content>
@@ -232,6 +233,11 @@ void client::parse_xml_genicam(const std::string& filename) {
             }
         }
     }
+}
+
+std::vector<std::string> client::get_all_registers() {
+    auto ks = std::views::keys(genicam_regs);
+    return std::vector<std::string>{ ks.begin(), ks.end() };
 }
 
 uint16_t client::req_id_inc() {

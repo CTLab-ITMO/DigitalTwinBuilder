@@ -22,4 +22,8 @@ void client::stop_stream() {
     gvsp_.stop_recieve();
     gvcp_.stop_streaming();
 }
+
+std::vector<std::string> client::get_all_registers() {
+    return gvcp_.get_all_registers();
 }
+} // namespace camera::gige

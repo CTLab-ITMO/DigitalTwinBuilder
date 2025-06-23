@@ -27,6 +27,7 @@ public:
     static std::vector<std::string> get_all_gige_devices();
     std::string get_xml_genicam(const std::string& path);
     void parse_xml_genicam(const std::string& filename);
+    std::vector<std::string> get_all_registers();
 private:
     uint16_t req_id_inc();
     void heartbeat();

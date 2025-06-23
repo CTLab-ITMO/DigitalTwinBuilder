@@ -6,5 +6,5 @@
 namespace py = pybind11;
 
 PYBIND11_MODULE(_rtsp, m) {
-    py::class_<camera::rtsp::client>(m, "rtsp");
+    py::class_<camera::rtsp::client>(m, "rtsp_client");
 }
