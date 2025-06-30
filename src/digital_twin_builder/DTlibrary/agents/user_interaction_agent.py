@@ -1,6 +1,7 @@
 from .base_agent import BaseAgent
 from transformers import pipeline
 import json
+from typing import Dict, Any
 
 class UserInteractionAgent(BaseAgent):
     def __init__(self):
@@ -11,7 +12,7 @@ class UserInteractionAgent(BaseAgent):
             self.log(f"Model loading failed: {str(e)}", "error")
             raise
         
-        self.interview_template = self.interview_template = """Ты - агент для сбора информации о металлургическом производстве с целью создания цифрового двойника. Проведи интервью на русском языке, задавая четкие вопросы по следующим темам:
+        self.system_prompt = """Ты - агент для сбора информации о производстве с целью создания цифрового двойника. Проведи интервью на русском языке, задавая четкие вопросы по следующим темам:
 
 1. Общая информация о предприятии:
    - Основная деятельность и продукция
@@ -45,15 +46,19 @@ class UserInteractionAgent(BaseAgent):
     def conduct_interview(self):
         self.log("Starting digital twin configuration interview with LLM")
         try:
+            initial_prompt = f"{self.system_prompt}\n\nНачни диалог с приветствия и краткого перечисления пунктов, которые нужно обсудить."
             response = self.model(
-                self.interview_template,
+                initial_prompt,
                 max_length=2048,
                 num_return_sequences=1
             )[0]['generated_text']
             
-            return json.loads(response)
-        except json.JSONDecodeError:
-            return {"response": response}
+            assistant_response = response.replace(self.system_prompt, "").strip()
+            
+            return {
+                "initial_response": assistant_response,
+                "system_prompt": self.system_prompt
+            }
         except Exception as e:
             self.log(f"Interview failed: {str(e)}", "error")
             raise

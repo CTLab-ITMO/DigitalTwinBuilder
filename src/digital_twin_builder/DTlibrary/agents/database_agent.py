@@ -8,7 +8,7 @@ class DatabaseAgent(BaseAgent):
         super().__init__("DatabaseAgent")
         try:
             self.model = pipeline("text-generation", 
-                                 model="abdulmannan-01/qwen-2.5-1.5b-finetuned-for-sql-generation")
+                                model="abdulmannan-01/qwen-2.5-1.5b-finetuned-for-sql-generation")
         except Exception as e:
             self.log(f"Failed to load database model: {str(e)}", "error")
             raise
@@ -24,8 +24,16 @@ class DatabaseAgent(BaseAgent):
 
     def generate_schema(self, requirements: Dict[str, Any]) -> Dict[str, Any]:
         self.log("Generating database schema with LLM")
+        
+        translated_reqs = {
+            "general_info": requirements.get("общая_информация", ""),
+            "production_processes": requirements.get("производственные_процессы", ""),
+            "data_monitoring": requirements.get("данные_и_мониторинг", ""),
+            "twin_requirements": requirements.get("требования_к_цифровому_двойнику", "")
+        }
+        
         prompt = f"""Create a PostgreSQL schema for a metallurgical production digital twin based on these requirements:
-        {json.dumps(requirements)}
+        {json.dumps(translated_reqs, ensure_ascii=False)}
         
         The schema should include tables for:
         - Sensor data (temperature, pressure, vibration, etc.)
@@ -47,7 +55,6 @@ class DatabaseAgent(BaseAgent):
             raise
 
     def _parse_response(self, response: str) -> Dict[str, Any]:
-        """Parse the model response into structured data"""
         try:
             return json.loads(response)
         except json.JSONDecodeError:
