@@ -55,45 +55,109 @@ class DigitalTwinInterface:
         
         if 'chat_history' not in st.session_state:
             st.session_state.chat_history = []
-            try:
-                interview_start = self.ui_agent.conduct_interview()
-                st.session_state.chat_history.append({
-                    "role": "bot",
-                    "content": interview_start["initial_response"]
-                })
-                st.session_state.interview_completed = False
-            except Exception as e:
-                st.error(f"Ошибка инициализации: {e}")
-                return
-
-        for msg in st.session_state.chat_history:
-            st.chat_message(msg["role"]).write(msg["content"])
-
-        if not st.session_state.interview_completed:
-            user_input = st.chat_input("Ваш ответ...")
+            st.session_state.interview_state = {
+                'current_topic': None,
+                'collected_data': {},
+                'system_prompt': """Ты - профессиональный интервьюер для создания цифрового двойника металлургического производства. 
+                Твоя задача - задавать четкие, последовательные вопросы на русском языке, чтобы собрать информацию по следующим темам:
+                1. Общая информация о предприятии
+                2. Производственные процессы
+                3. Системы мониторинга
+                4. Требования к цифровому двойнику
+                
+                Начни с приветствия и краткого объяснения цели интервью. Затем задавай по одному вопросу за раз.
+                После каждого ответа пользователя либо задавай уточняющий вопрос, либо переходи к следующей теме.
+                В конце суммируй собранную информацию."""
+            }
+            
+            initial_response = self._generate_llm_response(st.session_state.interview_state['system_prompt'])
+            st.session_state.chat_history.append({
+                "role": "bot", 
+                "content": initial_response
+            })
+        
+        for message in st.session_state.chat_history:
+            role = "assistant" if message["role"] == "bot" else "user"
+            with st.chat_message(role):
+                st.markdown(message["content"])
+        
+        if not st.session_state.get('interview_completed', False):
+            user_input = st.chat_input("Введите информацию о вашем производстве...")
             
             if user_input:
                 st.session_state.chat_history.append({"role": "user", "content": user_input})
                 
-                context = "\n".join(
-                    f"{msg['role']}: {msg['content']}" 
-                    for msg in st.session_state.chat_history[-3:]
-                )
+                prompt = self._build_interview_prompt(user_input)
                 
-                try:
-                    next_question = self.ui_agent.generate_question(context)
-                    
-                    if "спасибо" in next_question.lower():
-                        st.session_state.interview_completed = True
-                        next_question += "\n\nИнтервью завершено. Перейдите к настройке базы данных."
-                    
-                    st.session_state.chat_history.append({"role": "bot", "content": next_question})
-                    st.rerun()
+                bot_response = self._generate_llm_response(prompt)
                 
-                except Exception as e:
-                    st.error(f"Ошибка генерации вопроса: {e}")
+                if "спасибо за информацию" in bot_response.lower():
+                    st.session_state.interview_completed = True
+                    st.session_state.interview_result = st.session_state.interview_state['collected_data']
+                    bot_response += "\n\nИнтервью завершено. Перейдите к следующей вкладке."
+                
+                st.session_state.chat_history.append({"role": "bot", "content": bot_response})
+                st.rerun()
         else:
-            st.success("Интервью завершено!")
+            st.success("Интервью завершено! Перейдите к следующей вкладке.")
+            with st.expander("Собранные данные"):
+                st.json(st.session_state.interview_result)
+
+
+    def _build_interview_prompt(self, user_input):
+        history = "\n".join(
+            f"{msg['role']}: {msg['content']}" 
+            for msg in st.session_state.chat_history[-6:]  
+        )
+        
+        return f"""Продолжи интервью для цифрового двойника. Вот история диалога:
+    {history}
+
+    Твои задачи:
+    1. Задай следующий уточняющий вопрос по текущей теме ИЛИ
+    2. Если информации достаточно, переходи к следующей теме
+    3. Если все темы раскрыты, поблагодари и заверши интервью
+
+    Твой следующий вопрос/действие:"""
+
+    def _generate_llm_response(self, prompt):
+        try:
+            response = self.ui_agent.model(
+                prompt,
+                max_length=1024,
+                num_return_sequences=1,
+                temperature=0.7
+            )[0]['generated_text']
+            
+            # Очищаем ответ от технических деталей
+            clean_response = response.split("\n")[0].strip()
+            clean_response = clean_response.replace("Твой следующий вопрос/действие:", "").strip()
+            
+            # Обновляем собранные данные
+            if ":" in clean_response and "спасибо" not in clean_response.lower():
+                topic = self._detect_current_topic(clean_response)
+                if topic:
+                    st.session_state.interview_state['current_topic'] = topic
+                    st.session_state.interview_state['collected_data'].setdefault(topic, []).append(clean_response)
+            
+            return clean_response
+        except Exception as e:
+            return f"Произошла ошибка: {str(e)}"
+
+
+    def _detect_current_topic(self, question):
+        question_lower = question.lower()
+        topics = {
+            "general_info": ["предприятии", "компании", "продукция", "структура"],
+            "production_processes": ["процесс", "оборудован", "технолог", "производств"],
+            "data_monitoring": ["датчик", "мониторинг", "данн", "сбор"],
+            "twin_requirements": ["двойник", "модел", "визуализ", "требован"]
+        }
+        
+        for topic, keywords in topics.items():
+            if any(keyword in question_lower for keyword in keywords):
+                return topic
+        return None
      
 
     def setup_database_tab(self):
