@@ -16,7 +16,7 @@
 * [RTSP](https://datatracker.ietf.org/doc/html/rfc7826) - протокол для организации трансляций и передачи медиаконтента
 * [ONVIF](https://www.onvif.org/profiles/) - протокол, который подробно описывает, как сетевые устройства передачи видео ( IP-камеры, видеорегистраторы), интегрируются с сетевыми программами обработки и отображения видеопотока.
 
-## Project structure
+## Структура проекта
 
 ```
 DigitalTwinBuilder/
@@ -95,18 +95,15 @@ DigitalTwinBuilder/
 ├── requirements.txt
 └── README.md
 ```
-
-## Building from source
-### Installing dependencies
-#### MacOS
-```bash
-brew install gcc cmake vcpkg boost
-```
-#### Fedora, CentOS
+## Установка
+### Docker (рекомендованный путь)
+### Building from source
+#### Installing dependencies
+##### Ubuntu
 ```bash
 sudo dnf install gcc cmake vcpkg boost-devel
 ```
-### IP camera module
+#### IP camera module
 ```bash
 mkdir -p build
 rm -rf build/*
@@ -114,6 +111,10 @@ cmake -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT -DBOOST_ROOT=$BOOST_ROOT --preset Debug
 cmake --build ./build
 ```
 Для запуска используйте бинарный файл ```./build/main```
+## Использование
+### IP camera модуль
+### DTlibrary
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](https://github.com/lizaelisaveta/DigitalTwinOfProduction/blob/main/LICENSE) file for details.
