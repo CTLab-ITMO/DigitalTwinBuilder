@@ -49,6 +49,7 @@ class DigitalTwinInterface:
         with self.tab4:
             self.setup_sensor_tab()
 
+
     def setup_interview_tab(self):
         st.header("Создание цифрового двойника производства")
         
@@ -56,12 +57,20 @@ class DigitalTwinInterface:
             st.session_state.chat_history = []
             st.session_state.interview_state = {
                 'current_topic': None,
-                'completed_topics': [],
                 'collected_data': {},
-                'awaiting_response': False
+                'system_prompt': """Ты - профессиональный интервьюер для создания цифрового двойника металлургического производства. 
+                Твоя задача - задавать четкие, последовательные вопросы на русском языке, чтобы собрать информацию по следующим темам:
+                1. Общая информация о предприятии
+                2. Производственные процессы
+                3. Системы мониторинга
+                4. Требования к цифровому двойнику
+                
+                Начни с приветствия и краткого объяснения цели интервью. Затем задавай по одному вопросу за раз.
+                После каждого ответа пользователя либо задавай уточняющий вопрос, либо переходи к следующей теме.
+                В конце суммируй собранную информацию."""
             }
             
-            initial_response = self._get_initial_interview_questions()
+            initial_response = self._generate_llm_response(st.session_state.interview_state['system_prompt'])
             st.session_state.chat_history.append({
                 "role": "bot", 
                 "content": initial_response
@@ -78,12 +87,14 @@ class DigitalTwinInterface:
             if user_input:
                 st.session_state.chat_history.append({"role": "user", "content": user_input})
                 
-                bot_response = self._get_next_interview_question(user_input)
+                prompt = self._build_interview_prompt(user_input)
                 
-                if st.session_state.interview_state.get('interview_completed'):
-                    bot_response += "\n\nСпасибо! Интервью завершено. Перейдите к следующей вкладке для настройки базы данных."
+                bot_response = self._generate_llm_response(prompt)
+                
+                if "спасибо за информацию" in bot_response.lower():
                     st.session_state.interview_completed = True
                     st.session_state.interview_result = st.session_state.interview_state['collected_data']
+                    bot_response += "\n\nИнтервью завершено. Перейдите к следующей вкладке."
                 
                 st.session_state.chat_history.append({"role": "bot", "content": bot_response})
                 st.rerun()
@@ -92,74 +103,62 @@ class DigitalTwinInterface:
             with st.expander("Собранные данные"):
                 st.json(st.session_state.interview_result)
 
-    def _get_initial_interview_questions(self):
-        return """Здравствуйте! Для построения цифрового двойника производства, пожалуйста, предоставьте следующую информацию:Add commentMore actions
-            
-            1. Основные характеристики объекта
-            2. Цели и задачи цифрового двойника
-            3. Доступные данные и источники информации
-            4. Временные рамки и частота обновления данных
-            5. Особые требования или ограниченияAdd commentMore actions
-            
-            Пожалуйста, начните с описания вашего производства."""
 
-    def _get_next_interview_question(self, user_input):
-        """Генерирует следующий вопрос на основе ответа пользователя"""
+    def _build_interview_prompt(self, user_input):
+        history = "\n".join(
+            f"{msg['role']}: {msg['content']}" 
+            for msg in st.session_state.chat_history[-6:]  
+        )
+        
+        return f"""Продолжи интервью для цифрового двойника. Вот история диалога:
+    {history}
 
-        current_state = st.session_state.interview_state
-        topics = [
-            "general_info",
-            "production_processes",
-            "data_monitoring",
-            "twin_requirements"
-        ]
-        
-        if not current_state['current_topic']:
-            current_topic = topics[0]
-            current_state['current_topic'] = current_topic
-            current_state['collected_data'][current_topic] = []
-        
-        current_state['collected_data'][current_state['current_topic']].append(user_input)
-        
-        questions = {
-            "general_info": [
-                "Расскажите подробнее об организационной структуре предприятия",
-                "Каковы площади производства и как они распределены?",
-                "Сколько сотрудников работает на предприятии?"
-            ],
-            "production_processes": [
-                "Опишите основные технологические этапы производства",
-                "Какое оборудование является наиболее критичным?",
-                "Какие параметры процессов требуют постоянного контроля?"
-            ],
-            "data_monitoring": [
-                "Какие датчики и системы мониторинга уже установлены?",
-                "Как часто собираются данные с оборудования?",
-                "Где и как хранятся собранные данные?"
-            ],
-            "twin_requirements": [
-                "Какие процессы должны быть смоделированы в цифровом двойнике?",
-                "Какие показатели вы хотите визуализировать в первую очередь?",
-                "Нужна ли интеграция с другими системами предприятия?"
-            ]
+    Твои задачи:
+    1. Задай следующий уточняющий вопрос по текущей теме ИЛИ
+    2. Если информации достаточно, переходи к следующей теме
+    3. Если все темы раскрыты, поблагодари и заверши интервью
+
+    Твой следующий вопрос/действие:"""
+
+    def _generate_llm_response(self, prompt):
+        try:
+            response = self.ui_agent.model(
+                prompt,
+                max_length=1024,
+                num_return_sequences=1,
+                temperature=0.7
+            )[0]['generated_text']
+            
+            # Очищаем ответ от технических деталей
+            clean_response = response.split("\n")[0].strip()
+            clean_response = clean_response.replace("Твой следующий вопрос/действие:", "").strip()
+            
+            # Обновляем собранные данные
+            if ":" in clean_response and "спасибо" not in clean_response.lower():
+                topic = self._detect_current_topic(clean_response)
+                if topic:
+                    st.session_state.interview_state['current_topic'] = topic
+                    st.session_state.interview_state['collected_data'].setdefault(topic, []).append(clean_response)
+            
+            return clean_response
+        except Exception as e:
+            return f"Произошла ошибка: {str(e)}"
+
+
+    def _detect_current_topic(self, question):
+        question_lower = question.lower()
+        topics = {
+            "general_info": ["предприятии", "компании", "продукция", "структура"],
+            "production_processes": ["процесс", "оборудован", "технолог", "производств"],
+            "data_monitoring": ["датчик", "мониторинг", "данн", "сбор"],
+            "twin_requirements": ["двойник", "модел", "визуализ", "требован"]
         }
         
-        topic_questions = questions[current_state['current_topic']]
-        
-        asked_count = len(current_state['collected_data'][current_state['current_topic']])
-        
-        if asked_count < len(topic_questions):
-            return topic_questions[asked_count]
-        else:
-            current_idx = topics.index(current_state['current_topic'])
-            if current_idx + 1 < len(topics):
-                current_state['current_topic'] = topics[current_idx + 1]
-                current_state['collected_data'][current_state['current_topic']] = []
-                return questions[current_state['current_topic']][0]
-            else:
-                current_state['interview_completed'] = True
-                return "Благодарим вас за предоставленную информацию!"
-            
+        for topic, keywords in topics.items():
+            if any(keyword in question_lower for keyword in keywords):
+                return topic
+        return None
+     
 
     def setup_database_tab(self):
         st.header("Настройка базы данных")
