@@ -1,15 +1,19 @@
-# database_agent.py
 from .base_agent import BaseAgent
+from transformers import pipeline
 import json
 from typing import Dict, Any
 
 class DatabaseAgent(BaseAgent):
     def __init__(self):
         super().__init__("DatabaseAgent")
-        self.log("Using mock database model")
+        try:
+            self.model = pipeline("text-generation", 
+                                 model="abdulmannan-01/qwen-2.5-1.5b-finetuned-for-sql-generation")
+        except Exception as e:
+            self.log(f"Failed to load database model: {str(e)}", "error")
+            raise
 
     def run(self, requirements: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Implementation of abstract method from BaseAgent"""
         try:
             if not requirements:
                 raise ValueError("No requirements provided")
@@ -19,34 +23,31 @@ class DatabaseAgent(BaseAgent):
             raise
 
     def generate_schema(self, requirements: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate mock database schema from requirements"""
-        self.log("Generating mock database schema")
+        self.log("Generating database schema with LLM")
+        prompt = f"""Create a PostgreSQL schema for a metallurgical production digital twin based on these requirements:
+        {json.dumps(requirements)}
         
-        mock_response = """{
-            "tables": [
-                {
-                    "name": "sensor_data",
-                    "columns": [
-                        {"name": "id", "type": "SERIAL", "constraints": "PRIMARY KEY"},
-                        {"name": "timestamp", "type": "TIMESTAMP", "constraints": "NOT NULL"},
-                        {"name": "sensor_type", "type": "VARCHAR(20)", "constraints": "NOT NULL"},
-                        {"name": "value", "type": "FLOAT"},
-                        {"name": "unit", "type": "VARCHAR(10)"},
-                        {"name": "tag_id", "type": "VARCHAR(20)"}
-                    ],
-                    "indexes": [
-                        {"name": "idx_sensor_timestamp", "columns": ["timestamp"]},
-                        {"name": "idx_sensor_type", "columns": ["sensor_type"]}
-                    ]
-                }
-            ],
-            "relationships": []
-        }"""
+        The schema should include tables for:
+        - Sensor data (temperature, pressure, vibration, etc.)
+        - Equipment status
+        - Production quality metrics
+        - Material composition
         
-        return self._parse_response(mock_response)
+        Output should be a JSON with tables, columns, data types, constraints and relationships."""
+        
+        try:
+            response = self.model(
+                prompt, 
+                max_length=2048, 
+                num_return_sequences=1
+            )[0]['generated_text']
+            return self._parse_response(response)
+        except Exception as e:
+            self.log(f"Schema generation failed: {str(e)}", "error")
+            raise
 
     def _parse_response(self, response: str) -> Dict[str, Any]:
-        """Parse the mock response into structured data"""
+        """Parse the model response into structured data"""
         try:
             return json.loads(response)
         except json.JSONDecodeError:

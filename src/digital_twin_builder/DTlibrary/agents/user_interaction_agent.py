@@ -1,32 +1,41 @@
-# user_interaction_agent.py
 from .base_agent import BaseAgent
+from transformers import pipeline
 import json
 
 class UserInteractionAgent(BaseAgent):
     def __init__(self):
         super().__init__("UserInteractionAgent")
-        self.log("Using mock user interaction model")
+        try:
+            self.model = pipeline("text-generation", model="MTSAIR/Cotype-Nano")
+        except Exception as e:
+            self.log(f"Model loading failed: {str(e)}", "error")
+            raise
         
-        self.mock_response = """{
-            "introduction": "Mock interview with employee ID 12345",
-            "general_information": {
-                "enterprise_activity": "Manufacturing of industrial equipment",
-                "organizational_structure": "Production, Quality Control, Maintenance, Logistics",
-                "production_area": "5000 sq.m."
-            },
-            "digital_twin": {
-                "priority_process": {
-                    "process_name": "Assembly line 3",
-                    "reason": "Most critical for production with highest failure rate"
-                },
-                "process_description": "1. Parts arrival 2. Pre-assembly 3. Main assembly 4. Quality check 5. Packaging",
-                "problems": "Frequent delays at quality check station"
-            },
-            "conclusion": "Thank you for participating in the digital twin interview"
-        }"""
+        self.interview_template = self.interview_template = """Ты - агент для сбора информации о металлургическом производстве с целью создания цифрового двойника. Проведи интервью на русском языке, задавая четкие вопросы по следующим темам:
+
+1. Общая информация о предприятии:
+   - Основная деятельность и продукция
+   - Организационная структура
+   - Площади производства
+
+2. Производственные процессы:
+   - Основные технологические этапы
+   - Критическое оборудование
+   - Проблемные участки
+
+3. Данные и мониторинг:
+   - Используемые датчики и их параметры
+   - Системы сбора данных
+   - Текущие показатели эффективности
+
+4. Требования к цифровому двойнику:
+   - Какие процессы нужно моделировать
+   - Какие показатели отслеживать
+   - Интеграция с существующими системами
+
+Веди диалог естественно, уточняй непонятные моменты. В конце представь собранную информацию в виде JSON структуры на русском языке."""
 
     def run(self, input_data=None):
-        """Implementation of abstract method from BaseAgent"""
         try:
             return self.conduct_interview()
         except Exception as e:
@@ -34,12 +43,17 @@ class UserInteractionAgent(BaseAgent):
             raise
 
     def conduct_interview(self):
-        """Return mock interview results"""
-        self.log("Returning mock interview results")
+        self.log("Starting digital twin configuration interview with LLM")
         try:
-            return json.loads(self.mock_response)
+            response = self.model(
+                self.interview_template,
+                max_length=2048,
+                num_return_sequences=1
+            )[0]['generated_text']
+            
+            return json.loads(response)
         except json.JSONDecodeError:
-            return {"response": self.mock_response}
+            return {"response": response}
         except Exception as e:
-            self.log(f"Mock interview failed: {str(e)}", "error")
+            self.log(f"Interview failed: {str(e)}", "error")
             raise
