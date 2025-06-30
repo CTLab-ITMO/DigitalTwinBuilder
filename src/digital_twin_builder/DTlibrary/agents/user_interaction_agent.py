@@ -1,64 +1,72 @@
 from .base_agent import BaseAgent
-from transformers import pipeline
-import json
+from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer
+import torch
+import logging
 from typing import Dict, Any
 
 class UserInteractionAgent(BaseAgent):
     def __init__(self):
         super().__init__("UserInteractionAgent")
-        try:
-            self.model = pipeline("text-generation", model="MTSAIR/Cotype-Nano")
-        except Exception as e:
-            self.log(f"Model loading failed: {str(e)}", "error")
-            raise
+        self.model = None
+        self.tokenizer = None
+        self._load_model()  
         
-        self.system_prompt = """Ты - агент для сбора информации о производстве с целью создания цифрового двойника. Проведи интервью на русском языке, задавая четкие вопросы по следующим темам:
+        self.system_prompt = """
+        Ты — AI-ассистент для сбора информации о металлургическом производстве. 
+        Задавай вопросы по следующим темам:
+        1. Общая информация о предприятии
+        2. Производственные процессы
+        3. Используемые датчики и данные
+        4. Требования к цифровому двойнику
 
-1. Общая информация о предприятии:
-   - Основная деятельность и продукция
-   - Организационная структура
-   - Площади производства
+        **Правила:**
+        - Начни с приветствия и объясни цель.
+        - Задавай вопросы по одному.
+        - Уточняй, если ответ непонятен.
+        - В конце суммируй информацию.
+        """
 
-2. Производственные процессы:
-   - Основные технологические этапы
-   - Критическое оборудование
-   - Проблемные участки
-
-3. Данные и мониторинг:
-   - Используемые датчики и их параметры
-   - Системы сбора данных
-   - Текущие показатели эффективности
-
-4. Требования к цифровому двойнику:
-   - Какие процессы нужно моделировать
-   - Какие показатели отслеживать
-   - Интеграция с существующими системами
-
-Веди диалог естественно, уточняй непонятные моменты. В конце представь собранную информацию в виде JSON структуры на русском языке."""
-
-    def run(self, input_data=None):
+    def _load_model(self):
         try:
-            return self.conduct_interview()
+            self.tokenizer = AutoTokenizer.from_pretrained("MTSAIR/Cotype-Nano")
+            self.model = AutoModelForCausalLM.from_pretrained(
+                "MTSAIR/Cotype-Nano",
+                device_map="auto" if torch.cuda.is_available() else "cpu",
+                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32
+            )
+            self.log("Cotype-Nano успешно загружена.", "info")
         except Exception as e:
-            self.log(f"Error in run method: {str(e)}", "error")
-            raise
+            self.log(f"Ошибка загрузки модели: {e}", "error")
+            raise RuntimeError("Не удалось загрузить Cotype-Nano. Проверьте интернет или наличие модели в Hugging Face.")
 
-    def conduct_interview(self):
-        self.log("Starting digital twin configuration interview with LLM")
+    def generate_question(self, context: str = "") -> str:
+        prompt = f"""
+        {self.system_prompt}
+        Контекст: {context}
+        Следующий вопрос:
+        """
+        
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+        
+        with torch.no_grad():
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=100,
+                temperature=0.7,
+                do_sample=True,
+                pad_token_id=self.tokenizer.eos_token_id
+            )
+        
+        response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        return response.split("Следующий вопрос:")[-1].strip()
+
+    def conduct_interview(self) -> Dict[str, Any]:
         try:
-            initial_prompt = f"{self.system_prompt}\n\nНачни диалог с приветствия и краткого перечисления пунктов, которые нужно обсудить."
-            response = self.model(
-                initial_prompt,
-                max_length=2048,
-                num_return_sequences=1
-            )[0]['generated_text']
-            
-            assistant_response = response.replace(self.system_prompt, "").strip()
-            
+            first_question = self.generate_question("Начни интервью.")
             return {
-                "initial_response": assistant_response,
+                "initial_response": first_question,
                 "system_prompt": self.system_prompt
             }
         except Exception as e:
-            self.log(f"Interview failed: {str(e)}", "error")
+            self.log(f"Ошибка запуска интервью: {e}", "error")
             raise
