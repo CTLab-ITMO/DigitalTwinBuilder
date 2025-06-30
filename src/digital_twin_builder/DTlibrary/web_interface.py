@@ -61,10 +61,10 @@ class DigitalTwinInterface:
                 'awaiting_response': False
             }
             
-            initial_response = self.ui_agent.conduct_interview()
+            initial_response = self._get_initial_interview_questions()
             st.session_state.chat_history.append({
                 "role": "bot", 
-                "content": initial_response["initial_response"]
+                "content": initial_response
             })
         
         for message in st.session_state.chat_history:
@@ -78,91 +78,88 @@ class DigitalTwinInterface:
             if user_input:
                 st.session_state.chat_history.append({"role": "user", "content": user_input})
                 
-                current_topic = st.session_state.interview_state['current_topic']
-                if current_topic:
-                    st.session_state.interview_state['collected_data'].setdefault(current_topic, []).append(user_input)
+                bot_response = self._get_next_interview_question(user_input)
                 
-                prompt = self._build_interview_prompt(
-                    st.session_state.interview_state,
-                    user_input
-                )
+                if st.session_state.interview_state.get('interview_completed'):
+                    bot_response += "\n\nСпасибо! Интервью завершено. Перейдите к следующей вкладке для настройки базы данных."
+                    st.session_state.interview_completed = True
+                    st.session_state.interview_result = st.session_state.interview_state['collected_data']
                 
-                try:
-                    response = self.ui_agent.model(
-                        prompt,
-                        max_length=2048,
-                        num_return_sequences=1
-                    )[0]['generated_text']
-                    
-                    bot_response, interview_state_update = self._process_agent_response(
-                        response,
-                        st.session_state.interview_state
-                    )
-                    
-                    st.session_state.interview_state.update(interview_state_update)
-                    
-                    if len(st.session_state.interview_state['completed_topics']) == 4:
-                        st.session_state.interview_completed = True
-                        st.session_state.interview_result = {
-                            "general_info": "\n".join(st.session_state.interview_state['collected_data'].get("general_info", [])),
-                            "production_processes": "\n".join(st.session_state.interview_state['collected_data'].get("production_processes", [])),
-                            "data_monitoring": "\n".join(st.session_state.interview_state['collected_data'].get("data_monitoring", [])),
-                            "twin_requirements": "\n".join(st.session_state.interview_state['collected_data'].get("twin_requirements", []))
-                        }
-                        bot_response += "\n\nСпасибо! Интервью завершено. Перейдите к следующей вкладке для настройки базы данных."
-                    
-                    st.session_state.chat_history.append({"role": "bot", "content": bot_response})
-                    
-                except Exception as e:
-                    st.error(f"Ошибка при обработке ответа: {str(e)}")
-                
+                st.session_state.chat_history.append({"role": "bot", "content": bot_response})
                 st.rerun()
         else:
             st.success("Интервью завершено! Перейдите к следующей вкладке.")
             with st.expander("Собранные данные"):
                 st.json(st.session_state.interview_result)
 
+    def _get_initial_interview_questions(self):
+        return """Здравствуйте! Для построения цифрового двойника производства, пожалуйста, предоставьте следующую информацию:Add commentMore actions
+            
+            1. Основные характеристики объекта
+            2. Цели и задачи цифрового двойника
+            3. Доступные данные и источники информации
+            4. Временные рамки и частота обновления данных
+            5. Особые требования или ограниченияAdd commentMore actions
+            
+            Пожалуйста, начните с описания вашего производства."""
 
-    def _build_interview_prompt(self, interview_state, user_input):
-        """Строит промпт для продолжения интервью"""
-        topics = {
-            "general_info": "Общая информация о предприятии",
-            "production_processes": "Производственные процессы",
-            "data_monitoring": "Данные и мониторинг",
-            "twin_requirements": "Требования к цифровому двойнику"
+    def _get_next_interview_question(self, user_input):
+        """Генерирует следующий вопрос на основе ответа пользователя"""
+
+        current_state = st.session_state.interview_state
+        topics = [
+            "general_info",
+            "production_processes",
+            "data_monitoring",
+            "twin_requirements"
+        ]
+        
+        if not current_state['current_topic']:
+            current_topic = topics[0]
+            current_state['current_topic'] = current_topic
+            current_state['collected_data'][current_topic] = []
+        
+        current_state['collected_data'][current_state['current_topic']].append(user_input)
+        
+        questions = {
+            "general_info": [
+                "Расскажите подробнее об организационной структуре предприятия",
+                "Каковы площади производства и как они распределены?",
+                "Сколько сотрудников работает на предприятии?"
+            ],
+            "production_processes": [
+                "Опишите основные технологические этапы производства",
+                "Какое оборудование является наиболее критичным?",
+                "Какие параметры процессов требуют постоянного контроля?"
+            ],
+            "data_monitoring": [
+                "Какие датчики и системы мониторинга уже установлены?",
+                "Как часто собираются данные с оборудования?",
+                "Где и как хранятся собранные данные?"
+            ],
+            "twin_requirements": [
+                "Какие процессы должны быть смоделированы в цифровом двойнике?",
+                "Какие показатели вы хотите визуализировать в первую очередь?",
+                "Нужна ли интеграция с другими системами предприятия?"
+            ]
         }
         
-        current_topic = interview_state['current_topic']
-        if not current_topic or current_topic in interview_state['completed_topics']:
-            for topic in topics:
-                if topic not in interview_state['completed_topics']:
-                    current_topic = topic
-                    break
+        topic_questions = questions[current_state['current_topic']]
         
-        prompt = f"""Ты проводишь интервью для создания цифрового двойника металлургического производства. Текущая тема: {topics[current_topic]}.
+        asked_count = len(current_state['collected_data'][current_state['current_topic']])
         
-    Уже собрана следующая информация:
-    {json.dumps(interview_state['collected_data'], ensure_ascii=False, indent=2)}
-
-    Последний ответ пользователя: {user_input}
-
-    Сформулируй уточняющий вопрос или, если информации достаточно, кратко суммируй собранное и переходи к следующей теме.
-    Используй естественный, дружелюбный тон на русском языке."""
-        
-        return prompt
-
-    def _process_agent_response(self, response, current_state):
-        """Обрабатывает ответ агента и обновляет состояние интервью"""
-        topic_completed = "следующ" in response.lower() or "перейд" in response.lower()
-        
-        update = {}
-        if topic_completed:
-            update['completed_topics'] = current_state['completed_topics'] + [current_state['current_topic']]
-            update['current_topic'] = None
+        if asked_count < len(topic_questions):
+            return topic_questions[asked_count]
         else:
-            update['current_topic'] = current_state['current_topic']
-        
-        return response, update
+            current_idx = topics.index(current_state['current_topic'])
+            if current_idx + 1 < len(topics):
+                current_state['current_topic'] = topics[current_idx + 1]
+                current_state['collected_data'][current_state['current_topic']] = []
+                return questions[current_state['current_topic']][0]
+            else:
+                current_state['interview_completed'] = True
+                return "Благодарим вас за предоставленную информацию!"
+            
 
     def setup_database_tab(self):
         st.header("Настройка базы данных")
