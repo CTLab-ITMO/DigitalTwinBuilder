@@ -1,0 +1,8 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+name = "ipcamera"
+version = "0.1.0"
+packages = ["ipcamera"]

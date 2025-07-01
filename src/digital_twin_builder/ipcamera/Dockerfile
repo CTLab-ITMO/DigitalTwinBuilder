@@ -37,17 +37,18 @@ WORKDIR /opt/boost_1_88_0
 RUN ./bootstrap.sh --prefix=/usr/
 RUN ./b2 install
 
-WORKDIR /app
+WORKDIR /app/src/digital_twin_builder/ipcamera/cpp/
 
-COPY vcpkg.json .
+COPY ./cpp/vcpkg.json .
 
 RUN ${VCPKG_ROOT}/vcpkg install
 
-COPY . .
+COPY ./cpp/ .
 
 RUN mkdir -p build
 RUN rm -rf build/*
 RUN cmake "-DCMAKE_TOOLCHAIN_FILE=${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" "-DBOOST_ROOT=/usr/boost/" --preset Debug -S .
 RUN cmake --build ./build
+
 
 # Command to run the API when the container starts
