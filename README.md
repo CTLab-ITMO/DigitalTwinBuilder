@@ -14,7 +14,6 @@
 Библиотека поддерживает следующие протоколы к ip камер видеонаблюдения для построения производства и дальнейшего анализа: 
 * [Gige Vision](https://www.automate.org/vision/vision-standards/vision-standards-gige-vision) - интерфейс передачи данных для цифровых камер промышленного класса
 * [RTSP](https://datatracker.ietf.org/doc/html/rfc7826) - протокол для организации трансляций и передачи медиаконтента
-* [ONVIF](https://www.onvif.org/profiles/) - протокол, который подробно описывает, как сетевые устройства передачи видео ( IP-камеры, видеорегистраторы), интегрируются с сетевыми программами обработки и отображения видеопотока.
 
 ## Структура проекта
 
@@ -53,7 +52,7 @@ DigitalTwinBuilder/
 │       │   ├── main.py   
 │       │   └── requirements.txt 
 │       │   
-│       └── ipcamera/             # git submodule (later may be removed and added with PyPI package)
+│       └── ipcamera/             - модуль для работы с камерами с использованием протоколов gige vision и rtsp
 │           ├── cpp/
 │           │   ├── src/
 │           │   │   └── camera/
@@ -101,7 +100,21 @@ git pull https://github.com/CTLab-ITMO/DigitalTwinBuilder && cd DigitalTwinBuild
 ```
 ### Docker (рекомендованный путь)
 #### Установка зависимостей
-
+##### Ubuntu, Debian
+```bash
+sudo apt-get update
+sudo apt-get install docker docker-compose-plugin
+```
+##### Fedora, CentOS
+```bash 
+sudo yum update
+sudo yum install docker docker-compose-plugin
+```
+##### MacOS
+```bash
+brew install docker docker-compose
+```
+Также в зависимости от настроек вашей системы вам может понадобиться выполнить некоторые шаги, которые напишет brew при установке
 #### Настройка Docker
 ```bash
 docker compose up -d
@@ -123,10 +136,33 @@ rm -rf build/*
 cmake -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT -DBOOST_ROOT=$BOOST_ROOT --preset Debug -S .
 cmake --build ./build
 ```
-Для запуска используйте бинарный файл ```./build/main```
 ## Использование
+```bash
+python main.py 
+```
 ### IP camera модуль
+```python
+from digital_twin_builder.ipcamera.camera.gige import gige
+camera_ip = "192.168.150.15"
+my_ip = "192.168.1.94"
+streaming_port = 53899 ## should be the one that used in docker
+g = gige(camera_ip, my_ip, streaming_port)
+g.start_stream()
+print("Enter :q to quit")
+answer = ""
+while (answer != ":q"):
+    answer = input()
+g.stop_stream()
+
+from digital_twin_builder.ipcamera.camera.gige.gvcp import gvcp
+gc = gvcp(camera_ip)
+ack = gc.discovery
+print(ack.current_ip) # "192.168.150.15"
+```
 ### DTlibrary
+```bash
+streamlit run web_interfaces.py
+```
 
 ## License
 
