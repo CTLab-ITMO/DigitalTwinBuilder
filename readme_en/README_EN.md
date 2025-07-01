@@ -161,27 +161,27 @@ print(ack.current_ip) # "192.168.150.15"
 streamlit run web_interfaces.py
 ```
 An interview with an employee takes place via a chat dialog on the "User Interview" page.
-![Dialog with the user interaction agent](images/photo_1_2025-07-01_11-18-47.jpg)
+![Dialog with the user interaction agent](../images/photo_1_2025-07-01_11-18-47.jpg)
 
 The next step is to "Create a database" based on the information received from the user.
-![The interface for creating a database based on the user's requirements for a digital double](images/photo_2_2025-07-01_11-18-47.jpg)
+![The interface for creating a database based on the user's requirements for a digital double](../images/photo_2_2025-07-01_11-18-47.jpg)
 
 In order to provide a better perception, a text version of the agent's work result is provided.
-![A text representation of the agent's work result for creating a database](images/photo_3_2025-07-01_11-18-47.jpg)
+![A text representation of the agent's work result for creating a database](../images/photo_3_2025-07-01_11-18-47.jpg)
 
 At the next stage, the "Digital Twin" agent configures the digital twin, selecting the necessary components.
-![The result of the agent's work for the digital twin configuration](images/photo_4_2025-07-01_11-18-47.jpg)
+![The result of the agent's work for the digital twin configuration](../images/photo_4_2025-07-01_11-18-47.jpg)
 
 To ensure a better perception, a text version of the agent's work result is provided.
-![Text representation of the agent's operation result for the digital twin configuration](images/photo_5_2025-07-01_11-18-47.jpg)
+![Text representation of the agent's operation result for the digital twin configuration](../images/photo_5_2025-07-01_11-18-47.jpg)
 
 Before starting the digital twin, it is necessary to select the operating mode of the sensors. Simulated data was selected to test this example. Appropriate buttons are provided for starting and stopping the sensor.
-![General view of the interface at the configuration stage of the digital twin](images/photo_6_2025-07-01_11-18-47.jpg)
+![General view of the interface at the configuration stage of the digital twin](../images/photo_6_2025-07-01_11-18-47.jpg)
 
 After launching the digital twin, the Dashboard becomes active to review the simulation results and sensor data. This example shows the current sensor readings, graphs of changes in indicators, warnings about critical values, some quality indicators, as well as an analysis of historical data presented by various graphs.
-![Dashboard interface with current sensor readings](images/photo_7_2025-07-01_11-18-47.jpg)
-![Dashboard interface with warnings about critical values and quality indicators](images/photo_8_2025-07-01_11-18-47.jpg)
-![Dashboard interface with historical data analysis](images/photo_9_2025-07-01_11-18-47.jpg)
+![Dashboard interface with current sensor readings](../images/photo_7_2025-07-01_11-18-47.jpg)
+![Dashboard interface with warnings about critical values and quality indicators](../images/photo_8_2025-07-01_11-18-47.jpg)
+![Dashboard interface with historical data analysis](../images/photo_9_2025-07-01_11-18-47.jpg)
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](https://github.com/lizaelisaveta/DigitalTwinOfProduction/blob/main/LICENSE) file for details.
