@@ -21,7 +21,7 @@
 DigitalTwinBuilder/
 ├── src/
 │   └── DigitalTwinBuilder/ 
-│       ├── DTlibrary/
+│       ├── DTlibrary/ - модуль для работы с мультиагентной системой
 │       │   ├── agents/
 │       │   │   ├── __init__.py
 │       │   │   ├── base_agent.py
@@ -52,7 +52,7 @@ DigitalTwinBuilder/
 │       │   ├── main.py   
 │       │   └── requirements.txt 
 │       │   
-│       └── ipcamera/             - модуль для работы с камерами с использованием протоколов gige vision и rtsp
+│       └── ipcamera/ - модуль для работы с камерами с использованием протоколов gige vision и rtsp
 │           ├── cpp/
 │           │   ├── src/
 │           │   │   └── camera/
@@ -90,7 +90,7 @@ DigitalTwinBuilder/
 ├── main.py 
 ├── scripts/
 ├── tests/
-├── setup.py
+├── pyproject.toml
 ├── requirements.txt
 └── README.md
 ```
@@ -163,7 +163,23 @@ print(ack.current_ip) # "192.168.150.15"
 ```bash
 streamlit run web_interfaces.py
 ```
+![Диалог с агентом взаимодействия с пользователем](images/photo_1_2025-07-01_11-18-47.jpg)
 
+![alt text](images/photo_2_2025-07-01_11-18-47.jpg)
+
+![alt text](images/photo_3_2025-07-01_11-18-47.jpg)
+
+![alt text](images/photo_4_2025-07-01_11-18-47.jpg)
+
+![alt text](images/photo_5_2025-07-01_11-18-47.jpg)
+
+![alt text](images/photo_6_2025-07-01_11-18-47.jpg)
+
+![alt text](images/photo_7_2025-07-01_11-18-47.jpg)
+
+![alt text](images/photo_8_2025-07-01_11-18-47.jpg)
+
+![alt text](images/photo_9_2025-07-01_11-18-47.jpg)
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](https://github.com/lizaelisaveta/DigitalTwinOfProduction/blob/main/LICENSE) file for details.
