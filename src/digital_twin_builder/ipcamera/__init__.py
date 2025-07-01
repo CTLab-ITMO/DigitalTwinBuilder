@@ -1,1 +1,1 @@
-from .python.ipcamera import camera
+from .python.ipcamera.camera import *

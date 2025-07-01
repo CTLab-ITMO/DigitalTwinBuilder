@@ -1,0 +1,47 @@
+services:
+  dt-postgres:
+    image: postgres:latest
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: dt
+    ports:
+      - "12300:5432"  # Host:Container port mapping
+    volumes:
+      - postgres-data:/home/nvasiliev/DigitalTwinBuilder/db
+  
+  dt-grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "12301:3000"  # Grafana web interface
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-data:/home/nvasiliev/DigitalTwinBuilder/grafana
+    depends_on:
+      - dt-postgres
+  dt-ipcamera:
+    build:
+      context: ./src/digital_twin_builder/ipcamera
+    ports:
+      - "12302:8080"
+    volumes:
+      - python-bindings:/app/src/digital_twin_builder/ipcamera/python
+  dt-python:
+    build:
+      context: .
+    working_dir: /app
+    volumes:
+      - python-bindings:/app/src/digital_twin_builder/ipcamera/python
+    depends_on:
+      - dt-ipcamera
+      - dt-postgres
+    command: python main.py
+    environment:
+      - PYTHONPATH=/digital_twin_builder
+  
+volumes:
+  postgres-data:
+  grafana-data:
+  python-bindings:

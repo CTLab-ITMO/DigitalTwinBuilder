@@ -13,52 +13,53 @@
 #include <ranges>
 
 namespace camera::gige::gvcp {
+using namespace boost::asio;
 template <class ack_content, class cmd_content>
 ack_content client::execute(const cmd_content& cmd) = delete;
 
 template <>
 ack::discovery client::execute(const cmd::discovery& cmd) {
-    socket_.send(boost::asio::buffer(&cmd, sizeof(cmd::discovery)));
+    socket_.send(buffer(&cmd, sizeof(cmd::discovery)));
     ack::discovery content;
-    socket_.receive(boost::asio::buffer(&content, sizeof(content)));
+    socket_.receive(buffer(&content, sizeof(content)));
     return content;
 }
 
 template <>
 ack::readreg client::execute(const cmd::readreg& cmd) {
-    socket_.send(boost::asio::buffer(reinterpret_cast<const char*>(&cmd), sizeof(cmd)));
+    socket_.send(buffer(reinterpret_cast<const char*>(&cmd), sizeof(cmd)));
     ack::readreg content;
-    socket_.receive(boost::asio::buffer(reinterpret_cast<char*>(&content), sizeof(content)));
+    socket_.receive(buffer(reinterpret_cast<char*>(&content), sizeof(content)));
     return content;
 }
 
 template <>
 ack::writereg client::execute(const cmd::writereg& cmd) {
-    socket_.send(boost::asio::buffer(&cmd, sizeof(cmd)));
+    socket_.send(buffer(&cmd, sizeof(cmd)));
     ack::writereg content;
-    socket_.receive(boost::asio::buffer(&content, sizeof(content)));
+    socket_.receive(buffer(&content, sizeof(content)));
     return content;
 }
 
 template <>
 ack::readmem client::execute(const cmd::readmem& cmd) {
-    socket_.send(boost::asio::buffer(&cmd, sizeof(cmd)));
+    socket_.send(buffer(&cmd, sizeof(cmd)));
     ack::readmem content;
-    socket_.receive(boost::asio::buffer(&content, sizeof(content)));
+    socket_.receive(buffer(&content, sizeof(content)));
     return content;
 }
 
 template <>
 ack::writemem client::execute(const cmd::writemem& cmd) {
-    socket_.send(boost::asio::buffer(&cmd, sizeof(cmd::writemem)));
+    socket_.send(buffer(&cmd, sizeof(cmd::writemem)));
     ack::writemem content;
-    socket_.receive(boost::asio::buffer(&content, sizeof(content)));
+    socket_.receive(buffer(&content, sizeof(content)));
     return content;
 }
 
 client::client(const std::string& address) : address_(address) {
     udp::resolver resolver(io_context_);
-    boost::asio::connect(socket_, resolver.resolve(address, gvcp_port));
+    connect(socket_, resolver.resolve(address, gvcp_port));
 }
 
 bool client::get_control() {
@@ -89,7 +90,7 @@ uint16_t client::start_streaming(const std::string& rx_address, uint16_t rx_port
     }
     std::cout << "writing stream info" << '\n';
     auto response_write = execute<ack::writereg>(cmd::writereg(req_id_inc(), {
-        {registers::stream_channel_destination_address_0 + stream_channel_offset, boost::asio::ip::make_address_v4(rx_address).to_uint()},
+        {registers::stream_channel_destination_address_0 + stream_channel_offset, ip::make_address_v4(rx_address).to_uint()},
         {genicam_regs["AcquisitionStart"], 1}}));
     if (response_write.header.status != status_codes::GEV_STATUS_SUCCESS) {
         return 0;
@@ -136,17 +137,56 @@ const std::string& client::get_address() const {
 }
 
 std::vector<std::string> client::get_all_gige_devices() {
-    boost::asio::io_context io_context;
-    udp::resolver resolver(io_context);
-    auto res=resolver.resolve(udp::v4(), boost::asio::ip::host_name(),"");
-    auto it = res.begin();
+    uint16_t port = 53728;
+    io_context io_context;
+    udp::socket socket(io_context, udp::endpoint(ip::udp::v4(), port));
+    socket.set_option(socket_base::broadcast(true));
+    socket.set_option(socket_base::reuse_address(true));
+    udp::endpoint broadcast_endpoint(ip::address_v4::broadcast(), std::stoi(gvcp_port));
 
-    while(it!=res.end())
-    {
-        boost::asio::ip::address addr=(it++)->endpoint().address();
+    cmd::discovery cmd(1);
+    deadline_timer timer(io_context);
 
-        std::cout<<addr.to_string()<<std::endl;
+    std::function<void()> send_broadcast = [&](){
+        socket.async_send_to(buffer(&cmd, sizeof(cmd::discovery)), broadcast_endpoint, [&](const boost::system::error_code& ec, std::size_t bytes_transferred) {
+            if (ec) {
+                std::cout << "Error send: " << ec.message() << '\n';
+            } else {
+                std::cout << "Discovery sent" << '\n';
+                timer.expires_from_now(boost::posix_time::seconds(5));
+                timer.async_wait([&](const boost::system::error_code& ec) {
+                    if (ec) {
+                        std::cout << "Error wait: " << ec.message() << '\n';
+                    } else {
+                        std::cout << "Discovery timeout" << '\n';
+                    }
+                });
+                
+            }
+        });
+    };
+    send_broadcast();
+    ack::discovery content;
+    udp::endpoint remote_endpoint;
+    std::function<void()> start_recieve = [&](){
+        socket.async_receive_from(buffer(&content, sizeof(content)), remote_endpoint, [&](const boost::system::error_code& ec, std::size_t bytes_transferred) {
+            if (ec) {
+                std::cout << "Error recieve: " << ec.message() << '\n';
+            } else {
+                std::cout << "Discovery received" << '\n';
+                std::cout << "Device IP: " << remote_endpoint.address().to_string() << '\n';
+                timer.cancel();
+                start_recieve();
+            }
+        });
+    };
+    start_recieve();
+    std::thread io_thread([&io_context]() { io_context.run(); });
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::seconds(10));
+        send_broadcast();
     }
+    io_thread.join();
     return {};
 }
 
