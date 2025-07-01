@@ -96,9 +96,22 @@ DigitalTwinBuilder/
 └── README.md
 ```
 ## Установка
+```bash
+git pull https://github.com/CTLab-ITMO/DigitalTwinBuilder && cd DigitalTwinBuilder
+```
 ### Docker (рекомендованный путь)
-### Building from source
-#### Installing dependencies
+#### Установка зависимостей
+
+#### Настройка Docker
+```bash
+docker compose up -d
+```
+Перезапуск
+```bash
+docker compose up --build -d && docker compose restart
+```
+### Cборка из источника
+#### Установка зависимостей
 ##### Ubuntu
 ```bash
 sudo dnf install gcc cmake vcpkg boost-devel
