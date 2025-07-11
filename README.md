@@ -122,17 +122,16 @@ docker compose up -d
 docker compose up --build -d && docker compose restart
 ```
 ### Cборка из источника
+Для сборки библиотеки IP camera следуйте [инструкциям](src/digital_twin_builder/ipcamera/cpp/README.md)
 #### Установка зависимостей
 ##### Ubuntu
 ```bash
-sudo dnf install gcc cmake vcpkg boost-devel
+sudo apt update && sudo apt install gcc cmake vcpkg boost-devel
 ```
-#### IP camera module
+##### Fedora
 ```bash
-mkdir -p build
-rm -rf build/*
-cmake -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT -DBOOST_ROOT=$BOOST_ROOT --preset Debug -S .
-cmake --build ./build
+sudo dnf update && sudo dnf install gcc cmake vcpkg boost-devel
+```
 ```
 ## Использование
 ```bash

@@ -70,7 +70,6 @@ These dependencies are managed by vcpkg and should be automatically downloaded a
     ./b2 install
     ```
 
-4. 
 ### Building
 
 To build and install the IPCamera module, follow these steps:
