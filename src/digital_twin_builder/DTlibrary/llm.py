@@ -1,52 +1,38 @@
-from transformers import pipeline
-import os
+from langchain_ollama import OllamaLLM
+import logging
+
+logger = logging.getLogger("LLMService")
 
 class LLMService:
-    def __init__(self):
-        self.models = {
-            'user_interaction': None,
-            'database': None,
-            'digital_twin': None
-        }
-        self._load_models()
-
-    def _load_models(self):
+    def __init__(self, model_name: str = "qwen3:4b", temperature: float = 0.1):
+        self.model_name = model_name
         try:
-            self.models['user_interaction'] = pipeline(
-                "text-generation", 
-                model="MTSAIR/Cotype-Nano",
-                device="cuda" if os.environ.get('USE_CUDA', 'false').lower() == 'true' else "cpu"
-            )
-            
-            self.models['database'] = pipeline(
-                "text-generation",
-                model="abdulmannan-01/qwen-2.5-1.5b-finetuned-for-sql-generation",
-                device="cuda" if os.environ.get('USE_CUDA', 'false').lower() == 'true' else "cpu"
-            )
-            
-            self.models['digital_twin'] = pipeline(
-                "text-generation",
-                model="bigcode/starcoder2-3b",
-                device="cuda" if os.environ.get('USE_CUDA', 'false').lower() == 'true' else "cpu"
-            )
-            
+            self.model = OllamaLLM(model=model_name, temperature=temperature, base_url="http://localhost:11434")
+            logger.info(f"Initialized OllamaLLM model={model_name}")
         except Exception as e:
-            print(f"Error loading models: {e}")
+            logger.error(f"Failed to initialize OllamaLLM: {e}")
             raise
 
-    def generate(self, task_type: str, prompt: str, max_length: int = 1024) -> str:
-        if task_type not in self.models:
-            raise ValueError(f"Invalid task type: {task_type}")
-        
+    def generate(self, prompt: str, system_prompt: str = None, max_tokens: int = 1024) -> str:
+        full_prompt = prompt
+        if system_prompt:
+            full_prompt = system_prompt.strip() + "\n\n" + prompt.strip()
+
         try:
-            response = self.models[task_type](
-                prompt,
-                max_length=max_length,
-                num_return_sequences=1
-            )[0]['generated_text']
-            return response
+            response = self.model.invoke(full_prompt)
+            if isinstance(response, dict) and 'content' in response:
+                return response['content']
+            return str(response)
         except Exception as e:
-            print(f"Generation failed: {e}")
+            logger.error(f"LLM generation failed: {e}")
             raise
+
+    def generate_json(self, prompt: str, system_prompt: str = None, max_tokens: int = 1024):
+        text = self.generate(prompt, system_prompt=system_prompt, max_tokens=max_tokens)
+        try:
+            import json as _json
+            return _json.loads(text)
+        except Exception:
+            return {"raw": text}
 
 llm_service = LLMService()
