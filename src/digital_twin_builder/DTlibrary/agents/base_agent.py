@@ -93,7 +93,7 @@ class BaseAgent(ABC):
                 json={"agent_id": self.agent_id},
                 timeout=5
             )
-            logger.debug("Heartbeat sent")
+            self.logger.debug("Heartbeat sent")
         except:
             pass
 
@@ -111,28 +111,28 @@ class BaseAgent(ABC):
             if response.status_code == 200:
                 task_data = response.json()
                 if task_data:
-                logger.info(f"Received task: {task_data['task_id'][:8]}")
+                    self.logger.info(f"Received task: {task_data['task_id'][:8]}")
                     return task_data
                 else:
-                    logger.debug("No tasks available")
+                    self.logger.debug("No tasks available")
             elif response.status_code == 204:
-                logger.debug("No tasks: no content")
+                self.logger.debug("No tasks: no content")
                 pass
             else:
-                logger.warning(f"Unexpected response: {response.status_code}")
+                self.logger.warning(f"Unexpected response: {response.status_code}")
 
         except requests.exceptions.Timeout:
-            logger.debug("Poll timeout (no tasks)")
+            self.logger.debug("Poll timeout (no tasks)")
         except requests.exceptions.ConnectionError:
-            logger.error("Cannot connect to API server")
+            self.logger.error("Cannot connect to API server")
         except Exception as e:
-            logger.error(f"Poll error: {str(e)}")
+            self.logger.error(f"Poll error: {str(e)}")
         sys.stdout.flush()
         return None
 
     def stop(self):
         self.running = False
-        logger.info(f"Agent {self.agent_id} stopped")
+        self.logger.info(f"Agent {self.agent_id} stopped")
 
     @abstractmethod
     def process_task(self, task):
