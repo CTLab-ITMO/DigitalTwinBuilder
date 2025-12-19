@@ -9,14 +9,14 @@ import signal
 from typing import Dict, Any, Optional
 
 class UserInteractionAgent(BaseAgent):
-    def __init__(self, agent_id: int, api_url: str):
+    def __init__(self, agent_id: int, api_url: str, model = "MTSAIR/Cotype-Nano"):
         super().__init__("UserInteractionAgent")
         self.agent_id = agent_id
         self.api_url = api_url.rstrip('/')
         self.running = False
 
         try:
-            self.model = pipeline("text-generation", model="MTSAIR/Cotype-Nano")
+            self.model = pipeline("text-generation", model= model)
         except Exception as e:
             self.log(f"Model loading failed: {str(e)}", "error")
             raise
@@ -38,7 +38,6 @@ class UserInteractionAgent(BaseAgent):
 
             if assistant_response.startswith(user_input):
                 assistant_response = assistant_response[len(user_input):].strip()
-            assistant_response = response.replace(, "").strip()
             
             return assistant_response
 
@@ -59,15 +58,16 @@ def main():
                        help="Polling interval in seconds (default: 2.0)")
     parser.add_argument("--once", action="store_true",
                        help="Run once and exit (useful for testing)")
-    
+    parser.add_argument("--model", type=str, default="MTSAIR/Cotype-Nano",
+                       help="Model from hugging face or local path to it")
+
     args = parser.parse_args()
     
     # Create and run agent
-    agent = UserInteractionAgent(args.agent_id, args.api_url)
+    agent = UserInteractionAgent(args.agent_id, args.api_url, args.model)
     
     # Handle graceful shutdown
     def signal_handler(sig, frame):
-        logger.info("Received shutdown signal")
         agent.stop()
         sys.exit(0)
     
@@ -75,7 +75,6 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
     
     if args.once:
-        logger.info("Running in single-task mode")
         agent.run_once()
     else:
         agent.run(interval=args.poll_interval)
