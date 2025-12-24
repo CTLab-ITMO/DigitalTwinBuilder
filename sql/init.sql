@@ -8,14 +8,42 @@
 \c llm_agents;
 
 -- Drop existing tables if you want a fresh start
+DROP TABLE IF EXISTS messages CASCADE;
+DROP TABLE IF EXISTS conversations CASCADE;
 DROP TABLE IF EXISTS tasks CASCADE;
 DROP TABLE IF EXISTS agent_status CASCADE;
+
+-- conversations table
+CREATE TABLE conversations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agent_id INTEGER,  -- NULL for user messages
+    user_id VARCHAR(255) NOT NULL,
+    title VARCHAR(500),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    metadata JSONB DEFAULT '{}',
+    is_active BOOLEAN DEFAULT TRUE
+);
+
+-- messages table
+CREATE TABLE messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    conversation_id UUID REFERENCES conversations(id) ON DELETE CASCADE,
+    role VARCHAR(50) NOT NULL,  -- 'user', 'agent', 'system'
+    content TEXT NOT NULL,
+    content_type VARCHAR(50) DEFAULT 'text',  -- 'text', 'image', 'data'
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    tokens INTEGER DEFAULT 0,
+    parent_message_id UUID REFERENCES messages(id),
+    is_hidden BOOLEAN DEFAULT FALSE
+);
 
 -- Tasks table
 CREATE TABLE tasks (
     id VARCHAR(36) PRIMARY KEY,
     agent_id INTEGER NOT NULL,
-    prompt TEXT NOT NULL,
+    conversation_id UUID REFERENCES conversations(id) ON DELETE CASCADE,
     params JSONB DEFAULT '{}',
     status VARCHAR(20) NOT NULL DEFAULT 'pending',
     result TEXT,
@@ -36,6 +64,7 @@ CREATE TABLE agent_status (
     capabilities JSONB DEFAULT '[]'
 );
 
+
 -- Indexes for performance
 CREATE INDEX idx_tasks_agent_status ON tasks(agent_id, status);
 CREATE INDEX idx_tasks_status_created ON tasks(status, created_at);
@@ -54,7 +83,7 @@ CREATE VIEW task_monitor AS
 SELECT 
     t.id,
     t.agent_id,
-    LEFT(t.prompt, 50) AS prompt_preview,
+    t.conversation_id,
     t.status,
     t.created_at,
     t.started_at,

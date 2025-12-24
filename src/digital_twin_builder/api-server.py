@@ -34,11 +34,12 @@ async def init_db_pool():
         
         # Create tables if they don't exist
         async with pool.acquire() as conn:
+            # TODO: full database structure with conversation
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS tasks (
                     id VARCHAR(36) PRIMARY KEY,
                     agent_id INTEGER NOT NULL,
-                    prompt TEXT NOT NULL,
+                    conversation_id UUID, 
                     params JSONB DEFAULT '{}',
                     status VARCHAR(20) NOT NULL DEFAULT 'pending',
                     result TEXT,
@@ -103,7 +104,7 @@ app = FastAPI(
 # Pydantic models
 class TaskRequest(BaseModel):
     agent_id: int
-    prompt: str
+    conversation_id: str
     params: Dict[str, Any] = {}
     priority: int = 0
 
@@ -113,6 +114,156 @@ class AgentPollRequest(BaseModel):
 class ResultSubmission(BaseModel):
     result: str
     error: Optional[str] = None
+
+# API endpoints for chat history
+@app.post("/conversations")
+async def create_conversation(
+    user_id: str = "default",
+    title: Optional[str] = None
+):
+    """Create a new conversation"""
+    conversation_id = str(uuid.uuid4())
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO conversations (id, user_id, title)
+            VALUES ($1, $2, $3)
+        """, conversation_id, user_id, title)
+    
+    return {"conversation_id": conversation_id}
+
+@app.get("/conversations")
+async def get_conversations(
+    user_id: str = "default",
+    limit: int = 50,
+    offset: int = 0
+):
+    """Get list of conversations for a user"""
+    async with pool.acquire() as conn:
+        conversations = await conn.fetch("""
+            SELECT id, title, created_at, updated_at, metadata
+            FROM conversations 
+            WHERE user_id = $1 AND is_active = TRUE
+            ORDER BY updated_at DESC
+            LIMIT $2 OFFSET $3
+        """, user_id, limit, offset)
+        
+        total = await conn.fetchval("""
+            SELECT COUNT(*) FROM conversations 
+            WHERE user_id = $1 AND is_active = TRUE
+        """, user_id)
+    
+    return {
+        "conversations": [dict(c) for c in conversations],
+        "total": total
+    }
+
+@app.get("/conversations/{conversation_id}")
+async def get_conversation(conversation_id: str):
+    """Get full conversation with messages"""
+    async with pool.acquire() as conn:
+        # Get conversation info
+        conversation = await conn.fetchrow("""
+            SELECT id, title, created_at, updated_at, metadata
+            FROM conversations 
+            WHERE id = $1 AND is_active = TRUE
+        """, conversation_id)
+        
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        # Get messages
+        messages = await conn.fetch("""
+            SELECT id, role, content, content_type,
+                   metadata, created_at, tokens
+            FROM messages 
+            WHERE conversation_id = $1 AND is_hidden = FALSE
+            ORDER BY created_at ASC
+        """, conversation_id)
+    
+    return {
+        "conversation": dict(conversation),
+        "messages": [dict(m) for m in messages]
+    }
+
+@app.get("/conversations/{conversation_id}/last_message")
+async def get_conversation_last_message(conversation_id: str):
+    """Get full conversation with messages"""
+    async with pool.acquire() as conn:
+        message = await conn.fetch("""
+            SELECT id, role, content, content_type,
+                   metadata, created_at, tokens
+            FROM messages
+            WHERE conversation_id = $1
+            ORDER BY created_at DESC
+            LIMIT 1
+        """, conversation_id)
+    
+    return {
+        "last_message": message
+    }
+
+@app.post("/conversations/{conversation_id}/messages")
+async def add_message(
+    conversation_id: str,
+    role: str,
+    content: str,
+    content_type: str = "text",
+    metadata: Dict = {}
+):
+    """Add a message to conversation"""
+    async with pool.acquire() as conn:
+        # Verify conversation exists
+        conv_exists = await conn.fetchval(
+            "SELECT 1 FROM conversations WHERE id = $1 AND is_active = TRUE",
+            conversation_id
+        )
+        if not conv_exists:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        # Add message
+        message_id = str(uuid.uuid4())
+        await conn.execute("""
+            INSERT INTO messages 
+            (id, conversation_id, role, content, content_type, metadata)
+            VALUES ($1, $2, $3, $4, $5, $6)
+        """, message_id, conversation_id, role, 
+            content, content_type, json.dumps(metadata))
+        
+        # Update conversation timestamp
+        await conn.execute("""
+            UPDATE conversations 
+            SET updated_at = CURRENT_TIMESTAMP 
+            WHERE id = $1
+        """, conversation_id)
+    
+    return {"message_id": message_id}
+
+@app.post("/conversations/{conversation_id}/agent-chain")
+async def process_agent_chain(
+    conversation_id: str,
+    user_message: str,
+    context: Optional[Dict] = None
+):
+    """Process a user message through the agent chain"""
+    # 1. Store user message
+    user_msg_id = await add_message(
+        conversation_id=conversation_id,
+        role="user",
+        content=user_message,
+        metadata={"context": context or {}}
+    )
+    
+    # 2. Create task for User Interaction Agent
+    task_id = await create_task({
+        "agent_id": 1,  # UIA
+        "conversation_id": conversation_id,
+        "params": {
+            "user_message_id": user_msg_id["message_id"],
+            "context": context
+        }
+    })
+    
+    return {"task_id": task_id, "conversation_id": conversation_id}
 
 # API Endpoints
 @app.post("/tasks")
@@ -124,9 +275,9 @@ async def create_task(task: TaskRequest):
         async with (await get_db_connection()).acquire() as conn:
             # Insert task
             await conn.execute('''
-                INSERT INTO tasks (id, agent_id, prompt, params, status, priority)
+                INSERT INTO tasks (id, agent_id, conversation_id, params, status, priority)
                 VALUES ($1, $2, $3, $4, 'pending', $5)
-            ''', task_id, task.agent_id, task.prompt, 
+            ''', task_id, task.agent_id, task.conversation_id, 
                 json.dumps(task.params), task.priority)
             
             # Get queue position
@@ -158,7 +309,7 @@ async def poll_for_tasks(poll: AgentPollRequest):
             
             # Get highest priority pending task with SKIP LOCKED
             task = await conn.fetchrow('''
-                SELECT id, prompt, params 
+                SELECT id, conversation_id, params 
                 FROM tasks 
                 WHERE agent_id = $1 AND status = 'pending'
                 ORDER BY priority DESC, created_at ASC
@@ -183,7 +334,7 @@ async def poll_for_tasks(poll: AgentPollRequest):
                 
                 return {
                     "task_id": task['id'],
-                    "prompt": task['prompt'],
+                    "conversation_id": task['conversation_id'],
                     "params": json.loads(task['params'])
                 }
             
@@ -226,7 +377,7 @@ async def get_task_status(task_id: str):
     try:
         async with (await get_db_connection()).acquire() as conn:
             task = await conn.fetchrow('''
-                SELECT id, agent_id, prompt, status, result, error,
+                SELECT id, agent_id, conversation_id, status, result, error,
                        created_at, started_at, completed_at
                 FROM tasks WHERE id = $1
             ''', task_id)
