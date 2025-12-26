@@ -119,21 +119,23 @@ class ResultSubmission(BaseModel):
 @app.post("/conversations")
 async def create_conversation(
     user_id: str = "default",
+    agent_id: int = 1,
     title: Optional[str] = None
 ):
     """Create a new conversation"""
     conversation_id = str(uuid.uuid4())
     async with pool.acquire() as conn:
         await conn.execute("""
-            INSERT INTO conversations (id, user_id, title)
-            VALUES ($1, $2, $3)
-        """, conversation_id, user_id, title)
+            INSERT INTO conversations (id, user_id, title, agent_id)
+            VALUES ($1, $2, $3, $4)
+        """, conversation_id, user_id, title, agent_id)
     
     return {"conversation_id": conversation_id}
 
 @app.get("/conversations")
 async def get_conversations(
     user_id: str = "default",
+    agent_id: int = 1,
     limit: int = 50,
     offset: int = 0
 ):
@@ -142,10 +144,10 @@ async def get_conversations(
         conversations = await conn.fetch("""
             SELECT id, title, created_at, updated_at, metadata
             FROM conversations 
-            WHERE user_id = $1 AND is_active = TRUE
+            WHERE user_id = $1 AND is_active = TRUE AND agent_id = $4
             ORDER BY updated_at DESC
             LIMIT $2 OFFSET $3
-        """, user_id, limit, offset)
+        """, user_id, limit, offset, agent_id)
         
         total = await conn.fetchval("""
             SELECT COUNT(*) FROM conversations 

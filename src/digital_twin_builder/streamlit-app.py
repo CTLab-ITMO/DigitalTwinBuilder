@@ -87,26 +87,69 @@ def background_poll_task_result(response_queue, task_id):
         poll += 1
 
 
-def create_new_conversation():
+def create_new_conversation(agent_id, system_prompt):
     """Create a new conversation"""
     response = requests.post(
         f"{API_URL}/conversations",
-        params={"user_id": "streamlit_user", "title": "New Chat"}
+        params={"user_id": "streamlit_user", "agent_id": agent_id, "title": "New Chat"}
     )
     if response.status_code == 200:
-        st.session_state.conversation_id = response.json()["conversation_id"]
-        st.session_state.messages = []
-    response = add_message_to_conversation(st.session_state.conversation_id, "system", sys_prompts.UI)
-    if response is not None:
-        submit_chat_to_agent(1, st.session_state.conversation_id, {})
-        st.rerun()
+        conversation_id = response.json()["conversation_id"]
+    else:
+        st.error(f"Не удалось создать новую беседу с агентом {agent_id}, запрос завершился с ошибкой {response.status_code}")
+        return None
+    response_message = add_message_to_conversation(conversation_id, "system", system_prompt)
+    if response_message is not None:
+        return conversation_id
+    else:
+        st.error(f"Не удалось добавить системный промпт в новую беседу {conversation_id} с агентом {agent_id}")
+        return None
 
 def load_conversation(conversation_id):
     """Load a conversation from API"""
     response = requests.get(f"{API_URL}/conversations/{conversation_id}")
     if response.status_code == 200:
         data = response.json()
-        st.session_state.conversation_id = conversation_id
+        st.session_state.ui_conversation_id = conversation_id
+        # INFO: Temporary
+        st.session_state.interview_completed = True
+        st.session_state.interview_result = """{
+  "device_name": "Термостат домашний",
+  "sensor_count": 2,
+  "sensors": [
+    {
+      "sensor_name": "Датчик температуры ТСМ-50",
+      "parameter_type": "температура",
+      "unit": "°C",
+      "measurement_range": {
+        "min": -10,
+        "max": 90
+      },
+      "alarm_thresholds": {
+        "critical_min": -10,
+        "critical_max": 90
+      },
+      "data_update_frequency": "1 раз в секунду",
+      "data_processing_algorithms": []
+    },
+    {
+      "sensor_name": "Датчик влажности ДВ-100",
+      "parameter_type": "влажность",
+      "unit": "%",
+      "measurement_range": {
+        "min": 30,
+        "max": 90
+      },
+      "alarm_thresholds": {
+        "critical_min": 30,
+        "critical_max": 90
+      },
+      "data_update_frequency": "1 раз в секунду",
+      "data_processing_algorithms": []
+    }
+  ]
+}"""
+
         st.session_state.messages = data["messages"]
 
 def submit_chat_to_agent(agent_id, conversation_id, params):
@@ -130,11 +173,11 @@ def setup_interview_tab():
     agent_id = 1
     st.header("Создание цифрового двойника производства")
     
-    if st.session_state.conversation_id is None:
+    if st.session_state.ui_conversation_id is None:
         st.markdown("Пожалуйста, выберите существующий чат или создайте новый")
         return
 
-    load_conversation(st.session_state.conversation_id)
+    load_conversation(st.session_state.ui_conversation_id)
     for message in st.session_state.messages:
         if message["role"] == "system":
             continue
@@ -146,16 +189,21 @@ def setup_interview_tab():
         result = task.get("result", "")
         agent_id = task["agent_id"]
         if agent_id == 1:
-            # TODO: add dialog functionality to agent
-            bot_response, interview_state_update = _process_agent_response(
-                result,
-                st.session_state.interview_state
-            )
-
-            # st.session_state.interview_state.update(interview_state_update)
-            
-            st.session_state.chat_history.append({"role": "bot", "content": bot_response})
+            # if json then it is final answer
+            try:
+                start = result.find('{')
+                end = result.rfind('}')
+                json_result = result[start:end+1]
+                st.session_state.interview_result = json_result
+                json.loads(json_result)
+                print("Json in message found")
+            except ValueError:
+                print("No json in message found")
+                continue
+            st.session_state.interview_completed = True
+            st.rerun()
         elif agent_id == 2:
+            print(result)
             st.session_state.db_schema = result
         elif agent_id == 3:
             pass
@@ -164,57 +212,40 @@ def setup_interview_tab():
         temperature = st.slider("Temperature", 0.0, 2.0, 0.7, 0.1)
         max_tokens = st.number_input("Max Tokens", 100, 4000, 1000)
 
-    if not st.session_state.get('interview_completed', False):
-        user_input = st.chat_input("Введите информацию о вашем производстве...")
-        if user_input:
-            params = {
-                "temperature": temperature,
-                "max_tokens": max_tokens
-            }
-            
-            submit_chat_to_agent(agent_id, st.session_state.conversation_id, params)
-        time.sleep(2)
-        st.rerun()
-    else:
-        st.success("Интервью завершено! Перейдите к следующей вкладке.")
-        with st.expander("Собранные данные"):
-            st.json(st.session_state.interview_result)
+    user_input = st.chat_input("Введите информацию о вашем производстве...", 
+                               disabled=
+                                    st.session_state.get('interview_completed', False) or 
+                                    not st.session_state.response_queue.empty())
+    if user_input:
+        params = {
+            "temperature": temperature,
+            "max_tokens": max_tokens
+        }
+        response = add_message_to_conversation(st.session_state.ui_conversation_id, role="user", content=user_input)
+        if response is not None:
+            submit_chat_to_agent(agent_id, st.session_state.ui_conversation_id, params)
+            st.rerun()
+    if st.session_state.get('interview_completed', False):
+        st.success("Интервью завершено, переходите к следующей вкладке")
 
-
-def _process_agent_response(response, current_state):
-    """Обрабатывает ответ агента и обновляет состояние интервью"""
-
-    return response, None
-    # TODO: add dialog functionality to agent
-    topic_completed = "следующ" in response.lower() or "перейд" in response.lower()
-    
-    update = {}
-    if topic_completed:
-        update['completed_topics'] = current_state['completed_topics'] + [current_state['current_topic']]
-        update['current_topic'] = None
-    else:
-        update['current_topic'] = current_state['current_topic']
-    
-    return response, update
 
 def setup_database_tab():
     st.header("Настройка базы данных")
     
-    if 'interview_result' not in st.session_state:
+    if not st.session_state.get('interview_completed', False):
         st.warning("Пожалуйста, завершите интервью на вкладке 'Интервью с пользователем'")
         return
-    
-    if 'db_schema' not in st.session_state or st.session.db_schema == "":
+
+    st.subheader("Результат интервью")
+    st.json(st.session_state.interview_result)
+    if 'db_schema' not in st.session_state:
         st.session_state.db_schema = ""
-        prompt = st.session_state.interview_result
-        submit_chat_to_agent(2, prompt, {})
-    else:
+        st.session_state.db_conversation_id = create_new_conversation(2, sys_prompts.DB)
+        add_message_to_conversation(st.session_state.db_conversation_id, "user", st.session_state.interview_result)
+        submit_chat_to_agent(2, st.session_state.db_conversation_id, {})
+    elif st.session_state.db_schema != "":
         st.subheader("Сгенерированная схема базы данных")
-        st.json(st.session_state.db_schema)
-    
-        if st.button("Сохранить схему"):
-            st.session_state.db_configured = True
-            st.success("Схема базы данных сохранена!")
+        st.markdown(f"```{st.session_state.db_schema}```")
 
 # def setup_twin_tab():
 #     st.header("Конфигурация цифрового двойника")
@@ -273,8 +304,8 @@ def setup_database_tab():
 
 def init_session_state():
     """Initialize session state for chat"""
-    if 'conversation_id' not in st.session_state:
-        st.session_state.conversation_id = None
+    if 'ui_conversation_id' not in st.session_state:
+        st.session_state.ui_conversation_id = None
     if 'messages' not in st.session_state:
         st.session_state.messages = []
     if 'conversations' not in st.session_state:
@@ -292,13 +323,15 @@ def initialize_ui():
         st.title("💬 Conversations")
         
         # Load conversations
-        response = requests.get(f"{API_URL}/conversations", params={"user_id": "streamlit_user", "limit": 20})
+        response = requests.get(f"{API_URL}/conversations", params={"user_id": "streamlit_user", "agent_id": 1})
         if response.status_code == 200:
             st.session_state.conversations = response.json()["conversations"]
         
         # New chat button
         if st.button("➕ New Chat", use_container_width=True):
-            create_new_conversation()
+            conversation_id = create_new_conversation(1, sys_prompts.UI)
+            submit_chat_to_agent(1, conversation_id, {})
+            load_conversation(conversation_id)
         
         st.divider()
         
@@ -344,6 +377,8 @@ def initialize_ui():
     #     setup_twin_tab()
     # with tab4:
     #     setup_sensor_tab()
+    time.sleep(10)
+    st.rerun()
 
 
 def main():
