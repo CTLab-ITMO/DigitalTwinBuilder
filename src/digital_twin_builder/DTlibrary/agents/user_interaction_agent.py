@@ -1,5 +1,6 @@
 from base_agent import BaseAgent
-from transformers import pipeline
+from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer
+import torch
 import json
 import requests
 import time
@@ -14,35 +15,52 @@ class UserInteractionAgent(BaseAgent):
         self.agent_id = agent_id
         self.api_url = api_url.rstrip('/')
         self.running = False
-
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.logger.info(f"device: {self.device}")
         try:
-            self.model = pipeline("text-generation", model= model)
+            # self.model = pipeline("text-generation", model= model)
+            self.tokenizer = AutoTokenizer.from_pretrained(model)
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model,
+            ).to(self.device)
         except Exception as e:
-            self.log(f"Model loading failed: {str(e)}", "error")
+            self.logger.error(f"Model loading failed: {str(e)}")
             raise
 
     def process_task(self, task):
-        prompt = task["prompt"]
+        conversation_id = task.get("conversation_id", "")
         params = task.get("params", {})
         task_id = task["task_id"][:8]
-        
-        logger.info(f"Processing task {task_id}: {prompt[:50]}...")
-        
-        try:
-            response = self.model(
-                prompt,
-                max_length=2048,
-                num_return_sequences=1
-            )
-            assistant_response = response[0]['generated_text']
 
-            if assistant_response.startswith(user_input):
-                assistant_response = assistant_response[len(user_input):].strip()
+        self.logger.info(f"Processing task {task_id}")
+        try:
+            context = self.get_conversation_context(conversation_id)
+            print(context)
+
+            text = self.tokenizer.apply_chat_template(
+                context,
+                enable_thinking=True,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+            model_inputs = self.tokenizer([text], return_tensors="pt").to(self.model.device)
+            
+            generated_ids = self.model.generate(**model_inputs, max_new_tokens=params.get("max_tokens", 1000))
+            
+            output_ids = generated_ids[0][len(model_inputs.input_ids[0]) :]
+            assistant_response = self.tokenizer.decode(output_ids, skip_special_tokens=True)
+
+            self.add_to_conversation(
+                conversation_id,
+                role="assistant",
+                content=assistant_response,
+            )
             
             return assistant_response
 
         except Exception as e:
-            self.log(f"Interview failed: {str(e)}", "error")
+            self.logger.error(str(self.api_url))
+            self.logger.error(f"Interview failed: {str(e)}")
             raise
 
 def main():

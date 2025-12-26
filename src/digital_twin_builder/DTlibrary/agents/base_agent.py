@@ -21,6 +21,30 @@ class BaseAgent(ABC):
         """Logging helper method"""
         getattr(self.logger, level)(message)
 
+    def get_conversation_context(self, conversation_id, last_n=100):
+        """Get recent conversation context"""
+        response = requests.get(f"{self.api_url}/conversations/{conversation_id}")
+        if response.status_code == 200:
+            data = response.json()
+            messages = [{
+                    "role": d["role"], 
+                    "content": d["content"]
+                } for d in data["messages"][-last_n:]]  # Get last N messages
+            return messages
+        return None
+
+    def add_to_conversation(self, conversation_id, role, content, metadata=None):
+        """Add message to conversation"""
+        requests.post(
+            f"{self.api_url}/conversations/{conversation_id}/messages",
+            params={
+                "conversation_id": conversation_id,
+                "role": role,
+                "content": content,
+                "metadata": metadata or {}
+            }
+        )
+
     def run(self, interval: float = 2.0):
         self.running = True
         self.logger.info(f"Agent {self.agent_id} started. Polling interval: {interval}s")
@@ -53,6 +77,10 @@ class BaseAgent(ABC):
         if task:
             try:
                 result = self.process_task(task)
+                self.submit_result(
+                    task["task_id"], 
+                    result
+                )
             except Exception as e:
                 self.logger.error(f"Task processing failed: {str(e)}")
                 self.submit_result(
@@ -103,7 +131,6 @@ class BaseAgent(ABC):
                 f"{self.api_url}/agent/poll",
                 json={
                     "agent_id": self.agent_id,
-                    "capabilities": self.capabilities
                 },
                 timeout=30
             )
