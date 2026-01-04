@@ -1,64 +1,102 @@
-from .base_agent import BaseAgent
-from transformers import pipeline
+from base_agent import BaseAgent
+from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer
+import torch
 import json
-from typing import Dict, Any
+import requests
+import time
+import logging
+import sys
+import signal
+from typing import Dict, Any, Optional
 
 class UserInteractionAgent(BaseAgent):
-    def __init__(self):
+    def __init__(self, agent_id: int, api_url: str, model = "MTSAIR/Cotype-Nano"):
         super().__init__("UserInteractionAgent")
+        self.agent_id = agent_id
+        self.api_url = api_url.rstrip('/')
+        self.running = False
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.logger.info(f"device: {self.device}")
         try:
-            self.model = pipeline("text-generation", model="MTSAIR/Cotype-Nano")
+            # self.model = pipeline("text-generation", model= model)
+            self.tokenizer = AutoTokenizer.from_pretrained(model)
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model,
+            ).to(self.device)
         except Exception as e:
-            self.log(f"Model loading failed: {str(e)}", "error")
-            raise
-        
-        self.system_prompt = """Ты - агент для сбора информации о производстве с целью создания цифрового двойника. Проведи интервью на русском языке, задавая четкие вопросы по следующим темам:
-
-1. Общая информация о предприятии:
-   - Основная деятельность и продукция
-   - Организационная структура
-   - Площади производства
-
-2. Производственные процессы:
-   - Основные технологические этапы
-   - Критическое оборудование
-   - Проблемные участки
-
-3. Данные и мониторинг:
-   - Используемые датчики и их параметры
-   - Системы сбора данных
-   - Текущие показатели эффективности
-
-4. Требования к цифровому двойнику:
-   - Какие процессы нужно моделировать
-   - Какие показатели отслеживать
-   - Интеграция с существующими системами
-
-Веди диалог естественно, уточняй непонятные моменты. В конце представь собранную информацию в виде JSON структуры на русском языке."""
-
-    def run(self, input_data=None):
-        try:
-            return self.conduct_interview()
-        except Exception as e:
-            self.log(f"Error in run method: {str(e)}", "error")
+            self.logger.error(f"Model loading failed: {str(e)}")
             raise
 
-    def conduct_interview(self):
-        self.log("Starting digital twin configuration interview with LLM")
+    def process_task(self, task):
+        conversation_id = task.get("conversation_id", "")
+        params = task.get("params", {})
+        task_id = task["task_id"][:8]
+
+        self.logger.info(f"Processing task {task_id}")
         try:
-            initial_prompt = f"{self.system_prompt}\n\nНачни диалог с приветствия и краткого перечисления пунктов, которые нужно обсудить."
-            response = self.model(
-                initial_prompt,
-                max_length=2048,
-                num_return_sequences=1
-            )[0]['generated_text']
+            context = self.get_conversation_context(conversation_id)
+            print(context)
+
+            text = self.tokenizer.apply_chat_template(
+                context,
+                enable_thinking=True,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+            model_inputs = self.tokenizer([text], return_tensors="pt").to(self.model.device)
             
-            assistant_response = response.replace(self.system_prompt, "").strip()
+            generated_ids = self.model.generate(**model_inputs, max_new_tokens=params.get("max_tokens", 1000))
             
-            return {
-                "initial_response": assistant_response,
-                "system_prompt": self.system_prompt
-            }
+            output_ids = generated_ids[0][len(model_inputs.input_ids[0]) :]
+            assistant_response = self.tokenizer.decode(output_ids, skip_special_tokens=True)
+
+            self.add_to_conversation(
+                conversation_id,
+                role="assistant",
+                content=assistant_response,
+            )
+            
+            return assistant_response
+
         except Exception as e:
-            self.log(f"Interview failed: {str(e)}", "error")
+            self.logger.error(str(self.api_url))
+            self.logger.error(f"Interview failed: {str(e)}")
             raise
+
+def main():
+    """Main entry point with command-line arguments."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Simple LLM Agent")
+    parser.add_argument("--agent-id", type=int, required=True,
+                       help="Agent ID (1, 2, 3, etc.)")
+    parser.add_argument("--api-url", default="http://localhost:8000",
+                       help="API server URL (default: http://localhost:8000)")
+    parser.add_argument("--poll-interval", type=float, default=2.0,
+                       help="Polling interval in seconds (default: 2.0)")
+    parser.add_argument("--once", action="store_true",
+                       help="Run once and exit (useful for testing)")
+    parser.add_argument("--model", type=str, default="MTSAIR/Cotype-Nano",
+                       help="Model from hugging face or local path to it")
+
+    args = parser.parse_args()
+    
+    # Create and run agent
+    agent = UserInteractionAgent(args.agent_id, args.api_url, args.model)
+    
+    # Handle graceful shutdown
+    def signal_handler(sig, frame):
+        agent.stop()
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    if args.once:
+        agent.run_once()
+    else:
+        agent.run(interval=args.poll_interval)
+
+
+if __name__ == "__main__":
+    main()

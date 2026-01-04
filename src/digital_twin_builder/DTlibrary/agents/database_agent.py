@@ -1,62 +1,102 @@
-from .base_agent import BaseAgent
-from transformers import pipeline
+from base_agent import BaseAgent
+from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer
+import torch
 import json
-from typing import Dict, Any
+import requests
+import time
+import logging
+import sys
+import signal
+from typing import Dict, Any, Optional
 
 class DatabaseAgent(BaseAgent):
-    def __init__(self):
+    def __init__(self, agent_id: int, api_url: str, model="abdulmannan-01/qwen-2.5-1.5b-finetuned-for-sql-generation"):
         super().__init__("DatabaseAgent")
+        self.agent_id = agent_id
+        self.api_url = api_url.rstrip('/')
+        self.running = False
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.logger.info(f"device: {self.device}")
         try:
-            self.model = pipeline("text-generation", 
-                                model="abdulmannan-01/qwen-2.5-1.5b-finetuned-for-sql-generation")
+            # self.model = pipeline("text-generation", model= model)
+            self.tokenizer = AutoTokenizer.from_pretrained(model)
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model,
+            ).to(self.device)
         except Exception as e:
-            self.log(f"Failed to load database model: {str(e)}", "error")
+            self.logger.error(f"Model loading failed: {str(e)}")
             raise
 
-    def run(self, requirements: Dict[str, Any] = None) -> Dict[str, Any]:
+    def process_task(self, task):
+        conversation_id = task.get("conversation_id", "")
+        params = task.get("params", {})
+        task_id = task["task_id"][:8]
+
+        self.logger.info(f"Processing task {task_id}")
         try:
-            if not requirements:
-                raise ValueError("No requirements provided")
-            return self.generate_schema(requirements)
+            context = self.get_conversation_context(conversation_id)
+            print(context)
+
+            text = self.tokenizer.apply_chat_template(
+                context,
+                enable_thinking=True,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+            model_inputs = self.tokenizer([text], return_tensors="pt").to(self.model.device)
+            
+            generated_ids = self.model.generate(**model_inputs, max_new_tokens=params.get("max_tokens", 1000))
+            
+            output_ids = generated_ids[0][len(model_inputs.input_ids[0]) :]
+            assistant_response = self.tokenizer.decode(output_ids, skip_special_tokens=True)
+
+            self.add_to_conversation(
+                conversation_id,
+                role="assistant",
+                content=assistant_response,
+            )
+            
+            return assistant_response
+
         except Exception as e:
-            self.log(f"Error in run method: {str(e)}", "error")
+            self.logger.error(str(self.api_url))
+            self.logger.error(f"Interview failed: {str(e)}")
             raise
 
-    def generate_schema(self, requirements: Dict[str, Any]) -> Dict[str, Any]:
-        self.log("Generating database schema with LLM")
-        
-        translated_reqs = {
-            "general_info": requirements.get("общая_информация", ""),
-            "production_processes": requirements.get("производственные_процессы", ""),
-            "data_monitoring": requirements.get("данные_и_мониторинг", ""),
-            "twin_requirements": requirements.get("требования_к_цифровому_двойнику", "")
-        }
-        
-        prompt = f"""Create a PostgreSQL schema for a metallurgical production digital twin based on these requirements:
-        {json.dumps(translated_reqs, ensure_ascii=False)}
-        
-        The schema should include tables for:
-        - Sensor data (temperature, pressure, vibration, etc.)
-        - Equipment status
-        - Production quality metrics
-        - Material composition
-        
-        Output should be a JSON with tables, columns, data types, constraints and relationships."""
-        
-        try:
-            response = self.model(
-                prompt, 
-                max_length=2048, 
-                num_return_sequences=1
-            )[0]['generated_text']
-            return self._parse_response(response)
-        except Exception as e:
-            self.log(f"Schema generation failed: {str(e)}", "error")
-            raise
+def main():
+    """Main entry point with command-line arguments."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Simple LLM Agent")
+    parser.add_argument("--agent-id", type=int, required=True,
+                       help="Agent ID (1, 2, 3, etc.)")
+    parser.add_argument("--api-url", default="http://localhost:8000",
+                       help="API server URL (default: http://localhost:8000)")
+    parser.add_argument("--poll-interval", type=float, default=2.0,
+                       help="Polling interval in seconds (default: 2.0)")
+    parser.add_argument("--once", action="store_true",
+                       help="Run once and exit (useful for testing)")
+    parser.add_argument("--model", type=str, default="abdulmannan-01/qwen-2.5-1.5b-finetuned-for-sql-generation",
+                       help="Model from hugging face or local path to it")
 
-    def _parse_response(self, response: str) -> Dict[str, Any]:
-        try:
-            return json.loads(response)
-        except json.JSONDecodeError:
-            self.log("Failed to parse JSON response, returning raw text", "warning")
-            return {"sql": response}
+    args = parser.parse_args()
+    
+    # Create and run agent
+    agent = DatabaseAgent(args.agent_id, args.api_url, args.model)
+    
+    # Handle graceful shutdown
+    def signal_handler(sig, frame):
+        agent.stop()
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    if args.once:
+        agent.run_once()
+    else:
+        agent.run(interval=args.poll_interval)
+
+
+if __name__ == "__main__":
+    main()
