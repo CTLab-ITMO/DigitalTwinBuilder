@@ -115,26 +115,83 @@ class ResultSubmission(BaseModel):
     result: str
     error: Optional[str] = None
 
+
+@app.post("/sessions")
+async def create_session(
+    user_id: str = "default", 
+    title: Optional[str] = None
+):
+    session_id = str(uuid.uuid4())
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO sessions (id, user_id, title)
+            VALUES ($1, $2, $3)
+        """, session_id, user_id, title)
+
+    return {"session_id": session_id}
+
+@app.get("/sessions")
+async def get_sessions(
+    user_id: str = "default",
+    limit: int = 50,
+    offset: int = 0
+):
+    async with pool.acquire() as conn:
+        sessions = await conn.fetch("""
+            SELECT id, title, user_id
+            FROM sessions 
+            WHERE user_id = $1
+            ORDER BY updated_at DESC
+            LIMIT $2 OFFSET $3
+        """, user_id, limit, offset)
+    
+    return {
+        "sessions": [dict(c) for c in sessions],
+    }
+
+@app.get("/sessions/{session_id}")
+async def get_session(session_id: str):
+    async with pool.acquire() as conn:
+        session = await conn.fetchrow("""
+            SELECT id, title, user_id
+            FROM sessions 
+            WHERE id = $1
+        """, session_id)
+                
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        # Get conversations
+        conversations = await conn.fetch("""
+            SELECT id, session_id, agent_id, created_at
+            FROM conversations 
+            WHERE session_id = $1
+            ORDER BY created_at ASC
+        """, session_id)
+    
+    return {
+        "session": dict(session),
+        "conversations": [dict(c) for c in conversations]
+    }
+
 # API endpoints for chat history
 @app.post("/conversations")
 async def create_conversation(
-    user_id: str = "default",
+    session_id: str,
     agent_id: int = 1,
-    title: Optional[str] = None
 ):
     """Create a new conversation"""
     conversation_id = str(uuid.uuid4())
     async with pool.acquire() as conn:
         await conn.execute("""
-            INSERT INTO conversations (id, user_id, title, agent_id)
-            VALUES ($1, $2, $3, $4)
-        """, conversation_id, user_id, title, agent_id)
+            INSERT INTO conversations (id, session_id, agent_id)
+            VALUES ($1, $2, $3)
+        """, conversation_id, session_id, agent_id)
     
     return {"conversation_id": conversation_id}
 
 @app.get("/conversations")
 async def get_conversations(
-    user_id: str = "default",
     agent_id: int = 1,
     limit: int = 50,
     offset: int = 0
@@ -142,21 +199,15 @@ async def get_conversations(
     """Get list of conversations for a user"""
     async with pool.acquire() as conn:
         conversations = await conn.fetch("""
-            SELECT id, title, created_at, updated_at, metadata
+            SELECT id, created_at, updated_at, metadata
             FROM conversations 
-            WHERE user_id = $1 AND is_active = TRUE AND agent_id = $4
+            WHERE agent_id = $3
             ORDER BY updated_at DESC
-            LIMIT $2 OFFSET $3
-        """, user_id, limit, offset, agent_id)
-        
-        total = await conn.fetchval("""
-            SELECT COUNT(*) FROM conversations 
-            WHERE user_id = $1 AND is_active = TRUE
-        """, user_id)
+            LIMIT $1 OFFSET $2
+        """, limit, offset, agent_id)
     
     return {
-        "conversations": [dict(c) for c in conversations],
-        "total": total
+        "conversations": [dict(c) for c in conversations]
     }
 
 @app.get("/conversations/{conversation_id}")
@@ -165,10 +216,10 @@ async def get_conversation(conversation_id: str):
     async with pool.acquire() as conn:
         # Get conversation info
         conversation = await conn.fetchrow("""
-            SELECT id, title, created_at, updated_at, metadata
+            SELECT id, created_at, updated_at, metadata
             FROM conversations 
-            WHERE id = $1 AND is_active = TRUE
-        """, conversation_id)
+            WHERE id = $1
+            """, conversation_id)
         
         if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
@@ -178,7 +229,7 @@ async def get_conversation(conversation_id: str):
             SELECT id, role, content, content_type,
                    metadata, created_at, tokens
             FROM messages 
-            WHERE conversation_id = $1 AND is_hidden = FALSE
+            WHERE conversation_id = $1
             ORDER BY created_at ASC
         """, conversation_id)
     
@@ -216,7 +267,7 @@ async def add_message(
     async with pool.acquire() as conn:
         # Verify conversation exists
         conv_exists = await conn.fetchval(
-            "SELECT 1 FROM conversations WHERE id = $1 AND is_active = TRUE",
+            "SELECT 1 FROM conversations WHERE id = $1",
             conversation_id
         )
         if not conv_exists:

@@ -13,16 +13,22 @@ DROP TABLE IF EXISTS conversations CASCADE;
 DROP TABLE IF EXISTS tasks CASCADE;
 DROP TABLE IF EXISTS agent_status CASCADE;
 
--- conversations table
-CREATE TABLE conversations (
+CREATE TABLE sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    agent_id INTEGER,  -- NULL for user messages
     user_id VARCHAR(255) NOT NULL,
     title VARCHAR(500),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- conversations table
+CREATE TABLE conversations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
+    agent_id INTEGER,  -- NULL for user messages
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    metadata JSONB DEFAULT '{}',
-    is_active BOOLEAN DEFAULT TRUE
+    metadata JSONB DEFAULT '{}'
 );
 
 -- messages table
@@ -35,8 +41,7 @@ CREATE TABLE messages (
     metadata JSONB DEFAULT '{}',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     tokens INTEGER DEFAULT 0,
-    parent_message_id UUID REFERENCES messages(id),
-    is_hidden BOOLEAN DEFAULT FALSE
+    parent_message_id UUID REFERENCES messages(id)
 );
 
 -- Tasks table
@@ -93,3 +98,35 @@ SELECT
 FROM tasks t
 LEFT JOIN agent_status a ON t.agent_id = a.agent_id
 ORDER BY t.created_at DESC;
+
+----------------------------------------------------
+----------------Tables for DT-----------------------
+----------------------------------------------------
+
+-- Таблица устройств
+CREATE TABLE devices (
+    id SERIAL PRIMARY KEY,
+    device_name VARCHAR(255) NOT NULL UNIQUE,
+    data_update_frequency VARCHAR(100)
+);
+
+-- Таблица датчиков
+CREATE TABLE sensors (
+    id SERIAL PRIMARY KEY,
+    device_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    sensor_name VARCHAR(255) NOT NULL,
+    parameter_type VARCHAR(100),
+    unit VARCHAR(50),
+    measurement_range_min DECIMAL(15,6),
+    measurement_range_max DECIMAL(15,6),
+    alarm_threshold_min DECIMAL(15,6),
+    alarm_threshold_max DECIMAL(15,6)
+);
+
+-- Таблица показаний
+CREATE TABLE sensor_readings (
+    id SERIAL PRIMARY KEY,
+    sensor_id INTEGER NOT NULL REFERENCES sensors(id) ON DELETE CASCADE,
+    value DECIMAL(15,6) NOT NULL,
+    reading_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

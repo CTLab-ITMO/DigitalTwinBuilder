@@ -7,6 +7,10 @@ import threading
 import queue
 from datetime import datetime
 from prompts import system as sys_prompts
+from DTlibrary.cores.sensor_manager import SensorManager
+from DTlibrary.cores.database import DatabaseManager
+import pandas as pd
+import plotly.express as px
 
 # Configuration
 API_URL = "http://localhost:8000"  # Change to your API URL
@@ -78,7 +82,6 @@ def background_poll_task_result(response_queue, task_id):
     max_poll = 100
     while (poll < max_poll):
         task = get_task_status(task_id)
-        print(str(task))
         if task and task["status"] == "completed":
             response_queue.put(task)
             break
@@ -87,11 +90,11 @@ def background_poll_task_result(response_queue, task_id):
         poll += 1
 
 
-def create_new_conversation(agent_id, system_prompt):
+def create_new_conversation(session_id, agent_id, system_prompt):
     """Create a new conversation"""
     response = requests.post(
         f"{API_URL}/conversations",
-        params={"user_id": "streamlit_user", "agent_id": agent_id, "title": "New Chat"}
+        params={"session_id": session_id, "agent_id": agent_id}
     )
     if response.status_code == 200:
         conversation_id = response.json()["conversation_id"]
@@ -105,52 +108,45 @@ def create_new_conversation(agent_id, system_prompt):
         st.error(f"Не удалось добавить системный промпт в новую беседу {conversation_id} с агентом {agent_id}")
         return None
 
-def load_conversation(conversation_id):
+def create_new_session():
+    response = requests.post(
+        f"{API_URL}/sessions",
+        params={"user_id": "streamlit_user", "title": "New Chat"}
+    )
+    if response.status_code == 200:
+        session_id = response.json()["session_id"]
+        return session_id
+    else:
+        st.error(f"Не удалось создать новую сессию, запрос завершился с ошибкой {response.status_code}")
+        return None
+    
+def load_session(session_id):
+    """Load a conversation from API"""
+    response = requests.get(f"{API_URL}/sessions/{session_id}")
+    if response.status_code != 200:
+        st.error(f"Не удалось загрузить сессию {session_id}, запрос завершился с ошибкой {response.status_code}")
+        return
+
+    data = response.json()
+    st.session_state.session_id = session_id
+    for conv in data["conversations"]:
+        agent_id = conv["agent_id"]
+        if agent_id > st.session_state.agent_count:
+            difference = agent_id - st.session_state.agent_count
+            st.session_state.agent_count = agent_id
+            st.session_state.conversations.extend([None] * difference)
+        st.session_state.conversations[agent_id - 1] = conv["id"]
+
+def load_conversation(conversation_id, agent_id):
     """Load a conversation from API"""
     response = requests.get(f"{API_URL}/conversations/{conversation_id}")
-    if response.status_code == 200:
-        data = response.json()
-        st.session_state.ui_conversation_id = conversation_id
-        # INFO: Temporary
-        st.session_state.interview_completed = True
-        st.session_state.interview_result = """{
-  "device_name": "Термостат домашний",
-  "sensor_count": 2,
-  "sensors": [
-    {
-      "sensor_name": "Датчик температуры ТСМ-50",
-      "parameter_type": "температура",
-      "unit": "°C",
-      "measurement_range": {
-        "min": -10,
-        "max": 90
-      },
-      "alarm_thresholds": {
-        "critical_min": -10,
-        "critical_max": 90
-      },
-      "data_update_frequency": "1 раз в секунду",
-      "data_processing_algorithms": []
-    },
-    {
-      "sensor_name": "Датчик влажности ДВ-100",
-      "parameter_type": "влажность",
-      "unit": "%",
-      "measurement_range": {
-        "min": 30,
-        "max": 90
-      },
-      "alarm_thresholds": {
-        "critical_min": 30,
-        "critical_max": 90
-      },
-      "data_update_frequency": "1 раз в секунду",
-      "data_processing_algorithms": []
-    }
-  ]
-}"""
+    if response.status_code != 200:
+        st.error(f"Не удалось загрузить беседу {conversation_id}, запрос завершился с ошибкой {response.status_code}")
+        return 
 
-        st.session_state.messages = data["messages"]
+    data = response.json()
+    st.session_state.conversations[agent_id - 1] = conversation_id
+    st.session_state.messages[agent_id - 1] = data["messages"]
 
 def submit_chat_to_agent(agent_id, conversation_id, params):
     task_info = submit_task(agent_id, conversation_id, params)
@@ -170,44 +166,21 @@ def submit_chat_to_agent(agent_id, conversation_id, params):
         st.toast("Task submitted! Polling for response...")
 
 def setup_interview_tab():
-    agent_id = 1
+    ui_agent_id = 1
     st.header("Создание цифрового двойника производства")
     
-    if st.session_state.ui_conversation_id is None:
+    if st.session_state.conversations[ui_agent_id - 1] is None:
         st.markdown("Пожалуйста, выберите существующий чат или создайте новый")
         return
 
-    load_conversation(st.session_state.ui_conversation_id)
-    for message in st.session_state.messages:
+    load_conversation(st.session_state.conversations[ui_agent_id - 1], ui_agent_id)
+    for message in st.session_state.messages[0]:
         if message["role"] == "system":
             continue
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    while not st.session_state.response_queue.empty():
-        task = st.session_state.response_queue.get()
-        result = task.get("result", "")
-        agent_id = task["agent_id"]
-        if agent_id == 1:
-            # if json then it is final answer
-            try:
-                start = result.find('{')
-                end = result.rfind('}')
-                json_result = result[start:end+1]
-                st.session_state.interview_result = json_result
-                json.loads(json_result)
-                print("Json in message found")
-            except ValueError:
-                print("No json in message found")
-                continue
-            st.session_state.interview_completed = True
-            st.rerun()
-        elif agent_id == 2:
-            print(result)
-            st.session_state.db_schema = result
-        elif agent_id == 3:
-            pass
-
+    
     with st.expander("Parameters"):
         temperature = st.slider("Temperature", 0.0, 2.0, 0.7, 0.1)
         max_tokens = st.number_input("Max Tokens", 100, 4000, 1000)
@@ -221,15 +194,16 @@ def setup_interview_tab():
             "temperature": temperature,
             "max_tokens": max_tokens
         }
-        response = add_message_to_conversation(st.session_state.ui_conversation_id, role="user", content=user_input)
+        response = add_message_to_conversation(st.session_state.conversations[ui_agent_id - 1], role="user", content=user_input)
         if response is not None:
-            submit_chat_to_agent(agent_id, st.session_state.ui_conversation_id, params)
+            submit_chat_to_agent(ui_agent_id, st.session_state.conversations[ui_agent_id - 1], params)
             st.rerun()
     if st.session_state.get('interview_completed', False):
         st.success("Интервью завершено, переходите к следующей вкладке")
 
 
 def setup_database_tab():
+    db_agent_id = 2
     st.header("Настройка базы данных")
     
     if not st.session_state.get('interview_completed', False):
@@ -238,51 +212,50 @@ def setup_database_tab():
 
     st.subheader("Результат интервью")
     st.json(st.session_state.interview_result)
-    if 'db_schema' not in st.session_state:
-        st.session_state.db_schema = ""
-        st.session_state.db_conversation_id = create_new_conversation(2, sys_prompts.DB)
-        add_message_to_conversation(st.session_state.db_conversation_id, "user", st.session_state.interview_result)
-        submit_chat_to_agent(2, st.session_state.db_conversation_id, {})
-    elif st.session_state.db_schema != "":
+
+    if st.session_state.conversations[db_agent_id - 1] is None:
+        st.session_state.conversations[db_agent_id - 1] = create_new_conversation(st.session_state.session_id, db_agent_id, sys_prompts.DB)    
+        add_message_to_conversation(st.session_state.conversations[db_agent_id - 1], "user", st.session_state.interview_result)
+        submit_chat_to_agent(db_agent_id, st.session_state.conversation[db_agent_id - 1], {})
+    load_conversation(st.session_state.conversations[db_agent_id - 1], db_agent_id)
+    
+    if ("db_schema" in st.session_state):
         st.subheader("Сгенерированная схема базы данных")
         st.markdown(f"```{st.session_state.db_schema}```")
 
-# def setup_twin_tab():
-#     st.header("Конфигурация цифрового двойника")
-#     
-#     if 'db_schema' not in st.session_state:
-#         st.warning("Пожалуйста, настройте базу данных на предыдущей вкладке")
-#         return
-#     
-#     if 'twin_config' not in st.session_state:
-# 
-#         twin_config = .dt_agent.configure_twin(
-#             st.session_state.interview_result,
-#             st.session_state.db_schema
-#         )
-#         st.session_state.twin_config = twin_config
-#     
-#     st.subheader("Конфигурация цифрового двойника")
-#     st.json(st.session_state.twin_config)
-#     
-#     mode = st.radio("Режим работы", ["Симуляция", "Реальные датчики"])
-#     
-#     if st.button("Запустить цифровой двойник"):
-#         try:
-#             .sensor_manager = SensorManager(mode='sim' if mode == "Симуляция" else 'real')
-#             .sensor_manager.start()
-#             
-#             .db_manager = DatabaseManager(
-#                 dbname="digital_twin",
-#                 user="postgres",
-#                 password="omgssmyalg"
-#             )
-#             .db_manager.create_sensor_tables()
-#             
-#             st.session_state.sensor_running = True
-#             st.success("Цифровой двойник успешно запущен!")
-#         except Exception as e:
-#             st.error(f"Ошибка запуска: {str(e)}")
+def setup_twin_tab():
+    dt_agent_id = 3
+    st.header("Конфигурация цифрового двойника")
+  
+    if 'db_schema' not in st.session_state:
+        st.warning("Пожалуйста, настройте базу данных на предыдущей вкладке")
+        return
+
+    if st.session_state.conversations[dt_agent_id - 1] is None:
+        st.session_state.conversations[dt_agent_id - 1] = create_new_conversation(st.session_state.session_id, dt_agent_id, sys_prompts.DT)
+        # TODO: check context is right for dt agetn
+        add_message_to_conversation(st.session_state.conversations[dt_agent_id  - 1], "user", st.session_state.interview_result)
+        add_message_to_conversation(st.session_state.conversations[dt_agent_id  - 1], "user", st.session_state.db_schema)
+
+        submit_chat_to_agent(dt_agent_id, st.session_state.conversations[dt_agent_id  - 1], {})
+
+    if ("dt_config" in st.session_state):
+        st.subgeader("Итоговая конфигурация двойника")
+        st.json(st.session_state.dt_config)
+
+    if st.button("Запустить цифровой двойник"):
+        try:
+            st.session_state.sensor_manager = SensorManager(mode='sim')
+            st.session_state.sensor_manager.start()
+
+            st.session_state.db_manager = DatabaseManager()
+            start = st.session_state.db_schema.find("INSERT")
+            end = st.session_state.db_schema.rfind(";")
+            st.session_state.db_manager.execute(st.session_state.db_schema[start:end + 1])
+            st.session_state.sensor_running = True
+            st.success("Цифровой двойник успешно запущен!")
+        except Exception as e:
+            st.error(f"Ошибка запуска: {str(e)}")
 #     
 #     if st.button("Остановить", disabled=not st.session_state.get('sensor_running', False)):
 #         .sensor_manager.stop()
@@ -290,28 +263,60 @@ def setup_database_tab():
 #             .db_manager.close()
 #         st.session_state.sensor_running = False
 #         st.success("Работа цифрового двойника остановлена")
-# 
-# def setup_sensor_tab():
-#     st.header("Мониторинг производства")
-#     
-#     if not st.session_state.get('sensor_running', False):
-#         st.warning("Цифровой двойник не запущен")
-#         return
-#     
-#     data = .sensor_manager.get_data()
-#     if data:
-#         .display_sensor_data(data)
+
+def setup_sensor_tab():
+    st.header("Мониторинг производства")
+    
+    if not st.session_state.get('sensor_running', False):
+        st.warning("Цифровой двойник не запущен")
+        return
+    
+    data = st.session_state.sensor_manager.get_data()
+    if data:
+        print(data)
+        display_sensor_data(data)
+
+def display_sensor_data(data):
+    st.subheader("Текущие показания")
+
+    sensor_data = data["sensor_data"]
+    display_data = []
+
+    for param, value in sensor_data.items():
+        display_data.append({
+            "Параметр": param,
+            "Значение": value,
+            "Время": datetime.fromtimestamp(data["timestamp"])
+        })
+
+    st.dataframe(pd.DataFrame(display_data))
+    plot_sensor_data(data)
+
+def plot_sensor_data(data):
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.session_state.temperature_history.append({
+            "timestamp": datetime.fromtimestamp(data["timestamp"]),
+            "value": data["sensor_data"].get("temperature", 0)
+        })
+        temp_df = pd.DataFrame(st.session_state.temperature_history[-100:])
+        fig_temp = px.line(temp_df, x="timestamp", y="value", title="Температура")
+        st.plotly_chart(fig_temp, use_container_width=True)
 
 def init_session_state():
     """Initialize session state for chat"""
-    if 'ui_conversation_id' not in st.session_state:
-        st.session_state.ui_conversation_id = None
+    st.session_state.agent_count = 3
+    if 'conversations' not in st.session_state:
+        st.session_state.conversations = [None] * st.session_state.agent_count
     if 'messages' not in st.session_state:
-        st.session_state.messages = []
+        st.session_state.messages = [[]] * st.session_state.agent_count
     if 'conversations' not in st.session_state:
         st.session_state.conversations = []
     if 'tasks' not in st.session_state:
         st.session_state.tasks = []
+    if 'temperature_history' not in st.session_state:
+        st.session_state.temperature_history = []
 
 def initialize_ui():
     st.set_page_config(page_title="Digital Twin Builder", layout="wide")
@@ -320,30 +325,31 @@ def initialize_ui():
     init_session_state()
     
     with st.sidebar:
-        st.title("💬 Conversations")
+        st.title("💬 Sessions")
         
         # Load conversations
-        response = requests.get(f"{API_URL}/conversations", params={"user_id": "streamlit_user", "agent_id": 1})
+        response = requests.get(f"{API_URL}/sessions", params={"user_id": "streamlit_user"})
         if response.status_code == 200:
-            st.session_state.conversations = response.json()["conversations"]
+            st.session_state.sessions = response.json()["sessions"]
         
         # New chat button
         if st.button("➕ New Chat", use_container_width=True):
-            conversation_id = create_new_conversation(1, sys_prompts.UI)
-            submit_chat_to_agent(1, conversation_id, {})
-            load_conversation(conversation_id)
+            session_id = create_new_session()
+            load_session(session_id)
+            st.session_state.conversations[0] = create_new_conversation(st.session_state.session_id, 1, sys_prompts.UI)
+            submit_chat_to_agent(1, st.session_state.conversations[0], {})
         
         st.divider()
         
         # list conversations
-        for conv in st.session_state.conversations:
-            title = conv.get("title", f"chat {conv['id'][:8]}")
-            if st.button(title, key=conv["id"], use_container_width=True):
-                load_conversation(conv["id"])
+        for session in st.session_state.sessions:
+            title = session.get("title", f"chat {session['id'][:8]}")
+            if st.button(title, key=session["id"], use_container_width=True):
+                load_session(session["id"])
 
         st.header("agent status")
         
-        for agent_id in [1, 2, 3]:
+        for agent_id in range(1, st.session_state.agent_count + 1):
             status = get_agent_status(agent_id)
             status_color = {
                 "idle": "🟢",
@@ -373,10 +379,38 @@ def initialize_ui():
         setup_interview_tab()
     with tab2:
         setup_database_tab()
-    # with tab3:
-    #     setup_twin_tab()
-    # with tab4:
-    #     setup_sensor_tab()
+    with tab3:
+        setup_twin_tab()
+    with tab4:
+        setup_sensor_tab()
+    
+    # new message processing
+    while not st.session_state.response_queue.empty():
+        task = st.session_state.response_queue.get()
+        result = task.get("result", "")
+        agent_id = task["agent_id"]
+        if agent_id == 0:
+            # if json then it is final answer
+            try:
+                start = result.find('{')
+                end = result.rfind('}')
+                json_result = result[start:end+1]
+                st.session_state.interview_result = json_result
+                json.loads(json_result)
+                print("Json in message found")
+            except ValueError:
+                print("No json in message found")
+                continue
+            st.session_state.interview_completed = True
+        elif agent_id == 2:
+            print(result)
+            st.session_state.db_schema = result
+        elif agent_id == 3:
+            pass
+        else:
+            continue
+        st.rerun()
+
     time.sleep(10)
     st.rerun()
 
