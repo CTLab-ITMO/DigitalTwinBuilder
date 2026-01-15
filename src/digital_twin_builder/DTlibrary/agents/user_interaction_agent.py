@@ -1,112 +1,56 @@
 from digital_twin_builder.DTlibrary.agents.base_agent import BaseAgent
-from typing import List, Dict
-
+from digital_twin_builder.DTlibrary.langgraph_flow import build_digital_twin_graph, TwinState
+import json
 
 class UserInteractionAgent(BaseAgent):
-
+    """
+    UI-адаптер для LangGraph.
+    """
     def __init__(self):
         super().__init__("UserInteractionAgent")
-
-        self.topics = {
-            "general_info": "Общая информация о предприятии",
-            "production_processes": "Производственные процессы",
-            "data_monitoring": "Данные и мониторинг",
-            "twin_requirements": "Требования к цифровому двойнику",
+        self.graph = build_digital_twin_graph()
+        self.state: TwinState = {
+            "raw_user_inputs": [],
+            "requirements": {},
+            "missing_fields": [],
+            "interview_finished": False,
+            "last_question": None,
+            "db_schema": None, 
+            "twin_config": None 
         }
 
-        self.current_topic = "general_info"
-        self.completed_topics = []
-        self.collected_data = {key: [] for key in self.topics}
-
-        self.messages: List[Dict[str, str]] = []
-
-        self.system_prompt = """
-Ты — агент-интервьюер для создания цифрового двойника. 
-Твоя задача — провести последовательное интервью по четырём темам.
-
-Темы:
-1. Общая информация о предприятии
-2. Производственные процессы
-3. Данные и мониторинг
-4. Требования к цифровому двойнику
-
-Для каждой темы:
-- задавай вопросы,
-- уточняй детали,
-- когда информации достаточно, кратко суммируй,
-- и переходи к следующей теме.
-
-Когда все темы завершены:
-- выдай полностью собранную информацию в JSON формате,
-- ключи: general_info, production_processes, data_monitoring, twin_requirements,
-- значения: списки строк,
-- НЕ добавляй никакого текста вокруг JSON.
-
-Разговор веди естественно, на русском языке.
-"""
-
-        self.messages.append({"role": "system", "content": self.system_prompt})
-
-
     def run(self):
-        """Запускает интервью, возвращает первое сообщение."""
-
-        greeting = (
-            "Здравствуйте! Мы начнём интервью по созданию цифрового двойника.  \n"
-            f"Первая тема: {self.topics[self.current_topic]}.  \n"
-            "Пожалуйста, расскажите подробнее."
-        )
-
-        self.messages.append({"role": "assistant", "content": greeting})
-        return greeting
-
+        return "Опишите объект и задачи цифрового двойника в удобной форме."
 
     def next_step(self, user_text: str):
+        self.state["raw_user_inputs"].append(user_text)
+        try:
+            result = self.graph.invoke(self.state)
+            self.state = result
+        except Exception as e:
+            self.log(f"Ошибка при вызове LangGraph: {e}", "error")
+            return f"Произошла ошибка: {e}"
 
-        self.messages.append({"role": "user", "content": user_text})
+        if not result.get("interview_finished") and result.get("last_question"):
+            return result["last_question"]
 
-        self.collected_data[self.current_topic].append(user_text)
-
-        context = "\n".join(
-            [f"{m['role']}: {m['content']}" for m in self.messages]
-        )
-
-        prompt = (
-            context
-            + f"\nassistant: Ты сейчас работаешь с темой: {self.topics[self.current_topic]}.\n"
-            + "Продолжай диалог или завершай тему, если информации достаточно.\n"
-        )
-
-        response = self.llm.generate(prompt).strip()
-
-        self.messages.append({"role": "assistant", "content": response})
-
-        lower = response.lower()
-        if "следующ" in lower or "перейд" in lower:
-            self.completed_topics.append(self.current_topic)
-
-            remaining = [t for t in self.topics if t not in self.completed_topics]
-
-            if remaining:
-                self.current_topic = remaining[0]
-            else:
-                final_json = self._build_final_json()
-
-                self.messages.append({
-                    "role": "assistant",
-                    "content": final_json
-                })
-
-                return final_json
-
-        return response
-
+        return None
 
     def is_finished(self):
-        return len(self.completed_topics) == len(self.topics)
+        finished = self.state.get("interview_finished", False)
+        return finished
 
+    def get_final_requirements(self):
+        return self.state.get("requirements", {})
 
-    def _build_final_json(self):
-        import json
+    def set_db_schema(self, schema: dict):
+        self.state["db_schema"] = schema
 
-        return json.dumps(self.collected_data, ensure_ascii=False, indent=2)
+    def get_db_schema(self):
+        return self.state.get("db_schema")
+
+    def set_twin_config(self, config: dict):
+        self.state["twin_config"] = config
+
+    def get_twin_config(self):
+        return self.state.get("twin_config")

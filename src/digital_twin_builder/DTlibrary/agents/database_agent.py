@@ -5,50 +5,73 @@ from typing import Dict, Any
 class DatabaseAgent(BaseAgent):
     def __init__(self):
         super().__init__("DatabaseAgent")
-        self.system_prompt = ("You are an expert SQL architect. Given production requirements, " 
-                              "produce a PostgreSQL schema described as valid JSON. " 
-                              "The JSON should contain tables, columns, types, constraints and relationships. " 
-                              "Do not include explanations or additional commentary, only the JSON.")
+        self.system_prompt = ("Ты — эксперт по проектированию баз данных SQL. "
+                              "На основе требований к цифровому двойнику промышленного производства, "
+                              "сгенерируй схему базы данных PostgreSQL в формате JSON. "
+                              "JSON должен содержать таблицы, столбцы, типы данных, ограничения и связи. "
+                              "Ответ должен быть только валидным JSON-объектом, без пояснений.")
 
     def run(self, requirements: Dict[str, Any] = None) -> Dict[str, Any]:
         try:
             if not requirements:
-                raise ValueError("No requirements provided")
-            return self.generate_schema(requirements)
+                raise ValueError("Требования для генерации схемы БД не предоставлены.")
+
+            self.log("Запуск генерации схемы БД с помощью LLM.")
+            schema_json = self.generate_schema(requirements)
+            return schema_json
         except Exception as e:
-            self.log(f"Error in run method: {str(e)}", "error")
+            self.log(f"Ошибка в методе run: {str(e)}", "error")
             raise
 
     def generate_schema(self, requirements: Dict[str, Any]) -> Dict[str, Any]:
-        self.log("Generating database schema with LLM")
+        prompt = f"""
+        Сгенерируй схему базы данных PostgreSQL для цифрового двойника промышленного производства на основе следующих требований:
 
-        translated_reqs = {
-            "general_info": requirements.get("общая_информация", ""),
-            "production_processes": requirements.get("производственные_процессы", ""),
-            "data_monitoring": requirements.get("данные_и_мониторинг", ""),
-            "twin_requirements": requirements.get("требования_к_цифровому_двойнику", "")
-        }
+        {json.dumps(requirements, ensure_ascii=False, indent=2)}
 
-        prompt = f"""Create a PostgreSQL schema for a metallurgical production digital twin based on these requirements:
-{json.dumps(translated_reqs, ensure_ascii=False, indent=2)}
+        Схема должна включать таблицы для:
+        - Данных с датчиков (температура, давление, вибрация, уровень и т.д.)
+        - Статуса оборудования
+        - Метрик качества производства
+        - Состава материалов
+        - Истории обслуживания (опционально)
+        - Событий/алертов (опционально)
 
-The schema should include tables for:
-- Sensor data (temperature, pressure, vibration, etc.)
-- Equipment status
-- Production quality metrics
-- Material composition
-
-Output should be a JSON with tables, columns, data types, constraints and relationships."""
+        Ответ должен быть представлен в виде валидного JSON-объекта с описанием таблиц, столбцов, типов данных, ограничений и связей.
+        """
 
         try:
             result = self.llm.generate_json(prompt, system_prompt=self.system_prompt, max_tokens=2048)
-            if isinstance(result, dict) and 'raw' in result:
-                raw = result['raw']
-                try:
-                    return json.loads(raw)
-                except Exception:
-                    return {"sql": raw}
-            return result
+            
+            if isinstance(result, dict):
+                if 'raw' in result:
+                    raw_text = result['raw']
+                    try:
+                        parsed_json = json.loads(raw_text)
+                        return parsed_json
+                    except json.JSONDecodeError:
+                        return {"error": "Не удалось распарсить сгенерированный JSON", "raw_output": raw_text}
+                else:
+                    return result
+            else:
+                return {"error": "Непредвиденный формат результата от LLM", "output": str(result)}
+
         except Exception as e:
-            self.log(f"Schema generation failed: {str(e)}", "error")
+            self.log(f"Ошибка при генерации схемы: {str(e)}", "error")
             raise
+
+
+    def interpret_schema(self, schema_json: Dict[str, Any]) -> str:
+        """ Генерирует текстовое описание схемы БД для пользователя. """
+        prompt = f"""
+        Дана сгенерированная схема базы данных для цифрового двойника:
+        {json.dumps(schema_json, ensure_ascii=False, indent=2)}
+
+        Напиши краткое текстовое описание этой схемы, объясняя какие таблицы и для чего созданы, какие данные они будут хранить. Используй простой и понятный язык. Выводи только это описание, без своих комментариев.
+        """
+        try:
+            interpretation = self.llm.generate(prompt, system_prompt="", max_tokens=512)
+            return interpretation
+        except Exception as e:
+            self.log(f"Ошибка при интерпретации схемы: {str(e)}", "error")
+            return "Не удалось сгенерировать описание схемы."
