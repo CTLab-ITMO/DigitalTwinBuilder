@@ -223,6 +223,18 @@ def submit_chat_to_agent(agent_id, conv_idx, conversation_id, params):
         # Show immediate feedback
         st.toast("Task submitted! Polling for response...")
 
+def contains_json(message: str):
+    try:
+        start = message.find('{')
+        end = message.rfind('}')
+        json_result = message[start:end+1]
+        st.session_state.interview_result = json_result
+        json.loads(json_result)
+        print("Json in message found")
+        return True
+    except ValueError:
+        print("No json in message found")
+        return False
 
 def setup_interview_tab():
     ui_agent_id = 1
