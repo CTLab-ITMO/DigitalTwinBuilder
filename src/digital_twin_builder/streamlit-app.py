@@ -181,6 +181,19 @@ def submit_chat_to_agent(agent_id, conversation_id, params):
         # Show immediate feedback
         st.toast("Task submitted! Polling for response...")
 
+def contains_json(message: str):
+    try:
+        start = message.find('{')
+        end = message.rfind('}')
+        json_result = message[start:end+1]
+        st.session_state.interview_result = json_result
+        json.loads(json_result)
+        print("Json in message found")
+        return True
+    except ValueError:
+        print("No json in message found")
+        return False
+
 def setup_interview_tab():
     ui_agent_id = 1
     st.header("Создание цифрового двойника производства")
@@ -190,7 +203,11 @@ def setup_interview_tab():
         return
 
     load_conversation(st.session_state.conversations[ui_agent_id - 1], ui_agent_id)
-    for message in st.session_state.messages[0]:
+
+    if (contains_json(st.session_state.messages[0][-1]["content"])):
+        st.session_state.interview_completed = True
+
+    for message in st.session_state.messages[ui_agent_id - 1]:
         if message["role"] == "system":
             continue
         with st.chat_message(message["role"]):
@@ -232,7 +249,7 @@ def setup_database_tab():
     if st.session_state.conversations[db_agent_id - 1] is None:
         st.session_state.conversations[db_agent_id - 1] = create_new_conversation(st.session_state.session_id, db_agent_id, sys_prompts.DB)    
         add_message_to_conversation(st.session_state.conversations[db_agent_id - 1], "user", st.session_state.interview_result)
-        submit_chat_to_agent(db_agent_id, st.session_state.conversation[db_agent_id - 1], {})
+        submit_chat_to_agent(db_agent_id, st.session_state.conversations[db_agent_id - 1], {})
     load_conversation(st.session_state.conversations[db_agent_id - 1], db_agent_id)
     
     if ("db_schema" in st.session_state):
@@ -336,6 +353,7 @@ def init_session_state():
     if 'response_queue' not in st.session_state:
         st.session_state.response_queue = queue.Queue()
 
+
 def initialize_ui():
     st.set_page_config(page_title="Digital Twin Builder", layout="wide")
     st.title("Digital Twin Builder🏭")
@@ -412,19 +430,9 @@ def initialize_ui():
         task = st.session_state.response_queue.get()
         result = task.get("result", "")
         agent_id = task["agent_id"]
-        if agent_id == 0:
-            # if json then it is final answer
-            try:
-                start = result.find('{')
-                end = result.rfind('}')
-                json_result = result[start:end+1]
-                st.session_state.interview_result = json_result
-                json.loads(json_result)
-                print("Json in message found")
-            except ValueError:
-                print("No json in message found")
-                continue
-            st.session_state.interview_completed = True
+        if agent_id == 1:
+            if (contains_json(result)):
+                st.session_state.interview_completed = True
         elif agent_id == 2:
             print(result)
             st.session_state.db_schema = result
