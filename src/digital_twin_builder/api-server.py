@@ -187,7 +187,7 @@ async def create_conversation(
         await conn.execute("""
             INSERT INTO conversations (id, session_id, agent_id, metadata)
             VALUES ($1, $2, $3, $4)
-        """, conversation_id, session_id, agent_id, metadata)
+        """, conversation_id, session_id, agent_id, json.dumps(metadata))
     
     return {"conversation_id": conversation_id}
 
