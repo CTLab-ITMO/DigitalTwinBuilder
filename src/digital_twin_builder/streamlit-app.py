@@ -92,7 +92,7 @@ def background_poll_task_result(response_queue, task_id):
         poll += 1
 
 
-def create_new_conversation(session_id, agent_id, system_prompt):
+def create_new_conversation(session_id, agent_id, system_prompt, metadata = {}):
     """Create a new conversation"""
     try:
         response = requests_session.post(

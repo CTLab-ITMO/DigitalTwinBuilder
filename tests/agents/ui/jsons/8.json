@@ -1,0 +1,114 @@
+{
+  "device_name": "Дизель-генераторная установка FG Wilson P275",
+  "sensor_count": 6,
+  "sensors": [
+    {
+      "sensor_name": "Датчик выходного напряжения фазы L1",
+      "parameter_type": "напряжение",
+      "unit": "В",
+      "measurement_range": {
+        "min": 0,
+        "max": 300
+      },
+      "alarm_thresholds": {
+        "critical_min": 200,
+        "critical_max": 250
+      },
+      "data_update_frequency": "50 Гц",
+      "data_processing_algorithms": [
+        "Расчет действующего значения",
+        "Мониторинг асимметрии фаз"
+      ]
+    },
+    {
+      "sensor_name": "Датчик выходной частоты",
+      "parameter_type": "частота",
+      "unit": "Гц",
+      "measurement_range": {
+        "min": 45,
+        "max": 55
+      },
+      "alarm_thresholds": {
+        "critical_min": 48,
+        "critical_max": 52
+      },
+      "data_update_frequency": "10 Гц",
+      "data_processing_algorithms": [
+        "Измерение периода сигнала",
+        "ПИД-стабилизация"
+      ]
+    },
+    {
+      "sensor_name": "Датчик температуры охлаждающей жидкости",
+      "parameter_type": "температура",
+      "unit": "°C",
+      "measurement_range": {
+        "min": 0,
+        "max": 120
+      },
+      "alarm_thresholds": {
+        "critical_min": 60,
+        "critical_max": 100
+      },
+      "data_update_frequency": "2 Гц",
+      "data_processing_algorithms": [
+        "Управление термостатом",
+        "Прогноз перегрева"
+      ]
+    },
+    {
+      "sensor_name": "Датчик давления масла",
+      "parameter_type": "давление",
+      "unit": "бар",
+      "measurement_range": {
+        "min": 0,
+        "max": 10
+      },
+      "alarm_thresholds": {
+        "critical_min": 1.5,
+        "critical_max": 6
+      },
+      "data_update_frequency": "5 Гц",
+      "data_processing_algorithms": [
+        "Фильтрация пульсаций",
+        "Контроль при пуске и работе"
+      ]
+    },
+    {
+      "sensor_name": "Датчик уровня топлива в баке",
+      "parameter_type": "уровень",
+      "unit": "л",
+      "measurement_range": {
+        "min": 0,
+        "max": 500
+      },
+      "alarm_thresholds": {
+        "critical_min": 50,
+        "critical_max": 480
+      },
+      "data_update_frequency": "0.0167 Гц",
+      "data_processing_algorithms": [
+        "Учет угла наклона",
+        "Расчет расхода и автономности"
+      ]
+    },
+    {
+      "sensor_name": "Счетчик наработки",
+      "parameter_type": "время",
+      "unit": "час",
+      "measurement_range": {
+        "min": 0,
+        "max": 99999
+      },
+      "alarm_thresholds": {
+        "critical_min": 0,
+        "critical_max": 2000
+      },
+      "data_update_frequency": "0.00028 Гц",
+      "data_processing_algorithms": [
+        "Накопление моточасов",
+        "Формирование графика ТО"
+      ]
+    }
+  ]
+}
