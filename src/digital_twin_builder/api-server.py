@@ -227,7 +227,7 @@ async def get_conversation(conversation_id: str):
         
         # Get messages
         messages = await conn.fetch("""
-            SELECT id, role, content, content_type,
+            SELECT id, agent_id, role, content, content_type,
                    metadata, created_at, tokens
             FROM messages 
             WHERE conversation_id = $1
