@@ -163,7 +163,7 @@ async def get_session(session_id: str):
         
         # Get conversations
         conversations = await conn.fetch("""
-            SELECT id, session_id, agent_id, created_at
+            SELECT id, session_id, agent_id, created_at, metadata
             FROM conversations 
             WHERE session_id = $1
             ORDER BY created_at ASC
@@ -179,14 +179,15 @@ async def get_session(session_id: str):
 async def create_conversation(
     session_id: str,
     agent_id: int = 1,
+    metadata = {"level": 0}
 ):
     """Create a new conversation"""
     conversation_id = str(uuid.uuid4())
     async with pool.acquire() as conn:
         await conn.execute("""
-            INSERT INTO conversations (id, session_id, agent_id)
-            VALUES ($1, $2, $3)
-        """, conversation_id, session_id, agent_id)
+            INSERT INTO conversations (id, session_id, agent_id, metadata)
+            VALUES ($1, $2, $3, $4)
+        """, conversation_id, session_id, agent_id, metadata)
     
     return {"conversation_id": conversation_id}
 
