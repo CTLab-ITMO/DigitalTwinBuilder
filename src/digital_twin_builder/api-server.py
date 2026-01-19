@@ -217,7 +217,7 @@ async def get_conversation(conversation_id: str):
     async with pool.acquire() as conn:
         # Get conversation info
         conversation = await conn.fetchrow("""
-            SELECT id, created_at, updated_at, metadata
+            SELECT id, agent_id, created_at, updated_at, metadata
             FROM conversations 
             WHERE id = $1
             """, conversation_id)
@@ -227,7 +227,7 @@ async def get_conversation(conversation_id: str):
         
         # Get messages
         messages = await conn.fetch("""
-            SELECT id, agent_id, role, content, content_type,
+            SELECT id, role, content, content_type,
                    metadata, created_at, tokens
             FROM messages 
             WHERE conversation_id = $1
