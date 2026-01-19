@@ -179,7 +179,7 @@ async def get_session(session_id: str):
 async def create_conversation(
     session_id: str,
     agent_id: int = 1,
-    metadata = {"level": 0}
+    metadata: Dict = {"level": 0}
 ):
     """Create a new conversation"""
     conversation_id = str(uuid.uuid4())
