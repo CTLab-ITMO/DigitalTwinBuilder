@@ -1,4 +1,3 @@
-
 from typing import TypedDict, List, Dict, Any, Optional
 from langgraph.graph import StateGraph, END
 from digital_twin_builder.DTlibrary.agents.database_agent import DatabaseAgent
@@ -12,7 +11,7 @@ class TwinState(TypedDict):
     interview_finished: bool
     last_question: Optional[str]
     db_schema: Optional[Dict[str, Any]]
-    twin_config: Optional[Dict[str, Any]] 
+    twin_config: Optional[Dict[str, Any]]
     simulation_code: Optional[str] 
 
 INTERVIEW_SYSTEM_PROMPT = """
@@ -78,10 +77,10 @@ def interview_node(state: TwinState) -> TwinState:
     return state
 
 REQUIRED_FIELDS = [
-("object", "type"),
-("goals",),
-("data_sources", "sensors"),
-("update_requirements", "frequency"),
+    ("object", "type"),
+    ("goals",),
+    ("data_sources", "sensors"),
+    ("update_requirements", "frequency"),
 ]
 
 def check_requirements(state: TwinState) -> TwinState:
@@ -126,33 +125,25 @@ def question_node(state: TwinState) -> TwinState:
         state["last_question"] = None
     return state
 
-
 def db_node(state: TwinState) -> TwinState:
     db_agent = DatabaseAgent()
     schema = db_agent.run(state["requirements"])
-    return {**state, "db_schema": schema}
-
+    updated_state = {**state, "db_schema": schema}
+    return updated_state
 
 def simulation_node(state: TwinState) -> TwinState:
-    twin_agent = DigitalTwinAgent() 
-    
-    
+    twin_agent = DigitalTwinAgent()
     simulation_code = twin_agent.run(state["requirements"], state["db_schema"])
-    
-    return {**state, "simulation_code": simulation_code}
-
+    updated_state = {**state, "simulation_code": simulation_code}
+    return updated_state
 
 def build_digital_twin_graph():
-    """
-    Функция для построения и компиляции графа LangGraph.
-    """
     graph = StateGraph(TwinState)
-
     graph.add_node("interview", interview_node)
     graph.add_node("check", check_requirements)
     graph.add_node("ask", question_node)
-    graph.add_node("db", db_node) 
-    graph.add_node("simulation", simulation_node) 
+    graph.add_node("db", db_node)
+    graph.add_node("simulation", simulation_node)
 
     graph.set_entry_point("interview")
     graph.add_edge("interview", "check")
@@ -161,13 +152,10 @@ def build_digital_twin_graph():
         lambda s: "done" if s["interview_finished"] else "ask",
         {
             "ask": "ask",
-            "done": "db" 
+            "done": "db"
         }
     )
     graph.add_edge("ask", END)
-    graph.add_edge("db", "simulation") 
-    graph.add_edge("simulation", END) 
-
+    graph.add_edge("db", "simulation")
+    graph.add_edge("simulation", END)
     return graph.compile()
-
-

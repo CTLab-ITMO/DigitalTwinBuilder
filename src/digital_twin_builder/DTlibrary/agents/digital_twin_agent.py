@@ -21,12 +21,17 @@ class DigitalTwinAgent(BaseAgent):
             "- Include necessary imports, comments, and follow PyChrono best practices. "
             "The output should be only the Python code, without any markdown code block markers (no ```python or ```)."
         )
+        self.modification_system_prompt = (
+            "You are an expert in modifying configurations for digital twins of industrial facilities. "
+            "Your task is to take an existing configuration (in JSON format) and a natural language instruction describing changes to be made, "
+            "and then produce a new, updated configuration JSON reflecting those changes. "
+            "Ensure the structure remains consistent and valid. Only return the updated JSON object, nothing else."
+        )
 
     def run(self, requirements: Dict[str, Any] = None, db_schema: Dict[str, Any] = None) -> Dict[str, Any]:
         try:
             if not requirements or not db_schema:
                 raise ValueError("Missing required parameters for simulation generation")
-
             simulation_code = self.generate_simulation_code(requirements, db_schema)
             return simulation_code
         except Exception as e:
@@ -36,16 +41,12 @@ class DigitalTwinAgent(BaseAgent):
     def generate_simulation_code(self, requirements: Dict[str, Any], db_schema: Dict[str, Any]) -> str:
         self.log("Configuring digital twin simulation code with LLM")
         prompt = f"""Generate a complete PyChrono simulation script based on these requirements and database schema.
-
 Requirements:
 {json.dumps(requirements, ensure_ascii=False, indent=2)}
-
 Database Schema:
 {json.dumps(db_schema, ensure_ascii=False, indent=2)}
-
 The Python script should be ready to execute and represent the digital twin as described.
 """
-
         try:
             result = self.llm.generate(prompt, system_prompt=self.simulation_system_prompt, max_tokens=4096)
             return result
@@ -76,3 +77,35 @@ Output should be a well-structured JSON document."""
         except Exception as e:
             self.log(f"Configuration failed: {str(e)}", "error")
             raise
+
+    def modify_config(self, old_config: Dict[str, Any], modification_instructions: str) -> Dict[str, Any]:
+        """
+        Modifies an existing digital twin configuration based on natural language instructions.
+        """
+        self.log("Modifying digital twin configuration based on user instructions.")
+        prompt = f"""
+        Here is the current digital twin configuration:
+        {json.dumps(old_config, ensure_ascii=False, indent=2)}
+
+        Please modify the configuration according to the following instructions:
+        {modification_instructions}
+
+        Return ONLY the updated configuration in valid JSON format.
+        """
+        try:
+            result = self.llm.generate_json(prompt, system_prompt=self.modification_system_prompt, max_tokens=2048)
+            if isinstance(result, dict):
+                 if 'raw' in result:
+                     raw_text = result['raw']
+                     try:
+                         parsed_json = json.loads(raw_text)
+                         return parsed_json
+                     except json.JSONDecodeError:
+                         return {"error": "Could not parse modified config JSON", "raw_output": raw_text}
+                 else:
+                     return result
+            else:
+                return {"error": "LLM did not return a dictionary", "output": str(result)}
+        except Exception as e:
+            self.log(f"Configuration modification failed: {str(e)}", "error")
+            return {"error": f"Modification failed due to: {str(e)}"}
