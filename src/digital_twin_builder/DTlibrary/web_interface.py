@@ -3,99 +3,49 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime, timedelta
 import json
-import subprocess
-import tempfile
-import os
-from digital_twin_builder.DTlibrary.langgraph_flow import build_digital_twin_graph, TwinState
 from digital_twin_builder.DTlibrary.cores.database import DatabaseManager
 from digital_twin_builder.DTlibrary.cores.sensor_manager import SensorManager
 from digital_twin_builder.DTlibrary.agents.user_interaction_agent import UserInteractionAgent
 from digital_twin_builder.DTlibrary.agents.database_agent import DatabaseAgent
 from digital_twin_builder.DTlibrary.agents.digital_twin_agent import DigitalTwinAgent
 
+
 class DigitalTwinInterface:
     def __init__(self):
-        self.init_session_state()
-        self.setup_ui()
-
-    def init_session_state(self):
-        """Инициализирует все необходимые переменные в session_state."""
-        if 'ui_agent' not in st.session_state:
-            st.session_state.ui_agent = UserInteractionAgent()
-        if 'db_agent' not in st.session_state:
-            st.session_state.db_agent = DatabaseAgent()
-        if 'dt_agent' not in st.session_state:
-            st.session_state.dt_agent = DigitalTwinAgent()
-        if 'chat_history' not in st.session_state:
-            st.session_state.chat_history = []
-            first_msg = st.session_state.ui_agent.run()
-            st.session_state.chat_history.append({"role": "assistant", "content": first_msg})
-        if 'interview_finished' not in st.session_state:
-            st.session_state.interview_finished = False
-        if 'interview_result' not in st.session_state:
-            st.session_state.interview_result = None
-        if 'db_schema' not in st.session_state:
-            st.session_state.db_schema = None
-        if 'simulation_code' not in st.session_state:
-            st.session_state.simulation_code = None
-        if 'langgraph_run' not in st.session_state:
-            st.session_state.langgraph_run = False 
-        if 'db_schema_interpretation' not in st.session_state:
-            st.session_state.db_schema_interpretation = None
-        if 'twin_config' not in st.session_state:
-            st.session_state.twin_config = None
-        if 'twin_config_interpretation' not in st.session_state:
-            st.session_state.twin_config_interpretation = None
-        if 'sensor_manager' not in st.session_state:
-            st.session_state.sensor_manager = None
-        if 'db_manager' not in st.session_state:
-            st.session_state.db_manager = None
-        if 'sensor_running' not in st.session_state:
-            st.session_state.sensor_running = False
-
+        self.ui_agent = UserInteractionAgent()
+        self.db_agent = DatabaseAgent()
+        self.dt_agent = DigitalTwinAgent()
+        self.sensor_manager = None
+        self.db_manager = None
+        
+        if 'twin_initialized' not in st.session_state:
+            st.session_state.twin_initialized = False
         if 'temperature_history' not in st.session_state:
             st.session_state.temperature_history = []
         if 'vibration_history' not in st.session_state:
             st.session_state.vibration_history = []
-        if 'pressure_history' not in st.session_state:
-            st.session_state.pressure_history = []
-        if 'level_history' not in st.session_state:
-            st.session_state.level_history = []
-        if 'wear_history' not in st.session_state:
-            st.session_state.wear_history = []
         if 'casting_speed_history' not in st.session_state:
             st.session_state.casting_speed_history = []
-        if 'cooling_water_flow_history' not in st.session_state:
-            st.session_state.cooling_water_flow_history = []
-        if 'defect_count_history' not in st.session_state:
-            st.session_state.defect_count_history = []
-        if 'quality_score_history' not in st.session_state:
-            st.session_state.quality_score_history = []
-        if 'status_history' not in st.session_state:
-            st.session_state.status_history = []
-
-        if 'sensor_history' not in st.session_state:
-            st.session_state.sensor_history = {}
-
-        if 'db_saved' not in st.session_state:
-            st.session_state.db_saved = False
-        if 'twin_started' not in st.session_state:
-            st.session_state.twin_started = False
-        if 'critical_thresholds' not in st.session_state:
-            st.session_state.critical_thresholds = {}
+        if 'cooling_water_history' not in st.session_state:
+            st.session_state.cooling_water_history = []
+        if 'wear_history' not in st.session_state:
+            st.session_state.wear_history = []
+        if 'quality_history' not in st.session_state:
+            st.session_state.quality_history = []
+        
+        self.setup_ui()
 
     def setup_ui(self):
         st.set_page_config(page_title="Digital Twin Builder", layout="wide")
         st.title("Digital Twin Builder 🏭")
-
-        self.tab1, self.tab2, self.tab3, self.tab4, self.tab5 = st.tabs([
-            "Интервью с пользователем",
-            "Создание базы данных",
+        
+        self.tab1, self.tab2, self.tab3, self.tab4 = st.tabs([
+            "Интервью с пользователем", 
+            "Создание базы данных", 
             "Цифровой двойник",
-            "Симуляция PyChrono",
             "Обзор графиков датчиков"
         ])
-
+        
         with self.tab1:
             self.setup_interview_tab()
         with self.tab2:
@@ -103,519 +53,538 @@ class DigitalTwinInterface:
         with self.tab3:
             self.setup_twin_tab()
         with self.tab4:
-            self.setup_simulation_tab()
-        with self.tab5:
             self.setup_sensor_tab()
 
     def setup_interview_tab(self):
         st.header("Создание цифрового двойника производства")
         
-        for msg in st.session_state.chat_history:
-            role = "assistant" if msg["role"] == "assistant" else "user"
-            with st.chat_message(role):
-                st.markdown(msg["content"])
-
-        if st.session_state.interview_finished:
-            st.success("Интервью завершено!")
-            if st.session_state.interview_result:
-                st.subheader("Итоговые требования:")
+        if 'chat_history' not in st.session_state:
+            st.session_state.chat_history = []
+            initial_message = """Здравствуйте! Я помогу вам создать цифровой двойник вашего производства. 
+            
+Расскажите, пожалуйста, о вашем производстве: что именно производится, какие процессы происходят, какое оборудование используется?"""
+            
+            st.session_state.chat_history.append({"role": "assistant", "content": initial_message})
+            st.session_state.interview_completed = False
+        
+        
+        for message in st.session_state.chat_history:
+            if message["role"] == "assistant":
+                with st.chat_message("assistant"):
+                    st.markdown(message["content"])
+            else:
+                with st.chat_message("user"):
+                    st.markdown(message["content"])
+        
+        if not st.session_state.get('interview_completed', False):
+            user_input = st.chat_input("Опишите ваше производство...")
+            
+            if user_input:
+                
+                st.session_state.chat_history.append({"role": "user", "content": user_input})
+                
+                try:
+                    response = self.ui_agent.run(
+                        user_message=user_input,
+                        chat_history=st.session_state.chat_history
+                    )
+                    
+                    st.session_state.chat_history.append({"role": "assistant", "content": response["message"]})
+                    
+                    if response.get("completed", False):
+                        st.session_state.interview_completed = True
+                        st.session_state.interview_result = response.get("requirements", {})
+                        st.session_state.interview_result["status"] = "completed"
+                        
+                except Exception as e:
+                    error_msg = f"Произошла ошибка: {str(e)}. Попробуйте переформулировать ваш запрос."
+                    st.session_state.chat_history.append({"role": "assistant", "content": error_msg})
+                
+                st.rerun()
+        else:
+            st.success("✅ Интервью завершено! Перейдите к следующей вкладке.")
+            
+            with st.expander("Просмотр собранных требований"):
                 st.json(st.session_state.interview_result)
             
-            if st.button("Перейти к генерации схемы БД и симуляции"):
-                 with st.spinner("Запуск LangGraph для генерации схемы БД и симуляции..."):
-                    try:
-                        initial_state: TwinState = {
-                            "raw_user_inputs": st.session_state.ui_agent.state.get("raw_user_inputs", []),
-                            "requirements": st.session_state.interview_result,
-                            "missing_fields": [],
-                            "interview_finished": True,
-                            "last_question": None,
-                            "db_schema": None,
-                            "twin_config": None,
-                            "simulation_code": None
-                        }
-                        graph = build_digital_twin_graph()
-                        final_state = graph.invoke(initial_state)
-                        
-                        
-                        st.session_state.db_schema = final_state.get("db_schema")
-                        st.session_state.simulation_code = final_state.get("simulation_code")
-                        st.session_state.langgraph_run = True
-                        
-                        st.success("LangGraph завершен. Схема БД и код симуляции сгенерированы. Перейдите на другие вкладки.")
-                    except Exception as e:
-                        st.error(f"Ошибка при запуске LangGraph: {e}")
-                        st.session_state.langgraph_run = True 
-            return
-
-        user_input = st.chat_input("Введите ваш ответ...")
-        if user_input:
-            st.session_state.chat_history.append({"role": "user", "content": user_input})
-            agent_response = st.session_state.ui_agent.next_step(user_input)
-            
-            if st.session_state.ui_agent.is_finished():
-                st.session_state.interview_finished = True
-                final_result = st.session_state.ui_agent.state.get("requirements", {})
-                st.session_state.interview_result = final_result
-                st.session_state.chat_history.append({
-                    "role": "assistant",
-                    "content": "✅ Интервью завершено. Нажмите кнопку ниже, чтобы сгенерировать схему БД и код симуляции."
-                })
-            else:
-                if agent_response:
-                    st.session_state.chat_history.append({"role": "assistant", "content": agent_response})
-
-            st.rerun()
+            if st.button("Начать новое интервью", key="restart_interview"):
+                st.session_state.chat_history = []
+                st.session_state.interview_completed = False
+                if 'interview_result' in st.session_state:
+                    del st.session_state.interview_result
+                st.rerun()
 
     def setup_database_tab(self):
         st.header("Настройка базы данных")
         
-        if not st.session_state.interview_result:
-            st.warning("Пожалуйста, завершите интервью на вкладке 'Интервью с пользователем' и нажмите кнопку для генерации.")
+        if 'interview_result' not in st.session_state:
+            st.warning("⚠️ Пожалуйста, завершите интервью на вкладке 'Интервью с пользователем'")
             return
-            
-        if not st.session_state.langgraph_run or st.session_state.db_schema is None:
-             st.warning("Схема базы данных ещё не сгенерирована. Пожалуйста, завершите интервью и нажмите кнопку 'Перейти к генерации схемы БД и симуляции' на вкладке 'Интервью с пользователем'.")
-             return
-
+        
         st.subheader("Описание системы")
-        description_box = st.empty()
-        if st.session_state.interview_result:
-            description_text = self.generate_system_description(st.session_state.interview_result)
-            description_box.info(description_text)
-
+        st.info(json.dumps(st.session_state.interview_result, ensure_ascii=False, indent=2))
+        
+        if 'db_schema' not in st.session_state:
+            if st.button("🔨 Сгенерировать схему БД", key="generate_schema_btn"):
+                with st.spinner("Генерация схемы базы данных..."):
+                    try:
+                        schema = self.db_agent.run(st.session_state.interview_result)
+                        st.session_state.db_schema = schema
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Ошибка генерации схемы: {str(e)}")
+            return
+        
         st.subheader("Сгенерированная схема базы данных")
-        st.json(st.session_state.db_schema)
-
-        st.subheader("Визуальное представление схемы")
-        if st.session_state.db_schema_interpretation is None:
-            try:
-                interpretation = st.session_state.db_agent.interpret_schema(st.session_state.db_schema)
-                st.session_state.db_schema_interpretation = interpretation
-            except Exception as e:
-                st.error(f"Ошибка при интерпретации схемы: {e}")
-
-        if st.session_state.db_schema_interpretation is not None:
-            st.text_area("Структура базы данных для производства", value=st.session_state.db_schema_interpretation, height=400, disabled=True)
-        else:
-            st.info("Интерпретация схемы БД не найдена или не сгенерирована.")
-
-        if st.button("Сохранить схему и продолжить"):
-            st.session_state.db_saved = True
-            st.success("Схема сохранена! Можете перейти к следующему шагу.")
-
-
-    def generate_system_description(self, requirements: dict) -> str:
-        """Генерирует текстовое описание системы на основе требований."""
-        desc = "Объект: "
-        if "object" in requirements and "type" in requirements["object"]:
-            desc += f"{requirements['object']['type']} "
-        if "object" in requirements and "equipment" in requirements["object"]:
-            equipment_list = ", ".join(requirements["object"]["equipment"])
-            desc += f"на объекте с оборудованием: {equipment_list}."
-        else:
-            desc += "не указан."
-
-        desc += "\nЦели цифрового двойника:\n"
-        if "goals" in requirements:
-            for i, goal in enumerate(requirements["goals"], 1):
-                desc += f"{i}. {goal}\n"
-
-        desc += "\nДоступные данные:\n"
-        if "data_sources" in requirements and "sensors" in requirements["data_sources"]:
-            sensors_list = ", ".join(requirements["data_sources"]["sensors"])
-            desc += f"- {sensors_list}"
-
-        desc += "\nДанные обновляются каждые "
-        if "update_requirements" in requirements and "frequency" in requirements["update_requirements"]:
-            desc += f"{requirements['update_requirements']['frequency']}"
-        else:
-            desc += "не указано"
-        desc += " и хранятся "
-
-        if "storage" in requirements and "history_days" in requirements["storage"]:
-            desc += f"в течение {requirements['storage']['history_days']} дней."
-        else:
-            desc += "не указано."
-
-        desc += "\nОсобые требования:\n"
-        if "integrations" in requirements:
-            integrations_list = ", ".join(requirements["integrations"])
-            desc += f"- Интеграция с системами: {integrations_list}\n"
-        if "security" in requirements:
-            criticality = requirements["security"].get("criticality", "не указана")
-            desc += f"- Уровень критичности: {criticality}\n"
-
-        return desc
-
+        st.json(st.session_state.db_schema, expanded=True)
+        
+        if st.button("📖 Получить описание схемы", key="interpret_schema_btn"):
+            with st.spinner("Генерация описания..."):
+                try:
+                    interpretation = self.db_agent.interpret_schema(st.session_state.db_schema)
+                    st.markdown("### Описание схемы БД")
+                    st.write(interpretation)
+                except Exception as e:
+                    st.error(f"Ошибка интерпретации: {str(e)}")
+        
+        st.success("✅ Схема базы данных успешно сгенерирована!")
+        
+        st.subheader("Управление данными")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("📊 Сгенерировать тестовые данные (7 дней)", key="generate_test_data_btn"):
+                try:
+                    db_manager = DatabaseManager(
+                        dbname="digital_twin",
+                        user="postgres",
+                        password="omgssmyalg",
+                        host="localhost",
+                        port="5432"
+                    )
+                    db_manager.create_sensor_tables()
+                    success = db_manager.generate_test_data()
+                    db_manager.close()
+                    
+                    if success:
+                        st.success("✅ Тестовые данные успешно сгенерированы!")
+                    else:
+                        st.error("❌ Ошибка генерации тестовых данных")
+                except Exception as e:
+                    st.error(f"❌ Ошибка: {str(e)}")
+        
+        with col2:
+            if st.button("🗑️ Очистить все данные", key="clear_data_btn", type="secondary"):
+                try:
+                    db_manager = DatabaseManager(
+                        dbname="digital_twin",
+                        user="postgres",
+                        password="omgssmyalg",
+                    )
+                    db_manager.cursor.execute("TRUNCATE TABLE steel_melting_data, equipment_status, production_quality CASCADE")
+                    db_manager.conn.commit()
+                    db_manager.close()
+                    st.success("✅ Все данные успешно удалены!")
+                except Exception as e:
+                    st.error(f"❌ Ошибка: {str(e)}")
+        
+        if st.button("💾 Сохранить схему и продолжить", key="db_continue_btn"):
+            st.session_state.db_configured = True
+            st.success("Схема сохранена!")
+            st.rerun()
 
     def setup_twin_tab(self):
         st.header("Конфигурация цифрового двойника")
         
-        if not st.session_state.langgraph_run or st.session_state.db_schema is None:
-            st.warning("Пожалуйста, сначала завершите интервью и сгенерируйте схему БД на вкладке 'Создание базы данных'.")
+        if 'db_schema' not in st.session_state:
+            st.warning("⚠️ Пожалуйста, завершите настройку базы данных")
             return
-            
-        if st.session_state.simulation_code is None:
-             st.warning("Код симуляции ещё не сгенерирован. Убедитесь, что LangGraph завершил работу.")
-             return
-
-        if not st.session_state.twin_config:
-            with st.spinner("Конфигурация цифрового двойника..."):
-                try:
-                    
-                    config = st.session_state.dt_agent.configure_twin_old(st.session_state.interview_result, st.session_state.db_schema)
-                    st.session_state.twin_config = config
-                    st.success("Конфигурация цифрового двойника готова!")
-                except Exception as e:
-                    st.error(f"Ошибка при конфигурации двойника: {e}")
-                    return 
         
-        
-        if 'show_modify_form' not in st.session_state:
-            st.session_state.show_modify_form = False
-        if 'modification_instructions' not in st.session_state:
-            st.session_state.modification_instructions = ""
-
-        
-        if st.button("Редактировать конфигурацию"):
-            st.session_state.show_modify_form = not st.session_state.show_modify_form
-            st.rerun()
-
-        
-        if st.session_state.show_modify_form:
-            st.subheader("Изменить конфигурацию")
-            st.session_state.modification_instructions = st.text_area(
-                "Опишите, что нужно изменить в конфигурации (например, 'Добавь датчик давления PT-42 на участок A', 'Удали датчик уровня LT-10', 'Измени частоту сбора данных с температурного датчика на 5 секунд')",
-                value=st.session_state.modification_instructions,
-                height=150
-            )
-            if st.button("Применить изменения"):
-                if st.session_state.modification_instructions.strip():
-                    with st.spinner("Обновление конфигурации..."):
-                        try:
-                            old_config = st.session_state.twin_config
-                            new_config = st.session_state.dt_agent.modify_config(old_config, st.session_state.modification_instructions)
-                            
-                            if "error" not in new_config:
-                                st.session_state.twin_config = new_config
-                                st.success("Конфигурация успешно обновлена!")
-                                st.session_state.modification_instructions = "" 
-                                st.session_state.show_modify_form = False 
-                            else:
-                                st.error(f"Ошибка при обновлении конфигурации: {new_config.get('error', 'Неизвестная ошибка')}")
-                        except Exception as e:
-                            st.error(f"Произошла ошибка при применении изменений: {e}")
-                else:
-                    st.warning("Пожалуйста, введите инструкции для изменения конфигурации.")
-        
-
         st.subheader("Схема базы данных")
-        st.json(st.session_state.db_schema)
-
-        st.subheader("Конфигурация цифрового двойника")
-        st.json(st.session_state.twin_config)
-
-        st.subheader("Детальное описание компонентов цифрового двойника")
-        st.info("Конфигурация была сгенерирована на основе требований и схемы БД.")
-
-        st.subheader("Режим работы сенсоров")
-        mode = st.radio("", ["Симуляция", "Реальное оборудование"], index=0, key="sensor_mode_radio")
-
-        if st.button("Запустить цифровой двойник"):
-            try:
-                st.session_state.sensor_manager = SensorManager(mode='sim' if mode == "Симуляция" else 'real')
-                st.session_state.sensor_manager.start()
-                
-                st.session_state.db_manager = DatabaseManager(
-                    dbname="digital_twin",
-                    user="postgres",
-                    password="omgssmyalg"
-                )
-                st.session_state.db_manager.create_sensor_tables() 
-
-                st.session_state.sensor_running = True
-                st.session_state.twin_started = True
-                self.clear_sensor_history()
-                st.success("Цифровой двойник успешно запущен!")
-            except Exception as e:
-                st.error(f"Ошибка запуска: {str(e)}")
-
-        if st.button("Остановить цифровой двойник", disabled=not st.session_state.get('sensor_running', False)):
-            if st.session_state.sensor_manager:
-                st.session_state.sensor_manager.stop()
-            if st.session_state.db_manager:
-                st.session_state.db_manager.close()
-            st.session_state.sensor_running = False
-            st.session_state.twin_started = False
-            self.clear_sensor_history()
-            st.success("Работа цифрового двойника остановлена.")
-
-
-    def clear_sensor_history(self):
-        """Очищает историю всех датчиков."""
+        with st.expander("Посмотреть схему БД"):
+            st.json(st.session_state.db_schema)
         
-        st.session_state.temperature_history = []
-        st.session_state.vibration_history = []
-        st.session_state.pressure_history = []
-        st.session_state.level_history = []
-        st.session_state.wear_history = []
-        st.session_state.casting_speed_history = []
-        st.session_state.cooling_water_flow_history = []
-        st.session_state.defect_count_history = []
-        st.session_state.quality_score_history = []
-        st.session_state.status_history = []
-        
-        st.session_state.sensor_history = {}
-
-
-    def setup_simulation_tab(self):
-        st.header("Генерация PyChrono cимуляции")
-        
-        
-        if not st.session_state.langgraph_run or st.session_state.simulation_code is None:
-            st.warning("Код симуляции ещё не сгенерирован. Пожалуйста, завершите интервью и сгенерируйте его на вкладке 'Интервью с пользователем'.")
+        if 'twin_config' not in st.session_state:
+            if st.button("⚙️ Сгенерировать конфигурацию", key="generate_config_btn"):
+                with st.spinner("Генерация конфигурации..."):
+                    try:
+                        config = self.dt_agent.generate_configuration(
+                            st.session_state.interview_result,
+                            st.session_state.db_schema
+                        )
+                        st.session_state.twin_config = config
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Ошибка: {str(e)}")
             return
-
-        st.subheader("Сгенерированный код симуляции PyChrono")
-        st.code(st.session_state.simulation_code, language='python')
-
-        st.download_button(
-            label="Скачать файл симуляции (.py)",
-            data=st.session_state.simulation_code,
-            file_name="digital_twin_simulation.py",
-            mime="application/x-python-code"
+        
+        st.subheader("Конфигурация цифрового двойника")
+        st.json(st.session_state.twin_config, expanded=True)
+        
+        st.subheader("Код симуляции PyChrono")
+        
+        if 'simulation_code' not in st.session_state:
+            if st.button("🔧 Сгенерировать код", key="generate_sim_btn"):
+                with st.spinner("Генерация кода..."):
+                    try:
+                        sim_code = self.dt_agent.generate_simulation_code(
+                            st.session_state.interview_result,
+                            st.session_state.db_schema
+                        )
+                        st.session_state.simulation_code = sim_code
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Ошибка: {str(e)}")
+        
+        if 'simulation_code' in st.session_state:
+            with st.expander("Просмотр кода PyChrono"):
+                st.code(st.session_state.simulation_code, language="python")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button(
+                    "📥 Скачать код",
+                    st.session_state.simulation_code,
+                    "simulation.py",
+                    "text/x-python",
+                    key="download_sim"
+                )
+            with col2:
+                if st.button("🔄 Перегенерировать", key="regen_sim"):
+                    del st.session_state.simulation_code
+                    st.rerun()
+        
+        st.subheader("SQL код для БД")
+        
+        if 'database_code' not in st.session_state:
+            if st.button("🗄️ Сгенерировать SQL", key="generate_sql_btn"):
+                with st.spinner("Генерация SQL..."):
+                    try:
+                        db_code = self.dt_agent.generate_database_code(st.session_state.db_schema)
+                        st.session_state.database_code = db_code
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Ошибка: {str(e)}")
+        
+        if 'database_code' in st.session_state:
+            with st.expander("Просмотр SQL"):
+                st.code(st.session_state.database_code, language="sql")
+            
+            st.download_button(
+                "📥 Скачать SQL",
+                st.session_state.database_code,
+                "schema.sql",
+                "text/plain",
+                key="download_sql"
+            )
+        
+        st.divider()
+        st.subheader("🚀 Запуск цифрового двойника")
+        
+        mode = st.radio(
+            "Режим сенсоров", 
+            ["Симуляция", "Реальное оборудование"],
+            key="sensor_mode_radio"
         )
-
+        sensor_mode = 'sim' if mode == "Симуляция" else 'real'
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("▶️ Запустить", key="start_twin_btn", type="primary"):
+                try:
+                    self.sensor_manager = SensorManager(mode=sensor_mode)
+                    self.sensor_manager.start()
+                    
+                    self.db_manager = DatabaseManager(
+                        dbname="digital_twin",
+                        user="postgres",
+                        password="omgssmyalg"
+                    )
+                    self.db_manager.create_sensor_tables()
+                    
+                    st.session_state.sensor_running = True
+                    st.session_state.sensor_mode = sensor_mode
+                    st.success("✅ Цифровой двойник запущен!")
+                except Exception as e:
+                    st.error(f"❌ Ошибка: {str(e)}")
+        
+        with col2:
+            if st.button(
+                "⏹️ Остановить",
+                disabled=not st.session_state.get('sensor_running', False),
+                key="stop_twin_btn"
+            ):
+                if self.sensor_manager:
+                    self.sensor_manager.stop()
+                if self.db_manager:
+                    self.db_manager.close()
+                st.session_state.sensor_running = False
+                st.success("⏹️ Остановлено")
 
     def setup_sensor_tab(self):
         st.header("Панель мониторинга")
         
         if not st.session_state.get('sensor_running', False):
-            st.warning("Цифровой двойник не запущен. Перейдите на вкладку 'Цифровой двойник' и запустите его.")
+            st.warning("⚠️ Цифровой двойник не запущен. Запустите его на вкладке 'Цифровой двойник'.")
             return
-
-        st.subheader("Режим сенсоров")
-        sensor_mode = st.radio("", ["Симуляция", "Реальное оборудование"], index=0, key="sensor_mode_monitoring")
-        
-        data = st.session_state.sensor_manager.get_data()
-        if data:
-            self.update_sensor_history(data)
-            self.display_current_sensor_data(data)
-            self.check_critical_alerts(data)
-        else:
-            st.info("Ожидание данных от сенсоров...")
-
-        st.subheader("Анализ данных")
-        analysis_period = st.selectbox("Анализ данных за:", ["15 минут", "1 час", "6 часов", "1 день"], index=0)
         
         
-        self.plot_all_sensor_data()
+        if self.sensor_manager is None:
+            try:
+                current_mode = st.session_state.get('sensor_mode', 'sim')
+                self.sensor_manager = SensorManager(mode=current_mode)
+                self.sensor_manager.start()
+            except Exception as e:
+                st.error(f"Ошибка инициализации сенсоров: {str(e)}")
+                return
         
-
-    def update_sensor_history(self, data: dict): 
-        """Обновляет историю для каждого параметра на основе полученных данных."""
-        timestamp = datetime.fromtimestamp(data["timestamp"])
-        for param, value in data["sensor_data"].items():
-            if isinstance(value, (int, float)):
+        if self.db_manager is None:
+            try:
+                self.db_manager = DatabaseManager(
+                    dbname="digital_twin",
+                    user="postgres",
+                    password="omgssmyalg"
+                )
+            except Exception as e:
+                st.error(f"Ошибка подключения к БД: {str(e)}")
+                return
+        
+        
+        current_mode = st.session_state.get('sensor_mode', 'sim')
+        new_mode = st.radio(
+            "Режим сенсоров",
+            ["Симуляция", "Реальное оборудование"],
+            index=0 if current_mode == 'sim' else 1,
+            key="sensor_toggle_radio"
+        )
+        
+        if (new_mode == "Симуляция" and current_mode != 'sim') or \
+           (new_mode == "Реальное оборудование" and current_mode == 'sim'):
+            try:
+                self.sensor_manager.set_mode('sim' if new_mode == "Симуляция" else 'real')
+                st.session_state.sensor_mode = 'sim' if new_mode == "Симуляция" else 'real'
+                st.rerun()
+            except Exception as e:
+                st.error(f"Ошибка смены режима: {str(e)}")
+                return
+        
+        try:
+            data = self.sensor_manager.get_data()
+            if data:
                 
-                if param == "temperature":
-                    st.session_state.temperature_history.append({"timestamp": timestamp, "value": value})
-                    if len(st.session_state.temperature_history) > 100:
-                         st.session_state.temperature_history = st.session_state.temperature_history[-100:]
-                elif param == "vibration_level":
-                    st.session_state.vibration_history.append({"timestamp": timestamp, "value": value})
-                    if len(st.session_state.vibration_history) > 100:
-                         st.session_state.vibration_history = st.session_state.vibration_history[-100:]
-                elif param == "pressure":
-                    st.session_state.pressure_history.append({"timestamp": timestamp, "value": value})
-                    if len(st.session_state.pressure_history) > 100:
-                         st.session_state.pressure_history = st.session_state.pressure_history[-100:]
-                elif param == "level":
-                    st.session_state.level_history.append({"timestamp": timestamp, "value": value})
-                    if len(st.session_state.level_history) > 100:
-                         st.session_state.level_history = st.session_state.level_history[-100:]
-                elif param == "wear_level":
-                    st.session_state.wear_history.append({"timestamp": timestamp, "value": value})
-                    if len(st.session_state.wear_history) > 100:
-                         st.session_state.wear_history = st.session_state.wear_history[-100:]
-                elif param == "casting_speed":
-                    st.session_state.casting_speed_history.append({"timestamp": timestamp, "value": value})
-                    if len(st.session_state.casting_speed_history) > 100:
-                         st.session_state.casting_speed_history = st.session_state.casting_speed_history[-100:]
-                elif param == "cooling_water_flow":
-                    st.session_state.cooling_water_flow_history.append({"timestamp": timestamp, "value": value})
-                    if len(st.session_state.cooling_water_flow_history) > 100:
-                         st.session_state.cooling_water_flow_history = st.session_state.cooling_water_flow_history[-100:]
-                elif param == "defect_count":
-                    st.session_state.defect_count_history.append({"timestamp": timestamp, "value": value})
-                    if len(st.session_state.defect_count_history) > 100:
-                         st.session_state.defect_count_history = st.session_state.defect_count_history[-100:]
-                elif param == "quality_score":
-                    st.session_state.quality_score_history.append({"timestamp": timestamp, "value": value})
-                    if len(st.session_state.quality_score_history) > 100:
-                         st.session_state.quality_score_history = st.session_state.quality_score_history[-100:]
-                elif param == "status":
-                    st.session_state.status_history.append({"timestamp": timestamp, "value": value})
-                    if len(st.session_state.status_history) > 100:
-                         st.session_state.status_history = st.session_state.status_history[-100:]
-
+                if self.db_manager:
+                    try:
+                        self.db_manager.store_sensor_data(data)
+                    except Exception as e:
+                        st.error(f"Ошибка сохранения: {str(e)}")
                 
-                if param not in st.session_state.sensor_history:
-                    st.session_state.sensor_history[param] = []
-                st.session_state.sensor_history[param].append({"timestamp": timestamp, "value": value})
-                history_limit = 100
-                st.session_state.sensor_history[param] = st.session_state.sensor_history[param][-history_limit:]
-
-
-    def display_current_sensor_data(self, data: dict): 
-        """Отображает текущие значения датчиков."""
-        st.subheader("Текущие показания сенсоров")
-        sensor_data = data["sensor_data"]
-        display_data = []
-        default_param_mapping = {
-            "temperature": ("Температура", "°C"),
-            "casting_speed": ("Скорость", "м/мин"),
-            "cooling_water_flow": ("Расход воды", "л/мин"),
-            "vibration_level": ("Вибрация", "м/с²"),
-            "wear_level": ("Износ", "%"),
-            "defect_count": ("Дефекты", "шт"),
-            "quality_score": ("Качество", "/100"),
-            "pressure": ("Давление", "Па"),
-            "level": ("Уровень", "м"),
-        }
-
-        for param, value in sensor_data.items():
-            if isinstance(value, (int, float)):
-                display_name = param
-                unit = ""
-                if st.session_state.twin_config and "visualization" in st.session_state.twin_config:
-                    vis_sensors = st.session_state.twin_config.get("visualization", {}).get("sensors", {})
-                    param_vis = vis_sensors.get(param, {})
-                    display_name = param_vis.get("display_name", default_param_mapping.get(param, (param, ""))[0])
-                    unit = param_vis.get("unit", default_param_mapping.get(param, ("", ""))[1])
-                else:
-                    display_name, unit = default_param_mapping.get(param, (param, ""))
+                sensor_data = data["sensor_data"]
                 
-                display_data.append({
-                    "Параметр": display_name,
-                    "Значение": value,
-                    "Единица": unit
-                })
-
-        if display_data:
-            df_display = pd.DataFrame(display_data)
-            st.dataframe(df_display, use_container_width=True)
-        else:
-            st.info("Нет числовых данных для отображения.")
-
-
-    def check_critical_alerts(self, data: dict): 
-        """Проверяет критические предупреждения и отображает их."""
-        alerts = []
-        sensor_data = data["sensor_data"]
-        timestamp = datetime.fromtimestamp(data["timestamp"])
-        thresholds = st.session_state.critical_thresholds
-
-        for param, value in sensor_data.items():
-            if isinstance(value, (int, float)):
-                if st.session_state.twin_config:
-                    alerts_config = st.session_state.twin_config.get("alerts", {}).get("rules", [])
-                    for rule in alerts_config:
-                        if rule.get("parameter") == param:
-                            condition = rule.get("condition", ">")
-                            threshold_val = rule.get("threshold", float('inf'))
-                            if (condition == ">" and value > threshold_val) or \
-                               (condition == "<" and value < threshold_val) or \
-                               (condition == "=" and value == threshold_val):
-                                alerts.append(f"⚠️ [{timestamp.strftime('%H:%M:%S')}] {rule.get('message', f'{param} Alert: {value}')}")
-        
-        if alerts:
-            st.error("КРИТИЧЕСКИЕ ПРЕДУПРЕЖДЕНИЯ:")
-            for alert in alerts:
-                st.write(alert)
-
-
-    def plot_all_sensor_data(self):
-        """Создает и отображает графики для всех доступных датчиков."""
-        
-        available_params = list(st.session_state.sensor_history.keys())
-        
-        if not available_params:
-            st.info("Нет данных для построения графиков.")
-            return
-
-        
-        params_to_plot = [
-            "temperature", "vibration_level", "pressure", "level", "wear_level",
-            "casting_speed", "cooling_water_flow", "defect_count", "quality_score"
-        ]
-
-        
-        params_to_show = [p for p in params_to_plot if p in available_params]
-
-        if not params_to_show:
-             st.info("Нет данных для отображаемых параметров.")
-             return
-
-        num_cols = 2
-        cols = st.columns(num_cols)
-        for i, param in enumerate(params_to_show):
-            history_list = st.session_state.sensor_history[param]
-            col_idx = i % num_cols
-            with cols[col_idx]:
-                if history_list:
-                    df_plot = pd.DataFrame(history_list)
-                    if not df_plot.empty:
-                        display_name = param
-                        unit = ""
-                        if st.session_state.twin_config and "visualization" in st.session_state.twin_config:
-                            vis_sensors = st.session_state.twin_config.get("visualization", {}).get("sensors", {})
-                            param_vis = vis_sensors.get(param, {})
-                            display_name = param_vis.get("display_name", param)
-                            unit = param_vis.get("unit", "")
-                        else:
-                            default_mapping = {
-                                "temperature": ("Температура", "°C"),
-                                "casting_speed": ("Скорость", "м/мин"),
-                                "cooling_water_flow": ("Расход воды", "л/мин"),
-                                "vibration_level": ("Вибрация", "м/с²"),
-                                "wear_level": ("Износ", "%"),
-                                "defect_count": ("Дефекты", "шт"),
-                                "quality_score": ("Качество", "/100"),
-                                "pressure": ("Давление", "Па"),
-                                "level": ("Уровень", "м"),
-                            }
-                            display_name, unit = default_mapping.get(param, (param, ""))
-                        
-                        full_title = f"{display_name}, {unit}" if unit else display_name
-                        fig = px.line(df_plot, x="timestamp", y="value", title=full_title)
-                        
-                        if st.session_state.twin_config:
-                            alerts_config = st.session_state.twin_config.get("alerts", {}).get("rules", [])
-                            for rule in alerts_config:
-                                if rule.get("parameter") == param:
-                                    threshold_val = rule.get("threshold", None)
-                                    condition = rule.get("condition", "")
-                                    if threshold_val is not None:
-                                        color = "red" if "critical" in rule.get("severity", "").lower() else "orange"
-                                        dash_style = "dash"
-                                        fig.add_hline(
-                                            y=threshold_val,
-                                            line_dash=dash_style,
-                                            line_color=color,
-                                            annotation_text=f"{condition} {threshold_val}"
-                                        )
-                        
-                        st.plotly_chart(fig, use_container_width=True)
+                display_data = []
+                for key, value in sensor_data.items():
+                    if isinstance(value, (int, float)):
+                        display_data.append({
+                            "Параметр": key.replace("_", " ").title(),
+                            "Значение": f"{value:.2f}" if isinstance(value, float) else str(value)
+                        })
                     else:
-                        st.caption(f"DataFrame пуст для {param}.")
-                else:
-                    st.caption(f"Нет данных для {param}.")
+                        display_data.append({
+                            "Параметр": key.replace("_", " ").title(),
+                            "Значение": str(value)
+                        })
+                
+                st.subheader("Текущие показания")
+                st.dataframe(pd.DataFrame(display_data), use_container_width=True)
+                
+                current_time = datetime.fromtimestamp(data["timestamp"])
+                
+                
+                for hist_key, sensor_key in [
+                    ('temperature_history', 'temperature'),
+                    ('vibration_history', 'vibration_level'),
+                    ('casting_speed_history', 'casting_speed'),
+                    ('cooling_water_history', 'cooling_water_flow'),
+                    ('wear_history', 'wear_level'),
+                    ('quality_history', 'quality_score')
+                ]:
+                    if sensor_key in sensor_data:
+                        history = st.session_state.get(hist_key, [])
+                        history.append({"timestamp": current_time, "value": sensor_data[sensor_key]})
+                        if len(history) > 100:
+                            history = history[-100:]
+                        st.session_state[hist_key] = history
+                
+                
+                st.subheader("Графики в реальном времени")
+                
+                graphs = [
+                    ("temperature_history", "Температура стали, °C", 1520, [1500, 1600]),
+                    ("vibration_history", "Вибрация, м/с²", 4.2, [0, 10]),
+                    ("casting_speed_history", "Скорость разливки, м/мин", 1.8, [0, 3]),
+                    ("cooling_water_history", "Расход воды, л/мин", 1200, [1000, 1500]),
+                    ("wear_history", "Износ оборудования, %", 85, [0, 100]),
+                    ("quality_history", "Качество продукции", 80, [0, 100])
+                ]
+                
+                for i in range(0, len(graphs), 2):
+                    col1, col2 = st.columns(2)
+                    
+                    for col, (hist_key, title, threshold, y_range) in zip([col1, col2], graphs[i:i+2]):
+                        with col:
+                            history = st.session_state.get(hist_key, [])
+                            if history:
+                                df = pd.DataFrame(history)
+                            else:
+                                df = pd.DataFrame(columns=["timestamp", "value"])
+                            
+                            fig = px.line(
+                                df,
+                                x="timestamp",
+                                y="value",
+                                title=title,
+                                labels={"value": "Значение", "timestamp": "Время"},
+                                height=300
+                            )
+                            fig.add_hline(
+                                y=threshold,
+                                line_dash="dash",
+                                line_color="red",
+                                annotation_text="Порог"
+                            )
+                            if df.empty:
+                                fig.update_yaxes(range=y_range)
+                                fig.update_xaxes(range=[datetime.now() - timedelta(minutes=10), datetime.now()])
+                            st.plotly_chart(fig, use_container_width=True)
+                
+                critical_alerts = []
+                checks = [
+                    ("temperature", 1520, ">", "Температура"),
+                    ("vibration_level", 4.2, ">", "Вибрация"),
+                    ("cooling_water_flow", 1200, "<", "Расход воды"),
+                    ("casting_speed", 1.8, "<", "Скорость"),
+                    ("wear_level", 85, ">", "Износ")
+                ]
+                
+                for key, threshold, op, name in checks:
+                    if key in sensor_data:
+                        val = sensor_data[key]
+                        if (op == ">" and val > threshold) or (op == "<" and val < threshold):
+                            critical_alerts.append(f"⚠️ {name}: {val:.2f}")
+                
+                if critical_alerts:
+                    st.error("🚨 КРИТИЧЕСКИЕ ПРЕДУПРЕЖДЕНИЯ:")
+                    for alert in critical_alerts:
+                        st.markdown(alert)
+                
+                
+                st.subheader("🎯 Показатели качества")
+                q_cols = st.columns(3)
+                
+                with q_cols[0]:
+                    st.metric("Дефекты", f"{sensor_data.get('defect_count', 0)} шт")
+                
+                with q_cols[1]:
+                    quality = sensor_data.get('quality_score', 0)
+                    st.metric("Качество", f"{quality:.1f}/100")
+                
+                with q_cols[2]:
+                    speed = sensor_data.get('casting_speed', 0)
+                    st.metric("Скорость", f"{speed:.2f} м/мин")
+                
+                
+                st.subheader("🏭 Состояние оборудования")
+                e_cols = st.columns(2)
+                
+                with e_cols[0]:
+                    wear = sensor_data.get('wear_level', 0)
+                    if wear < 70:
+                        status = "🟢 Норма"
+                    elif wear < 85:
+                        status = "🟡 Повышенный"
+                    else:
+                        status = "🔴 Критический"
+                    st.metric("Износ", f"{wear:.1f}%", status)
+                
+                
+                st.divider()
+                st.subheader("Анализ исторических данных")
+                
+                time_range = st.selectbox(
+                    "Период",
+                    ["15 минут", "1 час", "Смена (8 часов)", "Сутки (24 часа)"],
+                    key="time_range_select"
+                )
+                
+                minutes_map = {
+                    "15 минут": 15,
+                    "1 час": 60,
+                    "Смена (8 часов)": 480,
+                    "Сутки (24 часа)": 1440
+                }
+                
+                self.display_historical_data(minutes_map[time_range])
+                
+        except Exception as e:
+            st.error(f"❌ Ошибка: {str(e)}")
+
+    def display_historical_data(self, minutes):
+        try:
+            time_threshold = datetime.now() - timedelta(minutes=minutes)
+            
+            queries = [
+                ("steel_melting_data", "timestamp, temperature, vibration_level AS vibration, furnace_id", ["Время", "Температура", "Вибрация", "Печь"]),
+                ("equipment_status", "timestamp, wear_level, status", ["Время", "Износ", "Статус"]),
+                ("production_quality", "timestamp, defect_count, quality_score", ["Время", "Дефекты", "Качество"])
+            ]
+            
+            for table, columns, col_names in queries:
+                query = f"SELECT {columns} FROM {table} WHERE timestamp >= %s ORDER BY timestamp"
+                
+                self.db_manager.cursor.execute(query, (time_threshold,))
+                results = self.db_manager.cursor.fetchall()
+                
+                if results:
+                    df = pd.DataFrame(results, columns=col_names)
+                    
+                    st.markdown(f"### {table.replace('_', ' ').title()} за {minutes} минут")
+                    
+                    if table == "steel_melting_data":
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            fig = px.line(df, x="Время", y="Температура", color="Печь", markers=True)
+                            fig.add_hline(y=1520, line_dash="dash", line_color="red")
+                            st.plotly_chart(fig, use_container_width=True)
+                        with col2:
+                            fig = px.line(df, x="Время", y="Вибрация", color="Печь", markers=True)
+                            fig.add_hline(y=4.2, line_dash="dash", line_color="red")
+                            st.plotly_chart(fig, use_container_width=True)
+                    
+                    elif table == "equipment_status":
+                        fig = px.line(df, x="Время", y="Износ", color="Статус", markers=True)
+                        fig.add_hline(y=85, line_dash="dash", line_color="red")
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    elif table == "production_quality":
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            fig = px.bar(df, x="Время", y="Дефекты")
+                            st.plotly_chart(fig, use_container_width=True)
+                        with col2:
+                            fig = px.line(df, x="Время", y="Качество", markers=True)
+                            fig.add_hline(y=80, line_dash="dash", line_color="orange")
+                            st.plotly_chart(fig, use_container_width=True)
+            
+            if not any([self.db_manager.cursor.rowcount > 0 for _ in queries]):
+                st.info(f"Нет данных за {minutes} минут.")
+                
+        except Exception as e:
+            st.error(f"❌ Ошибка: {str(e)}")
 
 
 def main():
-    DigitalTwinInterface()
+    interface = DigitalTwinInterface()
 
 if __name__ == "__main__":
     main()
