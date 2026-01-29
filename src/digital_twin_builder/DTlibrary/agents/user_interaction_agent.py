@@ -4,9 +4,18 @@ from typing import Dict, List, Any
 
 
 class UserInteractionAgent(BaseAgent):
-    def __init__(self):
+    def __init__(self, language: str = "ru"):
         super().__init__("UserInteractionAgent")
-        self.system_prompt = """Ты — эксперт-консультант по созданию цифровых двойников для промышленных производств.
+        self.language = language
+        self.update_prompts()
+
+    def set_language(self, language: str):
+        self.language = language
+        self.update_prompts()
+
+    def update_prompts(self):
+        if self.language == "ru":
+            self.system_prompt = """Ты — эксперт-консультант по созданию цифровых двойников для промышленных производств.
 
 Твоя задача — провести интервью с пользователем, чтобы собрать всю необходимую информацию для построения цифрового двойника.
 
@@ -23,6 +32,24 @@ class UserInteractionAgent(BaseAgent):
 резюмируй собранную информацию и спроси, всё ли правильно понято.
 
 ВАЖНО: Отвечай только на русском языке. Общайся дружелюбно и профессионально."""
+        else:  
+            self.system_prompt = """You are an expert consultant in creating digital twins for industrial production.
+
+Your task is to conduct an interview with the user to gather all necessary information for building a digital twin.
+
+You should:
+1. Ask questions about production, processes, equipment
+2. Clarify details about sensors, parameters that need to be monitored
+3. Find out the goals of creating the digital twin
+4. Understand what data is available and how often it is updated
+5. Gather information about critical parameters and threshold values
+
+Conduct the dialogue naturally, ask 1 to 3 questions at a time. Don't overload the user.
+
+When you have gathered enough information to build a digital twin, inform about it,
+summarize the collected information and ask if everything is understood correctly.
+
+IMPORTANT: Respond only in English. Communicate in a friendly and professional manner."""
 
     def run(self, user_message: str, chat_history: List[Dict[str, str]]) -> Dict[str, Any]:
         """
@@ -43,7 +70,8 @@ class UserInteractionAgent(BaseAgent):
             
             conversation_context = self._build_conversation_context(chat_history)
             
-            prompt = f"""История разговора:
+            if self.language == "ru":
+                prompt = f"""История разговора:
 {conversation_context}
 
 Пользователь: {user_message}
@@ -72,6 +100,36 @@ class UserInteractionAgent(BaseAgent):
 }}
 
 ВАЖНО: Верни ТОЛЬКО валидный JSON без markdown форматирования, без блоков кода (```), без пояснений. Начни сразу с открывающей фигурной скобки {{."""
+            else:  
+                prompt = f"""Conversation history:
+{conversation_context}
+
+User: {user_message}
+
+Analyze the user's response. If there is enough information to create a digital twin, return JSON:
+{{
+    "completed": true,
+    "requirements": {{
+        "production_type": "production type description",
+        "processes": ["list of processes"],
+        "equipment": ["list of equipment"],
+        "sensors": ["list of sensors and parameters"],
+        "goals": "digital twin creation goals",
+        "data_sources": "data sources description",
+        "update_frequency": "data update frequency",
+        "critical_parameters": {{"parameter": "threshold_value"}},
+        "additional_info": "any additional important information"
+    }},
+    "message": "your response to the user, summarize the collected information"
+}}
+
+If there is NOT enough information, return JSON:
+{{
+    "completed": false,
+    "message": "your response with clarifying questions"
+}}
+
+IMPORTANT: Return ONLY valid JSON without markdown formatting, without code blocks (```), without explanations. Start immediately with the opening curly brace {{."""
 
             
             response_text = self.llm.generate(
@@ -106,9 +164,13 @@ class UserInteractionAgent(BaseAgent):
                 
         except Exception as e:
             self.log(f"Ошибка в run: {str(e)}", "error")
+            error_messages = {
+                "ru": "Извините, произошла ошибка при обработке вашего сообщения. Попробуйте переформулировать.",
+                "en": "Sorry, an error occurred while processing your message. Please try to rephrase."
+            }
             return {
                 "completed": False,
-                "message": "Извините, произошла ошибка при обработке вашего сообщения. Попробуйте переформулировать."
+                "message": error_messages.get(self.language, error_messages["ru"])
             }
 
     def _build_conversation_context(self, chat_history: List[Dict[str, str]], max_messages: int = 10) -> str:
@@ -117,8 +179,13 @@ class UserInteractionAgent(BaseAgent):
         recent_history = chat_history[-max_messages:] if len(chat_history) > max_messages else chat_history
         
         context_lines = []
+        role_names = {
+            "ru": {"assistant": "Ассистент", "user": "Пользователь"},
+            "en": {"assistant": "Assistant", "user": "User"}
+        }
+        
         for msg in recent_history:
-            role = "Ассистент" if msg["role"] == "assistant" else "Пользователь"
+            role = role_names[self.language].get(msg["role"], msg["role"])
             context_lines.append(f"{role}: {msg['content']}")
         
         return "\n".join(context_lines)
@@ -128,7 +195,8 @@ class UserInteractionAgent(BaseAgent):
         Извлекает структурированные требования из истории чата.
         Используется как запасной вариант, если LLM не вернул requirements.
         """
-        prompt = f"""На основе следующей истории разговора с пользователем,
+        if self.language == "ru":
+            prompt = f"""На основе следующей истории разговора с пользователем,
 извлеки и структурируй всю информацию о производстве для создания цифрового двойника.
 
 История разговора:
@@ -148,6 +216,27 @@ class UserInteractionAgent(BaseAgent):
 }}
 
 Верни ТОЛЬКО валидный JSON."""
+        else:  
+            prompt = f"""Based on the following conversation history with the user,
+extract and structure all production information for creating a digital twin.
+
+Conversation history:
+{self._build_conversation_context(chat_history, max_messages=20)}
+
+Return JSON with the following structure:
+{{
+    "production_type": "production type",
+    "processes": ["list of processes"],
+    "equipment": ["list of equipment"],
+    "sensors": ["list of sensors and parameters"],
+    "goals": "digital twin creation goals",
+    "data_sources": "data sources",
+    "update_frequency": "update frequency",
+    "critical_parameters": {{"parameter": "value"}},
+    "additional_info": "additional information"
+}}
+
+Return ONLY valid JSON."""
 
         try:
             response = self.llm.generate(
@@ -161,14 +250,29 @@ class UserInteractionAgent(BaseAgent):
         except Exception as e:
             self.log(f"Ошибка извлечения требований: {str(e)}", "error")
             
-            return {
-                "production_type": "Не указано",
-                "processes": [],
-                "equipment": [],
-                "sensors": [],
-                "goals": "Не указано",
-                "data_sources": "Не указано",
-                "update_frequency": "Не указано",
-                "critical_parameters": {},
-                "additional_info": "Информация из чата"
+            default_values = {
+                "ru": {
+                    "production_type": "Не указано",
+                    "processes": [],
+                    "equipment": [],
+                    "sensors": [],
+                    "goals": "Не указано",
+                    "data_sources": "Не указано",
+                    "update_frequency": "Не указано",
+                    "critical_parameters": {},
+                    "additional_info": "Информация из чата"
+                },
+                "en": {
+                    "production_type": "Not specified",
+                    "processes": [],
+                    "equipment": [],
+                    "sensors": [],
+                    "goals": "Not specified",
+                    "data_sources": "Not specified",
+                    "update_frequency": "Not specified",
+                    "critical_parameters": {},
+                    "additional_info": "Information from chat"
+                }
             }
+            
+            return default_values.get(self.language, default_values["ru"])
