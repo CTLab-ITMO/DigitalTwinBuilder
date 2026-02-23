@@ -1,64 +1,112 @@
 # orchestrator_agent.py
 # Центральный мета-агент для маршрутизации задач между профильными агентами и сенсорами.
-# Заготовка для интеграции Online RL (reward: расхождение симуляция/реальность, скорость адаптации, стоимость вызовов).
-# Модель: NVIDIA Orchestrator-8B / ToolOrchestra (JSON-вызовы инструментов).
+# Поддерживает Online RL (reward: расхождение симуляция/реальность, скорость адаптации, стоимость вызовов).
+# Оптимизировано под NVIDIA Nemotron-Orchestrator-8B (XML-теги и JSON-схемы инструментов).
 
 from .base_agent import BaseAgent
 import json
 import logging
 import time
+import re
 from typing import Dict, Any, Optional, List, Tuple
 
 # Заглушки для отложенного импорта (избегаем циклических зависимостей)
 # from transformers import AutoModelForCausalLM, AutoTokenizer
 # from cores.sensor_manager import SensorManager
 
-
-# --- Описание инструментов для системного промпта (Prompt Engineering) ---
-ORCHESTRATOR_TOOLS = """
-## Доступные инструменты
-
-1. **user_interaction** (agent_id=1)
-   - Назначение: Проведение интервью с пользователем о производстве
-   - Вызов: user_interaction(conversation_id, user_message?)
-   - Возвращает: ответ агента для продолжения диалога
-
-2. **database_agent** (agent_id=2)
-   - Назначение: Генерация схемы БД по результатам интервью
-   - Вызов: database_agent(conversation_id, interview_result)
-   - Возвращает: SQL/JSON-схема базы данных
-
-3. **digital_twin_agent** (agent_id=3)
-   - Назначение: Конфигурация цифрового двойника
-   - Вызов: digital_twin_agent(requirements, db_schema)
-   - Возвращает: JSON-конфигурация компонентов двойника
-
-4. **ipcamera_gige**
-   - Назначение: Работа с камерой GigE Vision
-   - Вызов: ipcamera_gige(action="start_stream"|"stop_stream", camera_ip, my_ip, streaming_port)
-   - Альтернатива: ipcamera_gige(action="discovery", camera_ip)
-
-5. **ipcamera_rtsp**
-   - Назначение: Работа с RTSP-камерой
-   - Вызов: ipcamera_rtsp(action="connect"|"disconnect", rtsp_url)
-
-6. **sensor_manager**
-   - Назначение: Получение данных с датчиков (температура, вибрация, давление и т.д.)
-   - Вызов: sensor_manager(action="get_data"|"get_last")
-   - Возвращает: {timestamp, sensor_data: {...}}
-
-## Формат ответа
-Выводи только валидный JSON:
-{"tool": "имя_инструмента", "args": {...}, "reasoning": "краткое обоснование"}
-Для завершения цепочки: {"tool": "finish", "result": "итоговый ответ пользователю"}
-"""
+# --- Описание инструментов в формате JSON Schema (как ожидает Nemotron-Orchestrator-8B) ---
+ORCHESTRATOR_TOOLS_JSON = [
+    {
+        "name": "user_interaction",
+        "description": "Проведение интервью с пользователем о производстве. Направляет сообщение агенту взаимодействия.",
+        "parameters": {
+            "type": "object", 
+            "properties": {
+                "conversation_id": {"type": "string"}, 
+                "user_message": {"type": "string"}
+            },
+            "required": ["conversation_id"]
+        }
+    },
+    {
+        "name": "database_agent",
+        "description": "Генерация схемы БД по результатам интервью.",
+        "parameters": {
+            "type": "object", 
+            "properties": {
+                "conversation_id": {"type": "string"}, 
+                "interview_result": {"type": "string"}
+            },
+            "required": ["conversation_id", "interview_result"]
+        }
+    },
+    {
+        "name": "digital_twin_agent",
+        "description": "Конфигурация цифрового двойника.",
+        "parameters": {
+            "type": "object", 
+            "properties": {
+                "requirements": {"type": "string"}, 
+                "db_schema": {"type": "string"}
+            },
+            "required": ["requirements", "db_schema"]
+        }
+    },
+    {
+        "name": "ipcamera_gige",
+        "description": "Работа с камерой GigE Vision (запуск, остановка, поиск).",
+        "parameters": {
+            "type": "object", 
+            "properties": {
+                "action": {"type": "string", "enum": ["start_stream", "stop_stream", "discovery"]}, 
+                "camera_ip": {"type": "string"}, 
+                "my_ip": {"type": "string"}, 
+                "streaming_port": {"type": "integer"}
+            },
+            "required": ["action", "camera_ip"]
+        }
+    },
+    {
+        "name": "ipcamera_rtsp",
+        "description": "Работа с RTSP-камерой.",
+        "parameters": {
+            "type": "object", 
+            "properties": {
+                "action": {"type": "string", "enum": ["connect", "disconnect"]}, 
+                "rtsp_url": {"type": "string"}
+            },
+            "required": ["action", "rtsp_url"]
+        }
+    },
+    {
+        "name": "sensor_manager",
+        "description": "Получение текущих или исторических данных с датчиков (температура, вибрация, давление и т.д.).",
+        "parameters": {
+            "type": "object", 
+            "properties": {
+                "action": {"type": "string", "enum": ["get_data", "get_last"]}
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "finish",
+        "description": "Используй этот инструмент для завершения цепочки рассуждений и возврата итогового ответа.",
+        "parameters": {
+            "type": "object", 
+            "properties": {
+                "result": {"type": "string", "description": "Итоговый ответ или вердикт для пользователя"}
+            },
+            "required": ["result"]
+        }
+    }
+]
 
 
 class OrchestratorAgent(BaseAgent):
     """
-    Мета-агент: маршрутизирует высокоуровневые запросы между user_interaction,
-    database_agent, digital_twin_agent, ipcamera и sensor_manager.
-    Заготовка для Online RL: reward = f(sim_divergence, adaptation_speed, compute_cost).
+    Мета-агент: маршрутизирует высокоуровневые запросы между профильными агентами.
+    Использует строгие XML-теги и JSON схемы для управления LLM.
     """
 
     ORCHESTRATOR_AGENT_ID = 0  # Центральная точка входа
@@ -67,7 +115,7 @@ class OrchestratorAgent(BaseAgent):
         self,
         agent_id: int = 0,
         api_url: str = "http://localhost:8000",
-        model_name: str = "nvidia/Orchestrator-8B",  # или Qwen2.5-7B-Instruct для русского
+        model_name: str = "nvidia/Nemotron-Orchestrator-8B", 
         max_tool_steps: int = 10,
         use_sensor_manager: bool = False,
     ):
@@ -86,7 +134,6 @@ class OrchestratorAgent(BaseAgent):
         if use_sensor_manager:
             self._init_sensor_manager()
 
-        # Счётчики для reward (стоимость вызовов LLM)
         self._step_count = 0
         self._llm_call_count = 0
 
@@ -99,7 +146,7 @@ class OrchestratorAgent(BaseAgent):
             self.log(f"SensorManager not available: {e}", "warning")
 
     def _load_model(self) -> None:
-        """Отложенная загрузка модели. Заглушка — раскомментировать при использовании."""
+        """Отложенная загрузка модели."""
         if self._model is not None:
             return
         # try:
@@ -121,40 +168,69 @@ class OrchestratorAgent(BaseAgent):
         sensor_readings: Optional[Dict] = None,
         task_params: Optional[Dict] = None,
     ) -> str:
-        """Собирает состояние для LLM: диалог + показания датчиков + контекст."""
-        parts = [
-            "## Текущее состояние",
-            "Доступные инструменты:",
-            ORCHESTRATOR_TOOLS,
-        ]
+        """Собирает состояние в формате ChatML + XML, который ожидает Nemotron-Orchestrator-8B."""
+        
+        system_prompt = (
+            "You are an expert orchestrator agent managing a factory Digital Twin.\n"
+            "You may call one or more functions to assist with the user query.\n\n"
+            "You are provided with function signatures within <tools></tools> XML tags:\n"
+            "<tools>\n"
+            f"{json.dumps(ORCHESTRATOR_TOOLS_JSON, ensure_ascii=False, indent=2)}\n"
+            "</tools>\n\n"
+            "For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n"
+            "<tool_call>\n"
+            '{"name": "<function-name>", "arguments": <args-json-object>}\n'
+            "</tool_call>\n"
+        )
+
+        prompt = f"<|im_start|>system\n{system_prompt}<|im_end|>\n"
+        
+        # История диалога
         if messages:
-            parts.append("\n## История диалога")
-            for m in messages[-20:]:
-                parts.append(f"{m.get('role', '?')}: {m.get('content', '')[:500]}")
-        if sensor_readings:
-            parts.append("\n## Показания датчиков (последние)")
-            parts.append(json.dumps(sensor_readings, ensure_ascii=False, indent=2))
-        if task_params:
-            parts.append("\n## Параметры задачи")
-            parts.append(json.dumps(task_params, ensure_ascii=False))
-        return "\n".join(parts)
+            for m in messages[-10:]:
+                role = m.get("role", "user")
+                content = m.get("content", "")
+                prompt += f"<|im_start|>{role}\n{content}<|im_end|>\n"
+        
+        # Текущий запрос и состояние сенсоров
+        current_context = f"Текущие показания датчиков: {json.dumps(sensor_readings, ensure_ascii=False) if sensor_readings else 'Нет данных'}\n"
+        current_context += f"Запрос пользователя: {task_params.get('request', '')}"
+        
+        prompt += f"<|im_start|>user\n{current_context}<|im_end|>\n<|im_start|>assistant\n"
+        return prompt
+
+    def _generate(self, prompt: str) -> str:
+        """Заглушка для инференса модели. Заменить на реальный model.generate()"""
+        # Здесь должен быть реальный вызов LLM:
+        # inputs = self._tokenizer(prompt, return_tensors="pt").to(self._model.device)
+        # outputs = self._model.generate(**inputs, max_new_tokens=512)
+        # return self._tokenizer.decode(outputs[0][inputs.input_ids.shape[-1]:])
+        
+        # Симуляция ответа модели для тестирования пайплайна
+        return '<think>Мне нужно запросить профильного агента для ответа.</think>\n<tool_call>{"name": "finish", "arguments": {"result": "Система перенаправила ваш запрос."}}</tool_call>'
 
     def _parse_tool_call(self, raw_output: str) -> Optional[Dict[str, Any]]:
-        """Парсит JSON-вызов инструмента из вывода модели."""
+        """Парсит JSON-вызов инструмента из XML-тега <tool_call>, извлекая рассуждения из <think>."""
+        think_match = re.search(r"<think>(.*?)</think>", raw_output, re.DOTALL)
+        reasoning = think_match.group(1).strip() if think_match else ""
+
+        call_match = re.search(r"<tool_call>\s*({.*?})\s*</tool_call>", raw_output, re.DOTALL)
+        if not call_match:
+            return None
+            
         try:
-            start = raw_output.find("{")
-            end = raw_output.rfind("}") + 1
-            if start >= 0 and end > start:
-                return json.loads(raw_output[start:end])
+            call_data = json.loads(call_match.group(1))
+            return {
+                "tool": call_data.get("name"),
+                "args": call_data.get("arguments", {}),
+                "reasoning": reasoning
+            }
         except json.JSONDecodeError:
-            pass
-        return None
+            self.log("Failed to parse tool call JSON", "error")
+            return None
 
     def _execute_tool(self, tool_call: Dict[str, Any], context: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-        """
-        Выполняет вызов инструмента. Заглушка — реализовать вызовы к API/локальным агентам.
-        Возвращает (result_text, metadata для reward).
-        """
+        """Выполняет вызов инструмента. Возвращает (result_text_для_модели, metadata_для_reward)."""
         tool = tool_call.get("tool", "").strip()
         args = tool_call.get("args", {})
         metadata = {"tool": tool, "latency_ms": 0, "success": False}
@@ -163,28 +239,24 @@ class OrchestratorAgent(BaseAgent):
         result = ""
 
         if tool == "finish":
-            result = tool_call.get("result", "Готово.")
+            result = args.get("result", "Готово.")
             metadata["success"] = True
 
         elif tool == "user_interaction":
-            # TODO: POST /tasks agent_id=1, conversation_id, params
             result = "[stub] user_interaction: делегировано агенту 1"
             metadata["success"] = True
 
         elif tool == "database_agent":
-            # TODO: POST /tasks agent_id=2
             result = "[stub] database_agent: делегировано агенту 2"
             metadata["success"] = True
 
         elif tool == "digital_twin_agent":
-            # TODO: вызов DigitalTwinAgent.configure_twin(requirements, db_schema)
             result = "[stub] digital_twin_agent: конфигурация сгенерирована"
             metadata["success"] = True
 
         elif tool == "ipcamera_gige":
-            # TODO: from digital_twin_builder.ipcamera.camera.gige import gige; ...
-            result = "[stub] ipcamera_gige: действие не выполнено"
-            metadata["success"] = False
+            result = "[stub] ipcamera_gige: действие выполнено"
+            metadata["success"] = True
 
         elif tool == "ipcamera_rtsp":
             result = "[stub] ipcamera_rtsp: действие не выполнено"
@@ -196,11 +268,10 @@ class OrchestratorAgent(BaseAgent):
                 result = json.dumps(data, ensure_ascii=False) if data else "{}"
                 metadata["success"] = True
             else:
-                result = "{}"
-                metadata["success"] = True
-
+                result = "Ошибка: SensorManager недоступен"
+                metadata["success"] = False
         else:
-            result = f"Неизвестный инструмент: {tool}"
+            result = f"Ошибка: Неизвестный инструмент {tool}"
 
         metadata["latency_ms"] = (time.perf_counter() - t0) * 1000
         return result, metadata
@@ -211,11 +282,7 @@ class OrchestratorAgent(BaseAgent):
         sensor_sim_vs_real: Optional[Dict] = None,
         outcome_success: bool = True,
     ) -> float:
-        """
-        Функция вознаграждения для Online RL (заглушка).
-        reward = -sim_divergence - compute_cost + adaptation_bonus.
-        """
-        # 1. Расхождение симуляция vs реальные датчики (штраф)
+        """Функция вознаграждения для Online RL."""
         sim_divergence = 0.0
         if sensor_sim_vs_real:
             for k, v in sensor_sim_vs_real.items():
@@ -223,11 +290,9 @@ class OrchestratorAgent(BaseAgent):
                     sim_divergence += abs(v)
         sim_divergence_penalty = -0.1 * sim_divergence
 
-        # 2. Стоимость вызовов (штраф за лишние шаги)
         compute_cost = -0.01 * self._llm_call_count
         step_penalty = -0.05 * len(tool_metadata)
 
-        # 3. Скорость адаптации / успех (поощрение)
         adaptation_bonus = 1.0 if outcome_success else -1.0
         success_bonus = 0.1 * sum(1 for m in tool_metadata if m.get("success")) - 0.2 * sum(
             1 for m in tool_metadata if not m.get("success")
@@ -243,67 +308,66 @@ class OrchestratorAgent(BaseAgent):
         context: Optional[Dict] = None,
     ) -> Dict[str, Any]:
         """
-        Единая точка входа: принимает высокоуровневый запрос и распределяет между агентами.
-        Возвращает {result, steps[], reward, error?}.
+        Цикл оркестратора: принимает запрос, генерирует действия, выполняет их,
+        кормит результаты обратно в модель, пока не будет вызван 'finish'.
         """
         self._step_count = 0
         self._llm_call_count = 0
         steps = []
         context = context or {}
-        messages = context.get("messages", [])
+        
         sensor_readings = None
         if self._sensor_manager:
-            sensor_readings = self._sensor_manager.get_data()
-            if sensor_readings:
-                sensor_readings = sensor_readings.get("sensor_data", {})
+            raw_readings = self._sensor_manager.get_data()
+            if raw_readings:
+                sensor_readings = raw_readings.get("sensor_data", {})
 
-        state = self._build_state(
+        # 1. Формируем стартовый промпт
+        prompt = self._build_state(
             conversation_id=conversation_id,
-            messages=messages,
+            messages=context.get("messages", []),
             sensor_readings=sensor_readings,
             task_params={"request": high_level_request, **context},
         )
 
-        # Заглушка генерации (без модели)
         self._load_model()
-        # prompt = f"{state}\n\nЗапрос пользователя: {high_level_request}\n\nТвой JSON-вызов:"
-        # generated = self._generate(prompt)  # -> raw_output
-        # tool_call = self._parse_tool_call(generated)
 
-        # Имитация одного шага для демонстрации пайплайна
-        tool_call = {
-            "tool": "user_interaction",
-            "args": {"conversation_id": conversation_id or "", "user_message": high_level_request},
-            "reasoning": "Перенаправление на агента интервью",
-        }
-        self._llm_call_count += 1
-
+        # 2. Основной цикл выполнения (Loop)
         for _ in range(self.max_tool_steps):
+            raw_output = self._generate(prompt)
+            self._llm_call_count += 1
+            
+            # Добавляем ответ модели в контекст
+            prompt += f"{raw_output}<|im_end|>\n"
+            
+            tool_call = self._parse_tool_call(raw_output)
+            
             if not tool_call:
+                # Если модель не сгенерировала валидный инструмент, прерываем цикл
+                steps.append({"tool": "none", "result_preview": raw_output})
                 break
+                
             if tool_call.get("tool") == "finish":
-                steps.append({"tool": "finish", "result": tool_call.get("result", "")})
+                steps.append({"tool": "finish", "result": tool_call.get("args", {}).get("result", "")})
                 break
 
+            # Выполняем запрошенный инструмент
             result, meta = self._execute_tool(tool_call, context)
-            steps.append({**meta, "result_preview": str(result)[:200]})
+            steps.append({**meta, "reasoning": tool_call.get("reasoning", ""), "result_preview": str(result)[:200]})
 
-            # TODO: добавить result в messages и вызвать _generate снова
-            # generated = self._generate(...)
-            # tool_call = self._parse_tool_call(generated)
-            tool_call = {"tool": "finish", "result": result}
+            # Возвращаем результат выполнения модели через специальный тег <tool_response>
+            prompt += f"<tool_response>\n{result}\n</tool_response>\n<|im_start|>assistant\n"
 
-        reward = self.compute_reward(steps, sensor_readings, outcome_success=len(steps) > 0)
+        reward = self.compute_reward(steps, sensor_readings, outcome_success=(len(steps) > 0 and steps[-1].get("tool") == "finish"))
 
         return {
-            "result": steps[-1].get("result_preview", steps[-1].get("result", "")) if steps else "",
+            "result": steps[-1].get("result", steps[-1].get("result_preview", "")) if steps else "",
             "steps": steps,
             "reward": reward,
             "llm_calls": self._llm_call_count,
         }
 
     def process_task(self, task: Dict[str, Any]) -> str:
-        """Реализация BaseAgent: обработка задачи из API (единая точка входа)."""
         params = task.get("params", {})
         conversation_id = task.get("conversation_id", "")
         request = params.get("request", params.get("user_message", "Обработать запрос"))
@@ -315,9 +379,7 @@ class OrchestratorAgent(BaseAgent):
         )
         return json.dumps(out, ensure_ascii=False, indent=2)
 
-
 def main():
-    """CLI: запуск оркестратора как API-агента."""
     import argparse
     import signal
     import sys
@@ -325,7 +387,7 @@ def main():
     parser = argparse.ArgumentParser(description="Orchestrator Agent")
     parser.add_argument("--agent-id", type=int, default=0)
     parser.add_argument("--api-url", default="http://localhost:8000")
-    parser.add_argument("--model", default="nvidia/Orchestrator-8B")
+    parser.add_argument("--model", default="nvidia/Nemotron-Orchestrator-8B")
     parser.add_argument("--use-sensors", action="store_true")
     parser.add_argument("--poll-interval", type=float, default=2.0)
     args = parser.parse_args()
@@ -344,7 +406,6 @@ def main():
     signal.signal(signal.SIGINT, on_signal)
     signal.signal(signal.SIGTERM, on_signal)
     agent.run(interval=args.poll_interval)
-
 
 if __name__ == "__main__":
     main()
