@@ -1,21 +1,25 @@
 # streamlit_app.py
-import streamlit as st
-import requests
-import time
 import json
-import threading
+from logging import config
 import queue
+import threading
+import time
 from datetime import datetime
-from prompts import system as sys_prompts
-from DTlibrary.cores.sensor_manager import SensorManager
-from DTlibrary.cores.database import DatabaseManager
+
 import pandas as pd
 import plotly.express as px
+import requests
+import streamlit as st
+from DTlibrary.cores.database import DatabaseManager
+from DTlibrary.cores.sensor_manager import SensorManager
+import prompts
 
 # Configuration
 API_URL = "http://localhost:8000"  # Change to your API URL
-if 'response_queue' not in st.session_state:
+if "response_queue" not in st.session_state:
     st.session_state.response_queue = queue.Queue()
+
+
 # Helper functions
 def submit_task(agent_id, conversation_id, params):
     """Submit task to API"""
@@ -26,9 +30,9 @@ def submit_task(agent_id, conversation_id, params):
                 "agent_id": agent_id,
                 "conversation_id": conversation_id,
                 "params": params,
-                "priority": 5
+                "priority": 5,
             },
-            timeout=10
+            timeout=10,
         )
         if response.status_code == 200:
             return response.json()
@@ -39,15 +43,18 @@ def submit_task(agent_id, conversation_id, params):
         st.error(f"Connection error: {str(e)}")
         return None
 
+
 def add_message_to_conversation(conversation_id, role, content):
     try:
         response = requests.post(
-            f"{API_URL}/conversations/{conversation_id}/messages", 
+            f"{API_URL}/conversations/{conversation_id}/messages",
             params={
                 "conversation_id": conversation_id,
                 "role": role,
-                "content": content},
-            timeout=10)
+                "content": content,
+            },
+            timeout=10,
+        )
         if response.status_code == 200:
             return response.json()
         else:
@@ -56,6 +63,7 @@ def add_message_to_conversation(conversation_id, role, content):
     except Exception as e:
         st.error(f"Connection error: {str(e)}")
         return None
+
 
 def get_task_status(task_id):
     """Get task status from API"""
@@ -67,6 +75,7 @@ def get_task_status(task_id):
         pass
     return None
 
+
 def get_agent_status(agent_id):
     """Get agent status from API"""
     try:
@@ -77,15 +86,16 @@ def get_agent_status(agent_id):
         pass
     return {"status": "offline"}
 
+
 def background_poll_task_result(response_queue, task_id):
     poll = 0
     max_poll = 100
-    while (poll < max_poll):
+    while poll < max_poll:
         task = get_task_status(task_id)
         if task and task["status"] == "completed":
             response_queue.put(task)
             break
-        else: 
+        else:
             time.sleep(1)
         poll += 1
 
@@ -94,37 +104,48 @@ def create_new_conversation(session_id, agent_id, system_prompt):
     """Create a new conversation"""
     response = requests.post(
         f"{API_URL}/conversations",
-        params={"session_id": session_id, "agent_id": agent_id}
+        params={"session_id": session_id, "agent_id": agent_id},
     )
     if response.status_code == 200:
         conversation_id = response.json()["conversation_id"]
     else:
-        st.error(f"Не удалось создать новую беседу с агентом {agent_id}, запрос завершился с ошибкой {response.status_code}")
+        st.error(
+            f"Не удалось создать новую беседу с агентом {agent_id}, запрос завершился с ошибкой {response.status_code}"
+        )
         return None
-    response_message = add_message_to_conversation(conversation_id, "system", system_prompt)
+    response_message = add_message_to_conversation(
+        conversation_id, "system", system_prompt
+    )
     if response_message is not None:
         return conversation_id
     else:
-        st.error(f"Не удалось добавить системный промпт в новую беседу {conversation_id} с агентом {agent_id}")
+        st.error(
+            f"Не удалось добавить системный промпт в новую беседу {conversation_id} с агентом {agent_id}"
+        )
         return None
+
 
 def create_new_session():
     response = requests.post(
-        f"{API_URL}/sessions",
-        params={"user_id": "streamlit_user", "title": "New Chat"}
+        f"{API_URL}/sessions", params={"user_id": "streamlit_user", "title": "New Chat"}
     )
     if response.status_code == 200:
         session_id = response.json()["session_id"]
         return session_id
     else:
-        st.error(f"Не удалось создать новую сессию, запрос завершился с ошибкой {response.status_code}")
+        st.error(
+            f"Не удалось создать новую сессию, запрос завершился с ошибкой {response.status_code}"
+        )
         return None
-    
+
+
 def load_session(session_id):
     """Load a conversation from API"""
     response = requests.get(f"{API_URL}/sessions/{session_id}")
     if response.status_code != 200:
-        st.error(f"Не удалось загрузить сессию {session_id}, запрос завершился с ошибкой {response.status_code}")
+        st.error(
+            f"Не удалось загрузить сессию {session_id}, запрос завершился с ошибкой {response.status_code}"
+        )
         return
 
     data = response.json()
@@ -137,38 +158,43 @@ def load_session(session_id):
             st.session_state.conversations.extend([None] * difference)
         st.session_state.conversations[agent_id - 1] = conv["id"]
 
+
 def load_conversation(conversation_id, agent_id):
     """Load a conversation from API"""
     response = requests.get(f"{API_URL}/conversations/{conversation_id}")
     if response.status_code != 200:
-        st.error(f"Не удалось загрузить беседу {conversation_id}, запрос завершился с ошибкой {response.status_code}")
-        return 
+        st.error(
+            f"Не удалось загрузить беседу {conversation_id}, запрос завершился с ошибкой {response.status_code}"
+        )
+        return
 
     data = response.json()
     st.session_state.conversations[agent_id - 1] = conversation_id
     st.session_state.messages[agent_id - 1] = data["messages"]
 
+
 def submit_chat_to_agent(agent_id, conversation_id, params):
     task_info = submit_task(agent_id, conversation_id, params)
     if task_info:
-        task_id = task_info['task_id']
+        task_id = task_info["task_id"]
         st.success(f"Task submitted! ID: {task_id[:8]}...")
         st.session_state.tasks.append(task_id)
 
         thread = threading.Thread(
             target=background_poll_task_result,
             args=(st.session_state.response_queue, task_id),
-            daemon=True
+            daemon=True,
         )
         thread.start()
-    
+
         # Show immediate feedback
         st.toast("Task submitted! Polling for response...")
+
 
 def setup_interview_tab():
     ui_agent_id = 1
     st.header("Создание цифрового двойника производства")
-    
+
     if st.session_state.conversations[ui_agent_id - 1] is None:
         st.markdown("Пожалуйста, выберите существующий чат или создайте новый")
         return
@@ -180,167 +206,296 @@ def setup_interview_tab():
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    
     with st.expander("Parameters"):
         temperature = st.slider("Temperature", 0.0, 2.0, 0.7, 0.1)
         max_tokens = st.number_input("Max Tokens", 100, 4000, 1000)
 
-    user_input = st.chat_input("Введите информацию о вашем производстве...", 
-                               disabled=
-                                    st.session_state.get('interview_completed', False) or 
-                                    not st.session_state.response_queue.empty())
+    user_input = st.chat_input(
+        "Введите информацию о вашем производстве...",
+        disabled=st.session_state.get("interview_completed", False)
+        or not st.session_state.response_queue.empty(),
+    )
     if user_input:
-        params = {
-            "temperature": temperature,
-            "max_tokens": max_tokens
-        }
-        response = add_message_to_conversation(st.session_state.conversations[ui_agent_id - 1], role="user", content=user_input)
+        params = {"temperature": temperature, "max_tokens": max_tokens}
+        response = add_message_to_conversation(
+            st.session_state.conversations[ui_agent_id - 1],
+            role="user",
+            content=user_input,
+        )
         if response is not None:
-            submit_chat_to_agent(ui_agent_id, st.session_state.conversations[ui_agent_id - 1], params)
+            submit_chat_to_agent(
+                ui_agent_id, st.session_state.conversations[ui_agent_id - 1], params
+            )
             st.rerun()
-    if st.session_state.get('interview_completed', False):
+    if st.session_state.get("interview_completed", False):
         st.success("Интервью завершено, переходите к следующей вкладке")
 
 
 def setup_database_tab():
     db_agent_id = 2
     st.header("Настройка базы данных")
-    
-    if not st.session_state.get('interview_completed', False):
-        st.warning("Пожалуйста, завершите интервью на вкладке 'Интервью с пользователем'")
+
+    if not st.session_state.get("interview_completed", False):
+        st.warning(
+            "Пожалуйста, завершите интервью на вкладке 'Интервью с пользователем'"
+        )
         return
 
     st.subheader("Результат интервью")
     st.json(st.session_state.interview_result)
 
     if st.session_state.conversations[db_agent_id - 1] is None:
-        st.session_state.conversations[db_agent_id - 1] = create_new_conversation(st.session_state.session_id, db_agent_id, sys_prompts.DB)    
-        add_message_to_conversation(st.session_state.conversations[db_agent_id - 1], "user", st.session_state.interview_result)
-        submit_chat_to_agent(db_agent_id, st.session_state.conversation[db_agent_id - 1], {})
+        st.session_state.conversations[db_agent_id - 1] = create_new_conversation(
+            st.session_state.session_id, db_agent_id, prompts.system.DB
+        )
+        add_message_to_conversation(
+            st.session_state.conversations[db_agent_id - 1],
+            "user",
+            prompts.user.make_db(st.session_state.interview_result),
+        )
+        submit_chat_to_agent(
+            db_agent_id, st.session_state.conversation[db_agent_id - 1], {}
+        )
     load_conversation(st.session_state.conversations[db_agent_id - 1], db_agent_id)
-    
-    if ("db_schema" in st.session_state):
+
+    if "db_json" in st.session_state:
         st.subheader("Сгенерированная схема базы данных")
-        st.markdown(f"```{st.session_state.db_schema}```")
+        st.json(st.session_state.db_json)
+
+def dt_generate_config():
+    try:
+        # TODO: 2d array for conversations and messages
+        prompt = prompts.user.make_config(
+            st.session_state.interview_result,
+            st.session_state.db_schema
+        )
+        add_message_to_conversation(
+            st.session_state.conversations[2], role="user", content=prompt)
+        submit_chat_to_agent(
+            3, st.session_state.conversations[2], {})
+        st.rerun()
+    except Exception as e:
+        st.error(f"Ошибка: {str(e)}")
+
+def dt_generate_simulation():
+    try:
+        # TODO: 2d array for conversations and messages
+        prompt = prompts.user.make_simulation(
+            st.session_state.interview_result,
+            st.session_state.db_schema,
+            st.session_state.twin_config
+        )
+        add_message_to_conversation(
+            st.session_state.conversations[2], role="user", content=prompt)
+        submit_chat_to_agent(
+            3, st.session_state.conversations[2], {})
+        st.rerun()
+    except Exception as e:
+        st.error(f"Ошибка: {str(e)}")
+
+def dt_generate_db_schema():
+    try:
+        # TODO: 2d array for conversations and messages
+        prompt = prompts.user.make_db_schema(
+            st.session_state.interview_result,
+            st.session_state.db_schema
+        )
+        add_message_to_conversation(
+            st.session_state.conversations[2], role="user", content=prompt)
+        submit_chat_to_agent(
+            3, st.session_state.conversations[2], {})
+        st.rerun()
+    except Exception as e:
+        st.error(f"Ошибка: {str(e)}")
+
+def dt_modify_config():
+    # TODO: implement
+    pass
+
 
 def setup_twin_tab():
     dt_agent_id = 3
     st.header("Конфигурация цифрового двойника")
-  
-    if 'db_schema' not in st.session_state:
-        st.warning("Пожалуйста, настройте базу данных на предыдущей вкладке")
-        return
-
-    if st.session_state.conversations[dt_agent_id - 1] is None:
-        st.session_state.conversations[dt_agent_id - 1] = create_new_conversation(st.session_state.session_id, dt_agent_id, sys_prompts.DT)
-        # TODO: check context is right for dt agetn
-        add_message_to_conversation(st.session_state.conversations[dt_agent_id  - 1], "user", st.session_state.interview_result)
-        add_message_to_conversation(st.session_state.conversations[dt_agent_id  - 1], "user", st.session_state.db_schema)
-
-        submit_chat_to_agent(dt_agent_id, st.session_state.conversations[dt_agent_id  - 1], {})
-
-    if ("dt_config" in st.session_state):
-        st.subgeader("Итоговая конфигурация двойника")
-        st.json(st.session_state.dt_config)
-
-    if st.button("Запустить цифровой двойник"):
-        try:
-            st.session_state.sensor_manager = SensorManager(mode='sim')
-            st.session_state.sensor_manager.start()
-
-            st.session_state.db_manager = DatabaseManager()
-            start = st.session_state.db_schema.find("INSERT")
-            end = st.session_state.db_schema.rfind(";")
-            st.session_state.db_manager.execute(st.session_state.db_schema[start:end + 1])
-            st.session_state.sensor_running = True
-            st.success("Цифровой двойник успешно запущен!")
-        except Exception as e:
-            st.error(f"Ошибка запуска: {str(e)}")
-#     
-#     if st.button("Остановить", disabled=not st.session_state.get('sensor_running', False)):
-#         .sensor_manager.stop()
-#         if .db_manager:
-#             .db_manager.close()
-#         st.session_state.sensor_running = False
-#         st.success("Работа цифрового двойника остановлена")
-
-def setup_sensor_tab():
-    st.header("Мониторинг производства")
-    
-    if not st.session_state.get('sensor_running', False):
-        st.warning("Цифровой двойник не запущен")
+        
+    if 'db_json' not in st.session_state:
+        st.warning("⚠️ Пожалуйста, завершите настройку базы данных")
         return
     
-    data = st.session_state.sensor_manager.get_data()
-    if data:
-        print(data)
-        display_sensor_data(data)
+    st.subheader("Схема базы данных")
+    with st.expander("Посмотреть схему БД"):
+        st.json(st.session_state.db_schema)
+    
+    if 'twin_config' not in st.session_state:
+        if st.button("⚙️ Сгенерировать конфигурацию", key="generate_config_btn"):
+            with st.spinner("Генерация конфигурации..."):
+                dt_generate_config()
+        return
+    
+    st.subheader("Конфигурация цифрового двойника")
+    st.json(st.session_state.twin_config, expanded=True)
+    
+    st.subheader("Код симуляции PyChrono")
+    
+    if 'simulation_code' not in st.session_state:
+        if st.button("🔧 Сгенерировать код", key="generate_sim_btn"):
+            with st.spinner("Генерация кода..."):
+                dt_generate_simulation()
+   
+    if 'simulation_code' in st.session_state:
+        with st.expander("Просмотр кода PyChrono"):
+            st.code(st.session_state.simulation_code, language="python")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.download_button(
+                "📥 Скачать код",
+                st.session_state.simulation_code,
+                "simulation.py",
+                "text/x-python",
+                key="download_sim"
+            )
+        with col2:
+            if st.button("🔄 Перегенерировать", key="regen_sim"):
+                del st.session_state.simulation_code
+                st.rerun()
+    
+    st.subheader("SQL код для БД")
+    
+    if 'database_code' not in st.session_state:
+        if st.button("🗄️ Сгенерировать SQL", key="generate_sql_btn"):
+            with st.spinner("Генерация SQL..."):
+                dt_generate_db_schema()
+    
+    if 'database_code' in st.session_state:
+        with st.expander("Просмотр SQL"):
+            st.code(st.session_state.database_code, language="sql")
+        
+        st.download_button(
+            "📥 Скачать SQL",
+            st.session_state.database_code,
+            "schema.sql",
+            "text/plain",
+            key="download_sql"
+        )
+    
+    # st.divider()
+    # st.subheader("🚀 Запуск цифрового двойника")
+    # 
+    # mode = st.radio(
+    #     "Режим сенсоров", 
+    #     ["Симуляция", "Реальное оборудование"],
+    #     key="sensor_mode_radio"
+    # )
+    # sensor_mode = 'sim' if mode == "Симуляция" else 'real'
+    # 
+    # col1, col2 = st.columns(2)
+    # 
+    # with col1:
+    #     if st.button("▶️ Запустить", key="start_twin_btn", type="primary"):
+    #         try:
+    #             self.sensor_manager = SensorManager(mode=sensor_mode)
+    #             self.sensor_manager.start()
+    #             
+    #             self.db_manager = DatabaseManager(
+    #                 dbname="digital_twin",
+    #                 user="postgres",
+    #                 password="omgssmyalg"
+    #             )
+    #             self.db_manager.create_sensor_tables()
+    #             
+    #             st.session_state.sensor_running = True
+    #             st.session_state.sensor_mode = sensor_mode
+    #             st.success("✅ Цифровой двойник запущен!")
+    #         except Exception as e:
+    #             st.error(f"❌ Ошибка: {str(e)}")
+    # 
+    # with col2:
+    #     if st.button(
+    #         "⏹️ Остановить",
+    #         disabled=not st.session_state.get('sensor_running', False),
+    #         key="stop_twin_btn"
+    #     ):
+    #         if self.sensor_manager:
+    #             self.sensor_manager.stop()
+    #         if self.db_manager:
+    #             self.db_manager.close()
+    #         st.session_state.sensor_running = False
+    #         st.success("⏹️ Остановлено")
+    # 
 
-def display_sensor_data(data):
-    st.subheader("Текущие показания")
-
-    sensor_data = data["sensor_data"]
-    display_data = []
-
-    for param, value in sensor_data.items():
-        display_data.append({
-            "Параметр": param,
-            "Значение": value,
-            "Время": datetime.fromtimestamp(data["timestamp"])
-        })
-
-    st.dataframe(pd.DataFrame(display_data))
-    plot_sensor_data(data)
-
-def plot_sensor_data(data):
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.session_state.temperature_history.append({
-            "timestamp": datetime.fromtimestamp(data["timestamp"]),
-            "value": data["sensor_data"].get("temperature", 0)
-        })
-        temp_df = pd.DataFrame(st.session_state.temperature_history[-100:])
-        fig_temp = px.line(temp_df, x="timestamp", y="value", title="Температура")
-        st.plotly_chart(fig_temp, use_container_width=True)
 
 def init_session_state():
     """Initialize session state for chat"""
     st.session_state.agent_count = 3
-    if 'conversations' not in st.session_state:
+    if "conversations" not in st.session_state:
         st.session_state.conversations = [None] * st.session_state.agent_count
-    if 'messages' not in st.session_state:
+    if "messages" not in st.session_state:
         st.session_state.messages = [[]] * st.session_state.agent_count
-    if 'conversations' not in st.session_state:
+    if "conversations" not in st.session_state:
         st.session_state.conversations = []
-    if 'tasks' not in st.session_state:
+    if "tasks" not in st.session_state:
         st.session_state.tasks = []
-    if 'temperature_history' not in st.session_state:
+    if "temperature_history" not in st.session_state:
         st.session_state.temperature_history = []
+
+
+def process_incoming_task(task):
+    result = task.get("result", "")
+    agent_id = task["agent_id"]
+    if agent_id == 1:
+        # if json then it is final answer
+        try:
+            start = result.find("{")
+            end = result.rfind("}")
+            json_result = result[start : end + 1]
+            st.session_state.interview_result = json.loads(json_result)
+            print("Json in message found")
+        except ValueError:
+            print("No json in message found")
+            return
+        st.session_state.interview_completed = True
+    elif agent_id == 2:
+        try:
+            start = result.find("{")
+            end = result.rfind("}")
+            json_result = result[start : end + 1]
+            st.session_state.db_json = json.loads(json_result)
+            print("Json in message found")
+        except ValueError:
+            print("No json in message found")
+            return -1
+    elif agent_id == 3:
+        pass
+    else:
+        print(f"No agent with id = {agent_id} defined")
 
 def initialize_ui():
     st.set_page_config(page_title="Digital Twin Builder", layout="wide")
     st.title("Digital Twin Builder🏭")
 
     init_session_state()
-    
+
     with st.sidebar:
         st.title("💬 Sessions")
-        
+
         # Load conversations
-        response = requests.get(f"{API_URL}/sessions", params={"user_id": "streamlit_user"})
+        response = requests.get(
+            f"{API_URL}/sessions", params={"user_id": "streamlit_user"}
+        )
         if response.status_code == 200:
             st.session_state.sessions = response.json()["sessions"]
-        
+
         # New chat button
         if st.button("➕ New Chat", use_container_width=True):
             session_id = create_new_session()
             load_session(session_id)
-            st.session_state.conversations[0] = create_new_conversation(st.session_state.session_id, 1, sys_prompts.UI)
+            st.session_state.conversations[0] = create_new_conversation(
+                st.session_state.session_id, 1, prompts.system.UI
+            )
             submit_chat_to_agent(1, st.session_state.conversations[0], {})
-        
+
         st.divider()
-        
+
         # list conversations
         for session in st.session_state.sessions:
             title = session.get("title", f"chat {session['id'][:8]}")
@@ -348,33 +503,33 @@ def initialize_ui():
                 load_session(session["id"])
 
         st.header("agent status")
-        
+
         for agent_id in range(1, st.session_state.agent_count + 1):
             status = get_agent_status(agent_id)
-            status_color = {
-                "idle": "🟢",
-                "busy": "🟡",
-                "offline": "🔴"
-            }.get(status.get("status", "offline"), "⚪")
-            
+            status_color = {"idle": "🟢", "busy": "🟡", "offline": "🔴"}.get(
+                status.get("status", "offline"), "⚪"
+            )
+
             st.markdown(f"**agent {agent_id}** {status_color}")
             caption_str = f"status: {status.get('status', 'offline')}"
 
             response = requests.get(f"{API_URL}/queue/{agent_id}", timeout=5)
             if response.status_code == 200:
                 queue = response.json()
-                caption_str += f", pending {queue["pending_count"]}"
+                caption_str += f", pending {queue['pending_count']}"
                 if queue["active_task"]:
                     caption_str += f", active: {queue['active_task']['id'][:8]}..."
             st.caption(caption_str)
 
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "интервью с пользователем", 
-        "создание базы данных", 
-        "цифровой двойник",
-        "обзор графиков датчиков"
-    ])
-        
+    tab1, tab2, tab3, tab4 = st.tabs(
+        [
+            "интервью с пользователем",
+            "создание базы данных",
+            "цифровой двойник",
+            "обзор графиков датчиков",
+        ]
+    )
+
     with tab1:
         setup_interview_tab()
     with tab2:
@@ -383,32 +538,10 @@ def initialize_ui():
         setup_twin_tab()
     with tab4:
         setup_sensor_tab()
-    
-    # new message processing
+
     while not st.session_state.response_queue.empty():
         task = st.session_state.response_queue.get()
-        result = task.get("result", "")
-        agent_id = task["agent_id"]
-        if agent_id == 0:
-            # if json then it is final answer
-            try:
-                start = result.find('{')
-                end = result.rfind('}')
-                json_result = result[start:end+1]
-                st.session_state.interview_result = json_result
-                json.loads(json_result)
-                print("Json in message found")
-            except ValueError:
-                print("No json in message found")
-                continue
-            st.session_state.interview_completed = True
-        elif agent_id == 2:
-            print(result)
-            st.session_state.db_schema = result
-        elif agent_id == 3:
-            pass
-        else:
-            continue
+        process_incoming_task(task)
         st.rerun()
 
     time.sleep(10)
@@ -418,5 +551,6 @@ def initialize_ui():
 def main():
     initialize_ui()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
