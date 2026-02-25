@@ -2,7 +2,7 @@ import time
 from typing import Dict, Any
 from queue import Queue
 from threading import Thread
-from sensors import (LevelSensor, OrangePiLevelSensor,
+from digital_twin_builder.DTlibrary.sensors import (LevelSensor, OrangePiLevelSensor,
                     PressureSensor, OrangePiPressureSensor,
                     RFIDReader,
                     TemperatureSensor, OrangePiTemperatureSensor,
@@ -69,51 +69,41 @@ class SensorManager:
                 "sensor_data": {}
             }
             
-            # Generate realistic metallurgy data
             if self.mode == 'sim':
-                # Инициализируем базовые значения
                 base_temp = 1520
                 base_speed = 1.8
                 base_water_flow = 1250
                 base_vibration = 3.0
                 
-                # Если есть предыдущие данные, используем их как основу
                 if self.last_data:
                     base_temp = self.last_data.get("temperature", 1520)
                     base_speed = self.last_data.get("casting_speed", 1.8)
                     base_water_flow = self.last_data.get("cooling_water_flow", 1250)
                     base_vibration = self.last_data.get("vibration_level", 3.0)
                 
-                # Temperature follows a pattern with random fluctuations
-                temp_fluctuation = 20 * math.sin(time.time() / 600)  # 10 min cycle
+                temp_fluctuation = 20 * math.sin(time.time() / 600)  
                 sensor_data["sensor_data"]["temperature"] = base_temp + temp_fluctuation + random.uniform(-5, 5)
                 
-                # Casting speed varies around 1.8 m/min
                 sensor_data["sensor_data"]["casting_speed"] = base_speed + 0.1 * math.sin(time.time() / 300) + random.uniform(-0.05, 0.05)
                 
-                # Cooling water flow
                 sensor_data["sensor_data"]["cooling_water_flow"] = base_water_flow + 50 * math.sin(time.time() / 450) + random.uniform(-20, 20)
                 
-                # Vibration level
                 sensor_data["sensor_data"]["vibration_level"] = base_vibration + 1.0 * math.sin(time.time() / 180) + random.uniform(-0.2, 0.2)
                 
-                # Equipment status (changes slowly)
                 current_status = self.last_data.get("status", "normal")
-                if random.random() < 0.05:  # 5% chance to change status
+                if random.random() < 0.05:  
                     sensor_data["sensor_data"]["status"] = random.choice(["normal", "warning", "critical"])
                 else:
                     sensor_data["sensor_data"]["status"] = current_status
                 
-                # Wear level gradually increases
                 current_wear = self.last_data.get("wear_level", 0)
                 new_wear = current_wear + 0.001
                 sensor_data["sensor_data"]["wear_level"] = min(new_wear, 100)
                 
-                # Quality metrics (batch-based)
                 current_defects = self.last_data.get("defect_count", 0)
                 current_quality = self.last_data.get("quality_score", 95)
                 
-                if time.time() % 300 < self.sampling_interval:  # Every 5 minutes
+                if time.time() % 300 < self.sampling_interval: 
                     sensor_data["sensor_data"]["defect_count"] = random.randint(0, 5)
                     sensor_data["sensor_data"]["quality_score"] = 95 - sensor_data["sensor_data"]["defect_count"] * 2 + random.uniform(-1, 1)
                 else:

@@ -6,3 +6,4 @@ accelerate
 plotly
 pandas
 numpy
+langgraph
