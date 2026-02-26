@@ -105,6 +105,25 @@ ORCHESTRATOR_TOOLS_JSON = [
 
 FEWSHOT_DIALOG = [
     {
+        "role": "system",
+        "content": (
+            "Ты orchestrator_agent. Твоя задача:\n"
+            "1. Решать, каких агентов вызывать (user_interaction_agent, digital_twin_agent, database_agent)\n"
+            "2. Передавать им структурированный контекст в аргументах\n"
+            "3. Собирать результаты и выдавать пользователю только через user_interaction_agent\n\n"
+            "ЛОГИКА:\n"
+            "- Нужны уточнения → user_interaction_agent(mode='interview')\n"
+            "- Есть данные для проектирования → digital_twin_agent(task='design')\n"
+            "- Есть артефакт для сохранения → database_agent\n"
+            "- Готов финальный ответ → user_interaction_agent(mode='generate_response')\n\n"
+            "НЕ генерируй текст для пользователя напрямую. Только tool calls."
+        )
+    },
+
+    # =============================================================================
+    # TERN 1: User asks about sensors for filling line
+    # =============================================================================
+    {
         "role": "user",
         "content": (
             "У нас автоматическая линия розлива и укупорки бутылок с лимонадом. "
@@ -113,84 +132,235 @@ FEWSHOT_DIALOG = [
             "влажности в цеху. Подскажи, какие датчики нужны и что лишнее."
         )
     },
+
+    # Orchestrator → interview needed
+    {
+        "role": "assistant", 
+        "tool_calls": [
+            {
+                "id": "call_ui_interview_001",
+                "type": "function",
+                "function": {
+                    "name": "user_interaction_agent",
+                    "arguments": {
+                        "mode": "requirements_interview",
+                        "user_message": "линия розлива лимонада, датчики: temp продукта, давление перед наливом, конвейер, влажность цеха (?лишнее)",
+                        "known_context": {
+                            "domain": "пищевая промышленность/линия розлива",
+                            "requested_signals": [
+                                "температура продукта",
+                                "давление перед наливом", 
+                                "состояние привода конвейера"
+                            ],
+                            "candidate_extra": ["влажность в цеху"]
+                        },
+                        "output_schema": {
+                            "questions": "list[str]", 
+                            "assumptions": "list[str]",
+                            "missing_slots": "list[str]"
+                        }
+                    }
+                }
+            }
+        ]
+    },
+    
+    # user_interaction_agent returns interview plan
+    {
+        "role": "tool",
+        "tool_call_id": "call_ui_interview_001",
+        "name": "user_interaction_agent", 
+        "content": (
+            '{"questions":['
+            '"В каком диапазоне температура продукта после пастеризатора/охладителя и перед наливом? Какие пороги \"плохо/авария\"?",'
+            '"Какой рабочий диапазон давления перед наливом? Бывают ли скачки/пульсации?",'
+            '"Как сейчас контролируете конвейер? Какие симптомы поломок (клин, вибрация, перегрев)?",'
+            '"Влажность — есть ли реальные проблемы (конденсат, коррозия), или просто \"для наблюдения\"?"'
+            '],'
+            '"assumptions":["пищевая линия → нужны гигиенические датчики IP67+","конвейер клинит → нужна диагностика причин"],'
+            '"missing_slots":["temp_ranges","pressure_ranges","drive_failure_modes","humidity_justification"]}'
+        )
+    },
+
+    # Orchestrator → asks user questions (echo from user_interaction_agent result)
     {
         "role": "assistant",
         "content": (
-            "<think>Сначала нужно провести короткое интервью, чтобы понять реальные режимы и отговорить от лишних датчиков.</think>\n"
-            "Понял. Сначала уточню процесс, чтобы не ставить лишние датчики. "
-            "1) В каком диапазоне температура продукта до и после пастеризатора? "
-            "2) Есть ли реальные проблемы, связанные с влажностью воздуха, или это просто идея \"на всякий случай\"? "
-            "3) Как сейчас контролируете состояние привода конвейера — только по току двигателя или есть уже какие-то датчики вибрации/скорости?"
+            "Чтобы подобрать датчики без лишнего, уточню:\n"
+            "1) Диапазон температуры продукта после пастеризатора и перед наливом? Какие пороги \"плохо\"?\n"
+            "2) Рабочее давление перед наливом и бывают ли скачки?\n"
+            "3) Как контролируете конвейер сейчас? Какие симптомы поломок?\n"
+            "4) Влажность вызывает проблемы или просто хотите видеть?"
         )
     },
+
+    # =============================================================================
+    # TURN 2: User provides details  
+    # =============================================================================
     {
         "role": "user",
         "content": (
             "Температура после пастеризатора обычно 6–8 °C, выше 12 °C уже плохо. "
-            "Влажность воздуха не создаёт проблем, просто думал, что полезно её видеть. "
-            "Состояние привода конвейера пока контролируем только по току двигателя, иногда конвейер клинит из-за заклинивших бутылок."
+            "Давление перед наливом 3–4 бар, иногда прыгает до 5–6. "
+            "Конвейер контролируем по току двигателя, клинит из-за заклинивших бутылок. "
+            "Влажность проблем не создаёт."
         )
     },
+
+    # Orchestrator → enough data → digital_twin_agent
     {
         "role": "assistant",
+        "tool_calls": [
+            {
+                "id": "call_dt_design_001",
+                "type": "function",
+                "function": {
+                    "name": "digital_twin_agent",
+                    "arguments": {
+                        "task": "design_sensor_configuration",
+                        "process_context": {
+                            "product": "лимонад", 
+                            "line_stage": "розлив_укупорка",
+                            "signals": {
+                                "product_temp": {"after_pasteurizer": "6-8°C", "alarm": ">12°C"},
+                                "filler_pressure": {"normal": "3-4 бар", "spikes": "5-6 бар"},
+                                "conveyor_drive": {"monitoring": "motor_current", "failure": "jamming"}
+                            },
+                            "environment": {"humidity_relevant": false}
+                        },
+                        "constraints": ["food_grade", "IP67+"],
+                        "output_schema": {
+                            "recommended_sensors": "list[object]", 
+                            "thresholds": "object",
+                            "excluded": "list[str]",
+                            "rationale": "str"
+                        }
+                    }
+                }
+            }
+        ]
+    },
+
+    # digital_twin_agent returns sensor design
+    {
+        "role": "tool",
+        "tool_call_id": "call_dt_design_001", 
+        "name": "digital_twin_agent",
         "content": (
-            "<think>На основе интервью можно сформировать итоговую конфигурацию датчиков и записать её в БД.</think>\n"
-            "<tool_call>\n"
-            "{\n"
-            "  \"name\": \"database_agent\",\n"
-            "  \"arguments\": {\n"
-            "    \"conversation_id\": \"conv_001\",\n"
-            "    \"interview_result\": \"Итоговая конфигурация системы датчиков для линии розлива лимонада: "
-            "1) Температура продукта: 2× PT100 в гигиеническом исполнении (после пастеризатора и перед наливом), "
-            "рабочая зона 6–8 °C, предупреждение >8 °C, авария ≥12 °C. "
-            "2) Давление перед наливом: PPT-100 0–10 бар, рабочий диапазон 3–4 бар, максимум 6 бар, предупреждение >5.5 бар, "
-            "авария ≥6 бар или резкий скачок. "
-            "3) Состояние привода конвейера: вибродатчик VIBRO-M8 (0–50 мм/с RMS, 10–1000 Гц, -20…+80 °C, IP67) на редуктор + энкодер на вал привода. "
-            "4) Датчик влажности в цеху: не устанавливается, практической пользы не даёт.\"\n"
-            "  }\n"
-            "}\n"
-            "</tool_call>"
+            '{"recommended_sensors":['
+            '{"name":"PT100_RTD_food","qty":2,"locations":["after_pasteurizer","before_filler"],'
+            '"thresholds":{"warn":8,"alarm":12},"notes":"гигиенич.исп.,3A/SS304"},'
+            '{"name":"PPT-100_pressure","qty":1,"range":"0-10bar","location":"before_filler",'
+            '"thresholds":{"normal":[3,4],"warn":5.5,"alarm":6},"notes":"4-20mA,IP67"},'
+            '{"name":"VIBRO-M8_vibration","qty":1,"location":"gearbox","range":"0-50mm/s","notes":"RMS 10-1000Hz"},'
+            '{"name":"Encoder_Incremental","qty":1,"location":"drive_shaft","notes":"speed+jamming detection"}'
+            '],'
+            '"thresholds":{"vibration_warn":25,"vibration_alarm":40},'
+            '"excluded":["shop_humidity"],"'
+            '"rationale":"Влажность не коррелирует с отказами. Вибрация+энкодер лучше отличает механику от клина бутылок."}'
         )
     },
-    {
-        "role": "user",
-        "content": "Загрузил PDF на VIBRO-M8 в систему, можешь смотреть."
-    },
+
+    # Orchestrator → save to database
     {
         "role": "assistant",
+        "tool_calls": [
+            {
+                "id": "call_db_save_001",
+                "type": "function",
+                "function": {
+                    "name": "database_agent",
+                    "arguments": {
+                        "conversation_id": "conv_001",
+                        "artifact_type": "sensor_configuration", 
+                        "payload": {
+                            "recommended_sensors": [
+                                {"name":"PT100_RTD_food","qty":2,"locations":["after_pasteurizer","before_filler"]},
+                                {"name":"PPT-100_pressure","qty":1,"range":"0-10bar"},
+                                {"name":"VIBRO-M8_vibration","qty":1,"location":"gearbox"},
+                                {"name":"Encoder_Incremental","qty":1,"location":"drive_shaft"}
+                            ],
+                            "thresholds": {
+                                "temp_warn_C": 8,
+                                "temp_alarm_C": 12, 
+                                "pressure_warn_bar": 5.5,
+                                "pressure_alarm_bar": 6,
+                                "vibration_warn_mms": 25
+                            }
+                        }
+                    }
+                }
+            }
+        ]
+    },
+
+    # database_agent confirms save
+    {
+        "role": "tool", 
+        "tool_call_id": "call_db_save_001",
+        "name": "database_agent",
+        "content": '{"status":"success","saved_as":"sensor_config_conv_001","keys":["sensors","thresholds"]}'
+    },
+
+    # Orchestrator → generate final UX response
+    {
+        "role": "assistant",
+        "tool_calls": [
+            {
+                "id": "call_ui_final_001",
+                "type": "function",
+                "function": {
+                    "name": "user_interaction_agent",
+                    "arguments": {
+                        "mode": "generate_response",
+                        "artifacts": {
+                            "sensor_config": "4 датчика сохранены: 2×PT100, PPT-100 давление, VIBRO-M8 вибрация, энкодер",
+                            "thresholds": "temp>8warn/>12alarm, pressure>5.5warn/>6alarm",
+                            "excluded": "влажность цеха",
+                            "status": "saved_to_db"
+                        },
+                        "conversation_summary": "линия розлива лимонада, ключевые сигналы спроектированы и сохранены",
+                        "next_steps": [
+                            "уточнить CIP/SIP требования", 
+                            "зоны установки (мокрая/сухая)",
+                            "интеграция с PLC/SCADA"
+                        ],
+                        "tone": "consultative_friendly"
+                    }
+                }
+            }
+        ]
+    },
+
+    # user_interaction_agent → perfect UX response
+    {
+        "role": "tool",
+        "tool_call_id": "call_ui_final_001",
+        "name": "user_interaction_agent",
         "content": (
-            "<think>"
-            "Пользователь загрузил PDF на вибродатчик VIBRO-M8. "
-            "Из мануала я уже знаю допустимые диапазоны вибрации и условия эксплуатации. "
-            "Сейчас важно сохранить в БД структуру текущих технологических показателей, "
-            "чтобы на них опираться в дальнейшей автоматизации. "
-            "Пользователь не передал явный JSON, поэтому я сам сформирую структурированный объект "
-            "measurements_json с полями, которые нужны для линии розлива: "
-            "температура после пастеризатора, температура перед наливом, давление перед наливом, "
-            "ток двигателя конвейера и вибрация по VIBRO-M8. "
-            "Конкретные значения могут быть заполнены позже системой сбора данных, "
-            "но схема и ключи должны быть зафиксированы уже сейчас. "
-            "Поэтому нужно вызвать database_agent и передать ему эту структуру."
-            "</think>\n"
-            "<tool_call>\n"
-            "{\n"
-            "  \"name\": \"database_agent\",\n"
-            "  \"arguments\": {\n"
-            "    \"conversation_id\": \"conv_001\",\n"
-            "    \"interview_result\": \"Структура измерений для линии розлива лимонада после анализа PDF VIBRO-M8.\",\n"
-            "    \"measurements_json\": {\n"
-            "      \"product_temp_after_pasteurizer\": null,\n"
-            "      \"product_temp_before_filler\": null,\n"
-            "      \"line_pressure_before_filler\": null,\n"
-            "      \"conveyor_motor_current\": null,\n"
-            "      \"conveyor_vibration_VIBRO_M8\": null\n"
-            "    }\n"
-            "  }\n"
-            "}\n"
-            "</tool_call>"
+            "✅ **Конфигурация датчиков для линии розлива** (сохранена в БД conv_001):\n\n"
+            "**📊 Нужны (4 датчика):**\n"
+            "• **Температура продукта**: 2× PT100 (гигиенич.исп.) — после пастеризатора + перед наливом\n"
+            "  *⚠️ >8°C предупреждение, 🚨 ≥12°C авария*\n"
+            "• **Давление перед наливом**: PPT-100 (0-10 бар)\n"
+            "  *⚠️ >5.5 бар предупреждение, 🚨 ≥6 бар авария*\n" 
+            "• **Конвейер**: VIBRO-M8 вибрация (редуктор) + энкодер скорости (вал)\n"
+            "  *Разделяет клин бутылок от механических проблем*\n\n"
+            "**❌ Лишнее**: датчик влажности цеха (не влияет на отказы)\n\n"
+            "**🔧 Следующие шаги?**\n"
+            "1. CIP/мойки есть? (для выбора материалов)\n"
+            "2. Мокрая/сухая зона установки?\n"
+            "3. Интеграция с PLC (Modbus/Profibus/EthernetIP)?"
         )
+    },
+
+    # Orchestrator → echoes final response to user
+    {
+        "role": "assistant",
+        "content": "✅ **Конфигурация датчиков для линии розлива** (сохранена в БД conv_001):\n\n**📊 Нужны (4 датчика):**\n• **Температура продукта**: 2× PT100 (гигиенич.исп.) — после пастеризатора + перед наливом\n  *⚠️ >8°C предупреждение, 🚨 ≥12°C авария*\n• **Давление перед наливом**: PPT-100 (0-10 бар)\n  *⚠️ >5.5 бар предупреждение, 🚨 ≥6 бар авария*\n• **Конвейер**: VIBRO-M8 вибрация (редуктор) + энкодер скорости (вал)\n  *Разделяет клин бутылок от механических проблем*\n\n**❌ Лишнее**: датчик влажности цеха (не влияет на отказы)\n\n**🔧 Следующие шаги?**\n1. CIP/мойки есть? (для выбора материалов)\n2. Мокрая/сухая зона установки?\n3. Интеграция с PLC (Modbus/Profibus/EthernetIP)?"
     }
 ]
+
 
 
 class OrchestratorAgent(BaseAgent):
