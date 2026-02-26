@@ -10,19 +10,15 @@ import time
 import re
 from typing import Dict, Any, Optional, List, Tuple
 
-# Заглушки для отложенного импорта (избегаем циклических зависимостей)
-# from transformers import AutoModelForCausalLM, AutoTokenizer
-# from cores.sensor_manager import SensorManager
-
 # --- Описание инструментов в формате JSON Schema (как ожидает Nemotron-Orchestrator-8B) ---
 ORCHESTRATOR_TOOLS_JSON = [
     {
         "name": "user_interaction",
         "description": "Проведение интервью с пользователем о производстве. Направляет сообщение агенту взаимодействия.",
         "parameters": {
-            "type": "object", 
+            "type": "object",
             "properties": {
-                "conversation_id": {"type": "string"}, 
+                "conversation_id": {"type": "string"},
                 "user_message": {"type": "string"}
             },
             "required": ["conversation_id"]
@@ -32,9 +28,9 @@ ORCHESTRATOR_TOOLS_JSON = [
         "name": "database_agent",
         "description": "Генерация схемы БД по результатам интервью.",
         "parameters": {
-            "type": "object", 
+            "type": "object",
             "properties": {
-                "conversation_id": {"type": "string"}, 
+                "conversation_id": {"type": "string"},
                 "interview_result": {"type": "string"}
             },
             "required": ["conversation_id", "interview_result"]
@@ -44,9 +40,9 @@ ORCHESTRATOR_TOOLS_JSON = [
         "name": "digital_twin_agent",
         "description": "Конфигурация цифрового двойника.",
         "parameters": {
-            "type": "object", 
+            "type": "object",
             "properties": {
-                "requirements": {"type": "string"}, 
+                "requirements": {"type": "string"},
                 "db_schema": {"type": "string"}
             },
             "required": ["requirements", "db_schema"]
@@ -56,11 +52,11 @@ ORCHESTRATOR_TOOLS_JSON = [
         "name": "ipcamera_gige",
         "description": "Работа с камерой GigE Vision (запуск, остановка, поиск).",
         "parameters": {
-            "type": "object", 
+            "type": "object",
             "properties": {
-                "action": {"type": "string", "enum": ["start_stream", "stop_stream", "discovery"]}, 
-                "camera_ip": {"type": "string"}, 
-                "my_ip": {"type": "string"}, 
+                "action": {"type": "string", "enum": ["start_stream", "stop_stream", "discovery"]},
+                "camera_ip": {"type": "string"},
+                "my_ip": {"type": "string"},
                 "streaming_port": {"type": "integer"}
             },
             "required": ["action", "camera_ip"]
@@ -70,9 +66,9 @@ ORCHESTRATOR_TOOLS_JSON = [
         "name": "ipcamera_rtsp",
         "description": "Работа с RTSP-камерой.",
         "parameters": {
-            "type": "object", 
+            "type": "object",
             "properties": {
-                "action": {"type": "string", "enum": ["connect", "disconnect"]}, 
+                "action": {"type": "string", "enum": ["connect", "disconnect"]},
                 "rtsp_url": {"type": "string"}
             },
             "required": ["action", "rtsp_url"]
@@ -82,7 +78,7 @@ ORCHESTRATOR_TOOLS_JSON = [
         "name": "sensor_manager",
         "description": "Получение текущих или исторических данных с датчиков (температура, вибрация, давление и т.д.).",
         "parameters": {
-            "type": "object", 
+            "type": "object",
             "properties": {
                 "action": {"type": "string", "enum": ["get_data", "get_last"]}
             },
@@ -93,12 +89,106 @@ ORCHESTRATOR_TOOLS_JSON = [
         "name": "finish",
         "description": "Используй этот инструмент для завершения цепочки рассуждений и возврата итогового ответа.",
         "parameters": {
-            "type": "object", 
+            "type": "object",
             "properties": {
-                "result": {"type": "string", "description": "Итоговый ответ или вердикт для пользователя"}
+                "result": {
+                    "type": "string",
+                    "description": "Итоговый ответ или вердикт для пользователя ИЛИ высоко-структурированное действие/план в формате JSON."
+                }
             },
             "required": ["result"]
         }
+    }
+]
+
+# --- few-shot для Nemotron-Orchestrator-8B (CoT + tool_call JSON) ---
+
+FEWSHOT_DIALOG = [
+    {
+        "role": "user",
+        "content": (
+            "У нас автоматическая линия розлива и укупорки бутылок с лимонадом. "
+            "Хочу настроить систему датчиков, чтобы отслеживать: температуру продукта, давление в трубопроводе "
+            "перед наливом и состояние привода конвейера. Пока думаю поставить датчики температуры, давления и "
+            "влажности в цеху. Подскажи, какие датчики нужны и что лишнее."
+        )
+    },
+    {
+        "role": "assistant",
+        "content": (
+            "<think>Сначала нужно провести короткое интервью, чтобы понять реальные режимы и отговорить от лишних датчиков.</think>\n"
+            "Понял. Сначала уточню процесс, чтобы не ставить лишние датчики. "
+            "1) В каком диапазоне температура продукта до и после пастеризатора? "
+            "2) Есть ли реальные проблемы, связанные с влажностью воздуха, или это просто идея \"на всякий случай\"? "
+            "3) Как сейчас контролируете состояние привода конвейера — только по току двигателя или есть уже какие-то датчики вибрации/скорости?"
+        )
+    },
+    {
+        "role": "user",
+        "content": (
+            "Температура после пастеризатора обычно 6–8 °C, выше 12 °C уже плохо. "
+            "Влажность воздуха не создаёт проблем, просто думал, что полезно её видеть. "
+            "Состояние привода конвейера пока контролируем только по току двигателя, иногда конвейер клинит из-за заклинивших бутылок."
+        )
+    },
+    {
+        "role": "assistant",
+        "content": (
+            "<think>На основе интервью можно сформировать итоговую конфигурацию датчиков и записать её в БД.</think>\n"
+            "<tool_call>\n"
+            "{\n"
+            "  \"name\": \"database_agent\",\n"
+            "  \"arguments\": {\n"
+            "    \"conversation_id\": \"conv_001\",\n"
+            "    \"interview_result\": \"Итоговая конфигурация системы датчиков для линии розлива лимонада: "
+            "1) Температура продукта: 2× PT100 в гигиеническом исполнении (после пастеризатора и перед наливом), "
+            "рабочая зона 6–8 °C, предупреждение >8 °C, авария ≥12 °C. "
+            "2) Давление перед наливом: PPT-100 0–10 бар, рабочий диапазон 3–4 бар, максимум 6 бар, предупреждение >5.5 бар, "
+            "авария ≥6 бар или резкий скачок. "
+            "3) Состояние привода конвейера: вибродатчик VIBRO-M8 (0–50 мм/с RMS, 10–1000 Гц, -20…+80 °C, IP67) на редуктор + энкодер на вал привода. "
+            "4) Датчик влажности в цеху: не устанавливается, практической пользы не даёт.\"\n"
+            "  }\n"
+            "}\n"
+            "</tool_call>"
+        )
+    },
+    {
+        "role": "user",
+        "content": "Загрузил PDF на VIBRO-M8 в систему, можешь смотреть."
+    },
+    {
+        "role": "assistant",
+        "content": (
+            "<think>"
+            "Пользователь загрузил PDF на вибродатчик VIBRO-M8. "
+            "Из мануала я уже знаю допустимые диапазоны вибрации и условия эксплуатации. "
+            "Сейчас важно сохранить в БД структуру текущих технологических показателей, "
+            "чтобы на них опираться в дальнейшей автоматизации. "
+            "Пользователь не передал явный JSON, поэтому я сам сформирую структурированный объект "
+            "measurements_json с полями, которые нужны для линии розлива: "
+            "температура после пастеризатора, температура перед наливом, давление перед наливом, "
+            "ток двигателя конвейера и вибрация по VIBRO-M8. "
+            "Конкретные значения могут быть заполнены позже системой сбора данных, "
+            "но схема и ключи должны быть зафиксированы уже сейчас. "
+            "Поэтому нужно вызвать database_agent и передать ему эту структуру."
+            "</think>\n"
+            "<tool_call>\n"
+            "{\n"
+            "  \"name\": \"database_agent\",\n"
+            "  \"arguments\": {\n"
+            "    \"conversation_id\": \"conv_001\",\n"
+            "    \"interview_result\": \"Структура измерений для линии розлива лимонада после анализа PDF VIBRO-M8.\",\n"
+            "    \"measurements_json\": {\n"
+            "      \"product_temp_after_pasteurizer\": null,\n"
+            "      \"product_temp_before_filler\": null,\n"
+            "      \"line_pressure_before_filler\": null,\n"
+            "      \"conveyor_motor_current\": null,\n"
+            "      \"conveyor_vibration_VIBRO_M8\": null\n"
+            "    }\n"
+            "  }\n"
+            "}\n"
+            "</tool_call>"
+        )
     }
 ]
 
@@ -106,7 +196,7 @@ ORCHESTRATOR_TOOLS_JSON = [
 class OrchestratorAgent(BaseAgent):
     """
     Мета-агент: маршрутизирует высокоуровневые запросы между профильными агентами.
-    Использует строгие XML-теги и JSON схемы для управления LLM.
+    Использует строгие XML-теги и JSON схемы для управления LLM (Nemotron-Orchestrator-8B).
     """
 
     ORCHESTRATOR_AGENT_ID = 0  # Центральная точка входа
@@ -115,7 +205,7 @@ class OrchestratorAgent(BaseAgent):
         self,
         agent_id: int = 0,
         api_url: str = "http://localhost:8000",
-        model_name: str = "nvidia/Nemotron-Orchestrator-8B", 
+        model_name: str = "nvidia/Nemotron-Orchestrator-8B",
         max_tool_steps: int = 10,
         use_sensor_manager: bool = False,
     ):
@@ -130,7 +220,6 @@ class OrchestratorAgent(BaseAgent):
         self._sensor_manager: Optional[Any] = None
         self.use_sensor_manager = use_sensor_manager
 
-        # Подключение сенсоров для Online RL (reward)
         if use_sensor_manager:
             self._init_sensor_manager()
 
@@ -168,101 +257,143 @@ class OrchestratorAgent(BaseAgent):
         sensor_readings: Optional[Dict] = None,
         task_params: Optional[Dict] = None,
     ) -> str:
-        """Собирает состояние в формате ChatML + XML, который ожидает Nemotron-Orchestrator-8B."""
-        
+        """
+        Собирает состояние в формате ChatML + XML, который ожидает Nemotron-Orchestrator-8B:
+        - добавляет описание tools;
+        - вшивает few-shot диалог;
+        - даёт инструкцию думать в <think> и эмитить JSON tool_call.
+        """
+
+        tools_json = json.dumps(ORCHESTRATOR_TOOLS_JSON, ensure_ascii=False, indent=2)
+
         system_prompt = (
             "You are an expert orchestrator agent managing a factory Digital Twin.\n"
             "You may call one or more functions to assist with the user query.\n\n"
             "You are provided with function signatures within <tools></tools> XML tags:\n"
             "<tools>\n"
-            f"{json.dumps(ORCHESTRATOR_TOOLS_JSON, ensure_ascii=False, indent=2)}\n"
+            f"{tools_json}\n"
             "</tools>\n\n"
             "For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n"
             "<tool_call>\n"
-            '{"name": "<function-name>", "arguments": <args-json-object>}\n'
-            "</tool_call>\n"
+            "{\"name\": \"<function-name>\", \"arguments\": <args-json-object>}\n"
+            "</tool_call>\n\n"
+            "Always first think through the problem and plan the sequence of tool calls inside <think>...</think> tags.\n"
+            "Then output one or more <tool_call> blocks with strict JSON (no extra text before or after the JSON object inside the tag).\n"
+            "If you want to return a final, highly structured action plan, call the \"finish\" tool with a JSON object in the \"result\" field.\n"
         )
 
         prompt = f"<|im_start|>system\n{system_prompt}<|im_end|>\n"
-        
-        # История диалога
+
+        # few-shot диалог
+        for m in FEWSHOT_DIALOG:
+            role = m["role"]
+            content = m["content"]
+            prompt += f"<|im_start|>{role}\n{content}<|im_end|>\n"
+
+        # История реального диалога
         if messages:
             for m in messages[-10:]:
                 role = m.get("role", "user")
                 content = m.get("content", "")
                 prompt += f"<|im_start|>{role}\n{content}<|im_end|>\n"
-        
-        # Текущий запрос и состояние сенсоров
-        current_context = f"Текущие показания датчиков: {json.dumps(sensor_readings, ensure_ascii=False) if sensor_readings else 'Нет данных'}\n"
-        current_context += f"Запрос пользователя: {task_params.get('request', '')}"
-        
+
+        # Текущий запрос + сенсоры
+        current_context = (
+            f"Текущие показания датчиков: "
+            f"{json.dumps(sensor_readings, ensure_ascii=False) if sensor_readings else 'Нет данных'}\n"
+            f"Запрос пользователя: {task_params.get('request', '') if task_params else ''}"
+        )
+
         prompt += f"<|im_start|>user\n{current_context}<|im_end|>\n<|im_start|>assistant\n"
         return prompt
 
     def _generate(self, prompt: str) -> str:
-        """Заглушка для инференса модели. Заменить на реальный model.generate()"""
+        """
+        Заглушка для инференса модели.
+        Ожидается, что Nemotron-Orchestrator-8B вернет:
+        <think>...</think>
+        <tool_call>{...}</tool_call>
+        [<tool_call>{...}</tool_call> ...]
+        """
         # Здесь должен быть реальный вызов LLM:
         # inputs = self._tokenizer(prompt, return_tensors="pt").to(self._model.device)
         # outputs = self._model.generate(**inputs, max_new_tokens=512)
         # return self._tokenizer.decode(outputs[0][inputs.input_ids.shape[-1]:])
-        
-        # Симуляция ответа модели для тестирования пайплайна
-        return '<think>Мне нужно запросить профильного агента для ответа.</think>\n<tool_call>{"name": "finish", "arguments": {"result": "Система перенаправила ваш запрос."}}</tool_call>'
 
-    def _parse_tool_call(self, raw_output: str) -> Optional[Dict[str, Any]]:
-        """Парсит JSON-вызов инструмента из XML-тега <tool_call>, извлекая рассуждения из <think>."""
+        # Симуляция ответа модели для тестирования пайплайна
+        return (
+            "<think>Мне нужно записать конфигурацию в БД и затем вернуть automation pipeline.</think>\n"
+            "<tool_call>{\"name\": \"database_agent\", \"arguments\": {\"conversation_id\": \"conv_123\", \"interview_result\": \"...\"}}</tool_call>\n"
+            "<tool_call>{\"name\": \"finish\", \"arguments\": {\"result\": {\"type\": \"automation_pipeline\", \"steps\": []}}}</tool_call>"
+        )
+
+    # --- парсер JSON tool_call из ответа модели ---
+
+    TOOL_CALL_RE = re.compile(
+        r"<tool_call>\s*(\{.*?\})\s*</tool_call>",
+        re.DOTALL
+    )
+
+    def _parse_tool_calls(self, raw_output: str) -> Tuple[str, List[Dict[str, Any]]]:
+        """
+        Возвращает:
+        - reasoning (строка из <think>...</think>);
+        - список tool_call (dict с полями name, arguments).
+        """
         think_match = re.search(r"<think>(.*?)</think>", raw_output, re.DOTALL)
         reasoning = think_match.group(1).strip() if think_match else ""
 
-        call_match = re.search(r"<tool_call>\s*({.*?})\s*</tool_call>", raw_output, re.DOTALL)
-        if not call_match:
-            return None
-            
-        try:
-            call_data = json.loads(call_match.group(1))
-            return {
-                "tool": call_data.get("name"),
-                "args": call_data.get("arguments", {}),
-                "reasoning": reasoning
-            }
-        except json.JSONDecodeError:
-            self.log("Failed to parse tool call JSON", "error")
-            return None
+        calls: List[Dict[str, Any]] = []
+        for match in self.TOOL_CALL_RE.finditer(raw_output):
+            raw_json = match.group(1)
+            try:
+                data = json.loads(raw_json)
+                if isinstance(data, dict) and "name" in data and "arguments" in data:
+                    calls.append(data)
+            except json.JSONDecodeError:
+                self.log(f"Failed to parse tool_call JSON: {raw_json}", "warning")
 
-    def _execute_tool(self, tool_call: Dict[str, Any], context: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-        """Выполняет вызов инструмента. Возвращает (result_text_для_модели, metadata_для_reward)."""
-        tool = tool_call.get("tool", "").strip()
-        args = tool_call.get("args", {})
-        metadata = {"tool": tool, "latency_ms": 0, "success": False}
+        return reasoning, calls
+
+    def _execute_tool(self, tool_call: Dict[str, Any], reasoning: str, context: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+        """
+        Выполняет один вызов инструмента. Возвращает:
+        - result_text для модели (для <tool_response>);
+        - metadata для reward (latency, success и т.п.).
+        """
+        tool_name = tool_call.get("name", "").strip()
+        args = tool_call.get("arguments", {})
+        metadata = {"tool": tool_name, "latency_ms": 0, "success": False, "reasoning": reasoning}
 
         t0 = time.perf_counter()
         result = ""
 
-        if tool == "finish":
+        if tool_name == "finish":
+            # Интерпретируем result как строку или JSON.
             result = args.get("result", "Готово.")
             metadata["success"] = True
 
-        elif tool == "user_interaction":
-            result = "[stub] user_interaction: делегировано агенту 1"
+        elif tool_name == "user_interaction":
+            result = "[stub] user_interaction: делегировано агенту взаимодействия"
             metadata["success"] = True
 
-        elif tool == "database_agent":
-            result = "[stub] database_agent: делегировано агенту 2"
+        elif tool_name == "database_agent":
+            result = "[stub] database_agent: делегировано агенту БД"
             metadata["success"] = True
 
-        elif tool == "digital_twin_agent":
-            result = "[stub] digital_twin_agent: конфигурация сгенерирована"
+        elif tool_name == "digital_twin_agent":
+            result = "[stub] digital_twin_agent: конфигурация цифрового двойника сгенерирована"
             metadata["success"] = True
 
-        elif tool == "ipcamera_gige":
+        elif tool_name == "ipcamera_gige":
             result = "[stub] ipcamera_gige: действие выполнено"
             metadata["success"] = True
 
-        elif tool == "ipcamera_rtsp":
-            result = "[stub] ipcamera_rtsp: действие не выполнено"
+        elif tool_name == "ipcamera_rtsp":
+            result = "[stub] ipcamera_rtsp: действие не выполнено (заглушка)"
             metadata["success"] = False
 
-        elif tool == "sensor_manager":
+        elif tool_name == "sensor_manager":
             if self._sensor_manager:
                 data = self._sensor_manager.get_data()
                 result = json.dumps(data, ensure_ascii=False) if data else "{}"
@@ -271,7 +402,7 @@ class OrchestratorAgent(BaseAgent):
                 result = "Ошибка: SensorManager недоступен"
                 metadata["success"] = False
         else:
-            result = f"Ошибка: Неизвестный инструмент {tool}"
+            result = f"Ошибка: Неизвестный инструмент {tool_name}"
 
         metadata["latency_ms"] = (time.perf_counter() - t0) * 1000
         return result, metadata
@@ -308,21 +439,21 @@ class OrchestratorAgent(BaseAgent):
         context: Optional[Dict] = None,
     ) -> Dict[str, Any]:
         """
-        Цикл оркестратора: принимает запрос, генерирует действия, выполняет их,
-        кормит результаты обратно в модель, пока не будет вызван 'finish'.
+        Цикл оркестратора: принимает запрос, генерирует JSON tool_call через CoT,
+        выполняет их, кормит результаты обратно в модель, пока не будет вызван 'finish'.
         """
         self._step_count = 0
         self._llm_call_count = 0
-        steps = []
+        steps: List[Dict[str, Any]] = []
         context = context or {}
-        
+
         sensor_readings = None
         if self._sensor_manager:
             raw_readings = self._sensor_manager.get_data()
             if raw_readings:
                 sensor_readings = raw_readings.get("sensor_data", {})
 
-        # 1. Формируем стартовый промпт
+        # Стартовый промпт
         prompt = self._build_state(
             conversation_id=conversation_id,
             messages=context.get("messages", []),
@@ -332,36 +463,55 @@ class OrchestratorAgent(BaseAgent):
 
         self._load_model()
 
-        # 2. Основной цикл выполнения (Loop)
+        final_result = ""
+        finished = False
+
         for _ in range(self.max_tool_steps):
             raw_output = self._generate(prompt)
             self._llm_call_count += 1
-            
-            # Добавляем ответ модели в контекст
-            prompt += f"{raw_output}<|im_end|>\n"
-            
-            tool_call = self._parse_tool_call(raw_output)
-            
-            if not tool_call:
-                # Если модель не сгенерировала валидный инструмент, прерываем цикл
-                steps.append({"tool": "none", "result_preview": raw_output})
-                break
-                
-            if tool_call.get("tool") == "finish":
-                steps.append({"tool": "finish", "result": tool_call.get("args", {}).get("result", "")})
+
+            # парсим CoT + tool_call
+            reasoning, tool_calls = self._parse_tool_calls(raw_output)
+
+            if not tool_calls:
+                steps.append({"tool": "none", "result_preview": raw_output, "reasoning": reasoning})
                 break
 
-            # Выполняем запрошенный инструмент
-            result, meta = self._execute_tool(tool_call, context)
-            steps.append({**meta, "reasoning": tool_call.get("reasoning", ""), "result_preview": str(result)[:200]})
+            # каждый tool_call — отдельный шаг
+            for tc in tool_calls:
+                tool_name = tc.get("name")
+                if tool_name == "finish":
+                    # finish не исполняем как внешний API, просто фиксируем результат и выходим
+                    final_result = tc.get("arguments", {}).get("result", "")
+                    steps.append(
+                        {
+                            "tool": "finish",
+                            "reasoning": reasoning,
+                            "result": final_result,
+                            "success": True,
+                        }
+                    )
+                    finished = True
+                    break
 
-            # Возвращаем результат выполнения модели через специальный тег <tool_response>
-            prompt += f"<tool_response>\n{result}\n</tool_response>\n<|im_start|>assistant\n"
+                result_text, meta = self._execute_tool(tc, reasoning, context)
+                steps.append({**meta, "result_preview": str(result_text)[:200]})
 
-        reward = self.compute_reward(steps, sensor_readings, outcome_success=(len(steps) > 0 and steps[-1].get("tool") == "finish"))
+                # возвращаем результат инструмента в модель в виде <tool_response>
+                prompt += f"{raw_output}<|im_end|>\n"
+                prompt += f"<|im_start|>user\n<tool_response>\n{result_text}\n</tool_response>\n<|im_end|>\n<|im_start|>assistant\n"
+
+            if finished:
+                break
+
+        reward = self.compute_reward(
+            steps,
+            sensor_sim_vs_real=sensor_readings,
+            outcome_success=finished,
+        )
 
         return {
-            "result": steps[-1].get("result", steps[-1].get("result_preview", "")) if steps else "",
+            "result": final_result or (steps[-1].get("result", steps[-1].get("result_preview", "")) if steps else ""),
             "steps": steps,
             "reward": reward,
             "llm_calls": self._llm_call_count,
@@ -378,6 +528,7 @@ class OrchestratorAgent(BaseAgent):
             context=params,
         )
         return json.dumps(out, ensure_ascii=False, indent=2)
+
 
 def main():
     import argparse
@@ -406,6 +557,7 @@ def main():
     signal.signal(signal.SIGINT, on_signal)
     signal.signal(signal.SIGTERM, on_signal)
     agent.run(interval=args.poll_interval)
+
 
 if __name__ == "__main__":
     main()
