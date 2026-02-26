@@ -26,7 +26,7 @@ ORCHESTRATOR_TOOLS_JSON = [
     },
     {
         "name": "database_agent",
-        "description": "Генерация схемы БД по результатам интервью.",
+        "description": "Генерация схемы БД по результатам интервью и применение её к БД (CREATE TABLE, INSERT в devices/sensors). Вызывай, когда есть готовый результат интервью или артефакт для сохранения в БД. Возвращает статус и сгенерированный SQL.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -108,15 +108,18 @@ FEWSHOT_DIALOG = [
         "role": "system",
         "content": (
             "Ты orchestrator_agent. Твоя задача:\n"
-            "1. Решать, каких агентов вызывать (user_interaction_agent, digital_twin_agent, database_agent)\n"
-            "2. Передавать им структурированный контекст в аргументах\n"
-            "3. Собирать результаты и выдавать пользователю только через user_interaction_agent\n\n"
+            "1. Решать, каких инструментов вызывать: user_interaction, database_agent, digital_twin_agent\n"
+            "2. Передавать аргументы строго по сигнатурам:\n"
+            "   - user_interaction: conversation_id (обязательно), user_message (опционально, строка)\n"
+            "   - database_agent: conversation_id, interview_result (обязательно). Генерирует SQL-схему по результатам интервью и применяет её к БД (таблицы devices, sensors и данные).\n"
+            "   - digital_twin_agent: requirements, db_schema (обязательно, обе строки — JSON или текст)\n"
+            "3. Собирать результаты и выдавать пользователю через user_interaction (передай user_message с текстом ответа)\n\n"
             "ЛОГИКА:\n"
-            "- Нужны уточнения → user_interaction_agent(mode='interview')\n"
-            "- Есть данные для проектирования → digital_twin_agent(task='design')\n"
-            "- Есть артефакт для сохранения → database_agent\n"
-            "- Готов финальный ответ → user_interaction_agent(mode='generate_response')\n\n"
-            "НЕ генерируй текст для пользователя напрямую. Только tool calls."
+            "- Нужны уточнения или ответ пользователю → user_interaction(conversation_id, user_message)\n"
+            "- Есть данные для проектирования ДТ → digital_twin_agent(requirements=..., db_schema=...)\n"
+            "- Есть результат интервью или артефакт для сохранения в БД → database_agent(conversation_id, interview_result=...). Одна тула и генерирует схему, и применяет её к БД.\n"
+            "- Готов финальный ответ → finish(result=...)\n\n"
+            "НЕ генерируй текст для пользователя напрямую. Только tool calls с правильными именами и аргументами."
         )
     },
 
@@ -133,7 +136,7 @@ FEWSHOT_DIALOG = [
         )
     },
 
-    # Orchestrator → interview needed
+    # Orchestrator → interview needed (user_interaction: conversation_id + user_message)
     {
         "role": "assistant", 
         "tool_calls": [
@@ -141,35 +144,21 @@ FEWSHOT_DIALOG = [
                 "id": "call_ui_interview_001",
                 "type": "function",
                 "function": {
-                    "name": "user_interaction_agent",
+                    "name": "user_interaction",
                     "arguments": {
-                        "mode": "requirements_interview",
-                        "user_message": "линия розлива лимонада, датчики: temp продукта, давление перед наливом, конвейер, влажность цеха (?лишнее)",
-                        "known_context": {
-                            "domain": "пищевая промышленность/линия розлива",
-                            "requested_signals": [
-                                "температура продукта",
-                                "давление перед наливом", 
-                                "состояние привода конвейера"
-                            ],
-                            "candidate_extra": ["влажность в цеху"]
-                        },
-                        "output_schema": {
-                            "questions": "list[str]", 
-                            "assumptions": "list[str]",
-                            "missing_slots": "list[str]"
-                        }
+                        "conversation_id": "conv_001",
+                        "user_message": "линия розлива лимонада, датчики: temp продукта, давление перед наливом, конвейер, влажность цеха (?лишнее). Нужны уточняющие вопросы для подбора датчиков."
                     }
                 }
             }
         ]
     },
     
-    # user_interaction_agent returns interview plan
+    # user_interaction returns interview plan
     {
         "role": "tool",
         "tool_call_id": "call_ui_interview_001",
-        "name": "user_interaction_agent", 
+        "name": "user_interaction", 
         "content": (
             '{"questions":['
             '"В каком диапазоне температура продукта после пастеризатора/охладителя и перед наливом? Какие пороги \"плохо/авария\"?",'
@@ -207,7 +196,7 @@ FEWSHOT_DIALOG = [
         )
     },
 
-    # Orchestrator → enough data → digital_twin_agent
+    # Orchestrator → enough data → digital_twin_agent(requirements, db_schema)
     {
         "role": "assistant",
         "tool_calls": [
@@ -217,24 +206,8 @@ FEWSHOT_DIALOG = [
                 "function": {
                     "name": "digital_twin_agent",
                     "arguments": {
-                        "task": "design_sensor_configuration",
-                        "process_context": {
-                            "product": "лимонад", 
-                            "line_stage": "розлив_укупорка",
-                            "signals": {
-                                "product_temp": {"after_pasteurizer": "6-8°C", "alarm": ">12°C"},
-                                "filler_pressure": {"normal": "3-4 бар", "spikes": "5-6 бар"},
-                                "conveyor_drive": {"monitoring": "motor_current", "failure": "jamming"}
-                            },
-                            "environment": {"humidity_relevant": false}
-                        },
-                        "constraints": ["food_grade", "IP67+"],
-                        "output_schema": {
-                            "recommended_sensors": "list[object]", 
-                            "thresholds": "object",
-                            "excluded": "list[str]",
-                            "rationale": "str"
-                        }
+                        "requirements": "{\"product\": \"лимонад\", \"line_stage\": \"розлив_укупорка\", \"signals\": {\"product_temp\": {\"after_pasteurizer\": \"6-8°C\", \"alarm\": \">12°C\"}, \"filler_pressure\": {\"normal\": \"3-4 бар\", \"spikes\": \"5-6 бар\"}, \"conveyor_drive\": {\"monitoring\": \"motor_current\", \"failure\": \"jamming\"}}, \"environment\": {\"humidity_relevant\": false}, \"constraints\": [\"food_grade\", \"IP67+\"]}",
+                        "db_schema": "{\"tables\": [{\"name\": \"sensors\", \"columns\": [\"id\", \"name\", \"location\", \"thresholds\"]}, {\"name\": \"process_params\", \"columns\": [\"key\", \"value\"]}]}"
                     }
                 }
             }
@@ -261,7 +234,7 @@ FEWSHOT_DIALOG = [
         )
     },
 
-    # Orchestrator → save to database
+    # Orchestrator → save to database (database_agent: conversation_id + interview_result)
     {
         "role": "assistant",
         "tool_calls": [
@@ -272,22 +245,7 @@ FEWSHOT_DIALOG = [
                     "name": "database_agent",
                     "arguments": {
                         "conversation_id": "conv_001",
-                        "artifact_type": "sensor_configuration", 
-                        "payload": {
-                            "recommended_sensors": [
-                                {"name":"PT100_RTD_food","qty":2,"locations":["after_pasteurizer","before_filler"]},
-                                {"name":"PPT-100_pressure","qty":1,"range":"0-10bar"},
-                                {"name":"VIBRO-M8_vibration","qty":1,"location":"gearbox"},
-                                {"name":"Encoder_Incremental","qty":1,"location":"drive_shaft"}
-                            ],
-                            "thresholds": {
-                                "temp_warn_C": 8,
-                                "temp_alarm_C": 12, 
-                                "pressure_warn_bar": 5.5,
-                                "pressure_alarm_bar": 6,
-                                "vibration_warn_mms": 25
-                            }
-                        }
+                        "interview_result": "sensor_configuration: recommended_sensors=[PT100_RTD_food x2 (after_pasteurizer, before_filler), PPT-100_pressure 0-10bar, VIBRO-M8_vibration gearbox, Encoder_Incremental drive_shaft]; thresholds: temp_warn=8°C, temp_alarm=12°C, pressure_warn=5.5bar, pressure_alarm=6bar, vibration_warn=25mm/s"
                     }
                 }
             }
@@ -302,7 +260,7 @@ FEWSHOT_DIALOG = [
         "content": '{"status":"success","saved_as":"sensor_config_conv_001","keys":["sensors","thresholds"]}'
     },
 
-    # Orchestrator → generate final UX response
+    # Orchestrator → generate final UX response (user_interaction: conversation_id + user_message)
     {
         "role": "assistant",
         "tool_calls": [
@@ -310,33 +268,21 @@ FEWSHOT_DIALOG = [
                 "id": "call_ui_final_001",
                 "type": "function",
                 "function": {
-                    "name": "user_interaction_agent",
+                    "name": "user_interaction",
                     "arguments": {
-                        "mode": "generate_response",
-                        "artifacts": {
-                            "sensor_config": "4 датчика сохранены: 2×PT100, PPT-100 давление, VIBRO-M8 вибрация, энкодер",
-                            "thresholds": "temp>8warn/>12alarm, pressure>5.5warn/>6alarm",
-                            "excluded": "влажность цеха",
-                            "status": "saved_to_db"
-                        },
-                        "conversation_summary": "линия розлива лимонада, ключевые сигналы спроектированы и сохранены",
-                        "next_steps": [
-                            "уточнить CIP/SIP требования", 
-                            "зоны установки (мокрая/сухая)",
-                            "интеграция с PLC/SCADA"
-                        ],
-                        "tone": "consultative_friendly"
+                        "conversation_id": "conv_001",
+                        "user_message": "Передать пользователю итог: Конфигурация датчиков для линии розлива сохранена в БД. Нужны: 2×PT100 температура, PPT-100 давление, VIBRO-M8 вибрация, энкодер. Пороги: temp>8°C предупр./>12°C авария, pressure>5.5/6 бар. Влажность цеха исключена. Следующие шаги: CIP/мойки, зоны установки, интеграция с PLC."
                     }
                 }
             }
         ]
     },
 
-    # user_interaction_agent → perfect UX response
+    # user_interaction → perfect UX response
     {
         "role": "tool",
         "tool_call_id": "call_ui_final_001",
-        "name": "user_interaction_agent",
+        "name": "user_interaction",
         "content": (
             "✅ **Конфигурация датчиков для линии розлива** (сохранена в БД conv_001):\n\n"
             "**📊 Нужны (4 датчика):**\n"
@@ -548,7 +494,9 @@ class OrchestratorAgent(BaseAgent):
             metadata["success"] = True
 
         elif tool_name == "database_agent":
-            result = "[stub] database_agent: делегировано агенту БД"
+            # При интеграции с реальным агентом: вызвать агента БД с conversation_id и
+            # interview_result, получить SQL, затем применить через DatabaseManager.execute(sql).
+            result = "[stub] database_agent: схема сгенерирована и применена к БД"
             metadata["success"] = True
 
         elif tool_name == "digital_twin_agent":
