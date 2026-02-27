@@ -6,6 +6,7 @@
 from .base_agent import BaseAgent
 import json
 import logging
+import os
 import time
 import re
 from typing import Dict, Any, Optional, List, Tuple
@@ -317,18 +318,24 @@ class OrchestratorAgent(BaseAgent):
 
     ORCHESTRATOR_AGENT_ID = 0  # Центральная точка входа
 
+    # Локальный путь к скачанной модели (относительно корня проекта или абсолютный)
+    DEFAULT_LOCAL_MODEL_PATH = "nemotron/nemotron-8b"
+
     def __init__(
         self,
         agent_id: int = 0,
         api_url: str = "http://localhost:8000",
-        model_name: str = "nvidia/Nemotron-Orchestrator-8B",
+        model_name: Optional[str] = None,
+        model_path: Optional[str] = None,
         max_tool_steps: int = 10,
         use_sensor_manager: bool = False,
     ):
         super().__init__("OrchestratorAgent")
         self.agent_id = agent_id or self.ORCHESTRATOR_AGENT_ID
         self.api_url = api_url.rstrip("/")
-        self.model_name = model_name
+        # Приоритет: model_path > model_name > локальный nemotron/nemotron-8b
+        self.model_path = model_path
+        self.model_name = model_name or (model_path if model_path else self.DEFAULT_LOCAL_MODEL_PATH)
         self.max_tool_steps = max_tool_steps
         self.running = False
         self._model = None
@@ -350,21 +357,54 @@ class OrchestratorAgent(BaseAgent):
         except ImportError as e:
             self.log(f"SensorManager not available: {e}", "warning")
 
+    def _resolve_model_path(self) -> str:
+        """Возвращает путь к модели: локальная папка или HuggingFace repo_id."""
+        path = self.model_path or self.model_name
+        if not path:
+            path = self.DEFAULT_LOCAL_MODEL_PATH
+        if os.path.isdir(path):
+            return os.path.abspath(path)
+        if os.path.isdir(os.path.join(os.getcwd(), path)):
+            return os.path.abspath(os.path.join(os.getcwd(), path))
+        return path
+
     def _load_model(self) -> None:
-        """Отложенная загрузка модели."""
+        """Отложенная загрузка модели (локально из nemotron/nemotron-8b или HuggingFace)."""
         if self._model is not None:
             return
-        # try:
-        #     import torch
-        #     from transformers import AutoModelForCausalLM, AutoTokenizer
-        #     self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-        #     self._model = AutoModelForCausalLM.from_pretrained(self.model_name)
-        #     device = "cuda" if torch.cuda.is_available() else "cpu"
-        #     self._model = self._model.to(device)
-        # except Exception as e:
-        #     self.log(f"Model load failed: {e}", "error")
-        #     raise
-        self.log("Model loading disabled (stub). Set _model manually or uncomment _load_model.", "warning")
+        try:
+            import torch
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+
+            load_path = self._resolve_model_path()
+            self.log(f"Loading model from: {load_path}", "info")
+            self._tokenizer = AutoTokenizer.from_pretrained(load_path, trust_remote_code=True)
+            self._model = AutoModelForCausalLM.from_pretrained(
+                load_path,
+                trust_remote_code=True,
+                torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
+                device_map="auto" if torch.cuda.is_available() else None,
+            )
+            if not torch.cuda.is_available():
+                self._model = self._model.to("cpu")
+            if self._tokenizer.pad_token_id is None:
+                self._tokenizer.pad_token_id = self._tokenizer.eos_token_id
+            self.log("Nemotron model loaded successfully", "info")
+        except Exception as e:
+            err_msg = str(e)
+            if "qwen3" in err_msg.lower() and "does not recognize" in err_msg.lower():
+                self.log(
+                    "Nemotron (qwen3) требует transformers>=4.51.0. Выполните: pip install 'transformers>=4.51.0'",
+                    "error",
+                )
+            elif "torchvision::nms" in err_msg:
+                self.log(
+                    "Ошибка torchvision: несовместимые версии torch и torchvision. "
+                    "Переустановите: pip uninstall torchvision -y && pip install torch torchvision --upgrade",
+                    "error",
+                )
+            self.log(f"Model load failed: {e}", "error")
+            raise
 
     def _build_state(
         self,
@@ -402,8 +442,12 @@ class OrchestratorAgent(BaseAgent):
 
         # few-shot диалог
         for m in FEWSHOT_DIALOG:
-            role = m["role"]
-            content = m["content"]
+            role = m.get("role", "user")
+            content = m.get("content")
+            # Некоторые few-shot примеры содержат только tool_calls (без явного текста).
+            # Такие сообщения пропускаем, чтобы не ломать построение промпта.
+            if not content:
+                continue
             prompt += f"<|im_start|>{role}\n{content}<|im_end|>\n"
 
         # История реального диалога
@@ -423,25 +467,36 @@ class OrchestratorAgent(BaseAgent):
         prompt += f"<|im_start|>user\n{current_context}<|im_end|>\n<|im_start|>assistant\n"
         return prompt
 
-    def _generate(self, prompt: str) -> str:
+    def _generate(self, prompt: str, max_new_tokens: int = 1024) -> str:
         """
-        Заглушка для инференса модели.
-        Ожидается, что Nemotron-Orchestrator-8B вернет:
+        Инференс Nemotron: ожидается вывод в виде
         <think>...</think>
         <tool_call>{...}</tool_call>
         [<tool_call>{...}</tool_call> ...]
         """
-        # Здесь должен быть реальный вызов LLM:
-        # inputs = self._tokenizer(prompt, return_tensors="pt").to(self._model.device)
-        # outputs = self._model.generate(**inputs, max_new_tokens=512)
-        # return self._tokenizer.decode(outputs[0][inputs.input_ids.shape[-1]:])
+        self._load_model()
+        import torch
 
-        # Симуляция ответа модели для тестирования пайплайна
-        return (
-            "<think>Мне нужно записать конфигурацию в БД и затем вернуть automation pipeline.</think>\n"
-            "<tool_call>{\"name\": \"database_agent\", \"arguments\": {\"conversation_id\": \"conv_123\", \"interview_result\": \"...\"}}</tool_call>\n"
-            "<tool_call>{\"name\": \"finish\", \"arguments\": {\"result\": {\"type\": \"automation_pipeline\", \"steps\": []}}}</tool_call>"
-        )
+        device = next(self._model.parameters()).device
+        inputs = self._tokenizer(
+            prompt,
+            return_tensors="pt",
+            truncation=True,
+            max_length=4096,
+        ).to(device)
+
+        input_len = inputs.input_ids.shape[1]
+        with torch.inference_mode():
+            outputs = self._model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                do_sample=False,
+                pad_token_id=self._tokenizer.pad_token_id,
+                eos_token_id=self._tokenizer.eos_token_id,
+            )
+
+        new_tokens = outputs[0][input_len:]
+        return self._tokenizer.decode(new_tokens, skip_special_tokens=True)
 
     # --- парсер JSON tool_call из ответа модели ---
 
@@ -656,17 +711,26 @@ def main():
     parser = argparse.ArgumentParser(description="Orchestrator Agent")
     parser.add_argument("--agent-id", type=int, default=0)
     parser.add_argument("--api-url", default="http://localhost:8000")
-    parser.add_argument("--model", default="nvidia/Nemotron-Orchestrator-8B")
+    parser.add_argument("--model", default=None, help="HuggingFace model name (e.g. nvidia/Nemotron-Orchestrator-8B)")
+    parser.add_argument("--model-path", default=None, help="Локальный путь к модели (например nemotron/nemotron-8b)")
     parser.add_argument("--use-sensors", action="store_true")
     parser.add_argument("--poll-interval", type=float, default=2.0)
+    parser.add_argument("--test-inference", action="store_true", help="Один прогон инференса с тестовым запросом и выход")
     args = parser.parse_args()
 
     agent = OrchestratorAgent(
         agent_id=args.agent_id,
         api_url=args.api_url,
         model_name=args.model,
+        model_path=args.model_path,
         use_sensor_manager=args.use_sensors,
     )
+
+    if args.test_inference:
+        print("Тест инференса Nemotron (один запрос)...")
+        out = agent.route_request("Пользователь просит подобрать датчики для линии розлива. Что делать?", context={})
+        print("Ответ:", json.dumps(out, ensure_ascii=False, indent=2))
+        return
 
     def on_signal(sig, frame):
         agent.stop()
