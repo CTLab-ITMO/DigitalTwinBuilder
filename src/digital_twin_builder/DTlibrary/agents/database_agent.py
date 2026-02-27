@@ -1,5 +1,5 @@
-from base_agent import BaseAgent
-from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer
+from .base_agent import BaseAgent
+from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 import json
 import requests
