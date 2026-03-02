@@ -10,8 +10,6 @@ import pandas as pd
 import plotly.express as px
 import requests
 import streamlit as st
-from DTlibrary.cores.database import DatabaseManager
-from DTlibrary.cores.sensor_manager import SensorManager
 import prompts
 
 # Configuration
@@ -104,10 +102,11 @@ def create_new_conversation(session_id, agent_id, system_prompt):
     """Create a new conversation"""
     response = requests.post(
         f"{API_URL}/conversations",
-        params={"session_id": session_id, "agent_id": agent_id},
+        params={"session_id": session_id, "agent_id": agent_id, "conv_idx": conv_idx},
     )
     if response.status_code == 200:
         conversation_id = response.json()["conversation_id"]
+        st.session_state.conversations[agent_id - 1][conv_idx] = conversation_id
     else:
         st.error(
             f"Не удалось создать новую беседу с агентом {agent_id}, запрос завершился с ошибкой {response.status_code}"
@@ -152,11 +151,13 @@ def load_session(session_id):
     st.session_state.session_id = session_id
     for conv in data["conversations"]:
         agent_id = conv["agent_id"]
+        conv_idx = conv.get("conv_idx", 0)
         if agent_id > st.session_state.agent_count:
             difference = agent_id - st.session_state.agent_count
             st.session_state.agent_count = agent_id
-            st.session_state.conversations.extend([None] * difference)
-        st.session_state.conversations[agent_id - 1] = conv["id"]
+            st.session_state.conversations.extend([[None]*st.session_state.max_conversations_per_agent for _ in range(difference)])
+            st.session_state.messages.extend([ [[] for _ in range(st.session_state.max_conversations_per_agent) ] for _ in range(difference)])
+        st.session_state.conversations[agent_id - 1][conv_idx] = conv["id"]
 
 
 def load_conversation(conversation_id, agent_id):
@@ -169,8 +170,8 @@ def load_conversation(conversation_id, agent_id):
         return
 
     data = response.json()
-    st.session_state.conversations[agent_id - 1] = conversation_id
-    st.session_state.messages[agent_id - 1] = data["messages"]
+    st.session_state.conversations[agent_id - 1][conv_idx] = conversation_id
+    st.session_state.messages[agent_id - 1][conv_idx] = data["messages"]
 
 
 def submit_chat_to_agent(agent_id, conversation_id, params):
@@ -193,14 +194,15 @@ def submit_chat_to_agent(agent_id, conversation_id, params):
 
 def setup_interview_tab():
     ui_agent_id = 1
+    conv_idx = 0
     st.header("Создание цифрового двойника производства")
 
-    if st.session_state.conversations[ui_agent_id - 1] is None:
+    if st.session_state.conversations[ui_agent_id - 1][conv_idx] is None:
         st.markdown("Пожалуйста, выберите существующий чат или создайте новый")
         return
 
-    load_conversation(st.session_state.conversations[ui_agent_id - 1], ui_agent_id)
-    for message in st.session_state.messages[0]:
+    load_conversation(st.session_state.conversations[ui_agent_id - 1][conv_idx], ui_agent_id, conv_idx)
+    for message in st.session_state.messages[ui_agent_id - 1][conv_idx]:
         if message["role"] == "system":
             continue
         with st.chat_message(message["role"]):
@@ -233,6 +235,7 @@ def setup_interview_tab():
 
 def setup_database_tab():
     db_agent_id = 2
+    conv_idx = 0
     st.header("Настройка базы данных")
 
     if not st.session_state.get("interview_completed", False):
@@ -244,19 +247,19 @@ def setup_database_tab():
     st.subheader("Результат интервью")
     st.json(st.session_state.interview_result)
 
-    if st.session_state.conversations[db_agent_id - 1] is None:
-        st.session_state.conversations[db_agent_id - 1] = create_new_conversation(
-            st.session_state.session_id, db_agent_id, prompts.system.DB
+    if st.session_state.conversations[db_agent_id - 1][conv_idx] is None:
+        st.session_state.conversations[db_agent_id - 1][conv_idx] = create_new_conversation(
+            st.session_state.session_id, db_agent_id, prompts.system.DB, conv_idx
         )
         add_message_to_conversation(
-            st.session_state.conversations[db_agent_id - 1],
+            st.session_state.conversations[db_agent_id - 1][conv_idx],
             "user",
             prompts.user.make_db(st.session_state.interview_result),
         )
         submit_chat_to_agent(
-            db_agent_id, st.session_state.conversation[db_agent_id - 1], {}
+            db_agent_id, st.session_state.conversations[db_agent_id - 1][conv_idx], {}
         )
-    load_conversation(st.session_state.conversations[db_agent_id - 1], db_agent_id)
+    load_conversation(st.session_state.conversations[db_agent_id - 1][conv_idx], db_agent_id, conv_idx)
 
     if "db_json" in st.session_state:
         st.subheader("Сгенерированная схема базы данных")
@@ -427,12 +430,11 @@ def setup_twin_tab():
 def init_session_state():
     """Initialize session state for chat"""
     st.session_state.agent_count = 3
+    st.session_state.max_conversations_per_agent = 10
     if "conversations" not in st.session_state:
-        st.session_state.conversations = [None] * st.session_state.agent_count
+        st.session_state.conversations = [ [None]*st.session_state.max_conversations_per_agent for _ in range(st.session_state.agent_count) ]
     if "messages" not in st.session_state:
-        st.session_state.messages = [[]] * st.session_state.agent_count
-    if "conversations" not in st.session_state:
-        st.session_state.conversations = []
+        st.session_state.messages = [ [[] for _ in range(st.session_state.max_conversations_per_agent) ] for _ in range(st.session_state.agent_count) ]
     if "tasks" not in st.session_state:
         st.session_state.tasks = []
     if "temperature_history" not in st.session_state:

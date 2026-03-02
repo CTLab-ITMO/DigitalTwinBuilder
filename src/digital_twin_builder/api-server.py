@@ -163,7 +163,7 @@ async def get_session(session_id: str):
         
         # Get conversations
         conversations = await conn.fetch("""
-            SELECT id, session_id, agent_id, created_at
+            SELECT id, session_id, agent_id, conv_idx, created_at, metadata
             FROM conversations 
             WHERE session_id = $1
             ORDER BY created_at ASC
@@ -171,7 +171,10 @@ async def get_session(session_id: str):
     
     return {
         "session": dict(session),
-        "conversations": [dict(c) for c in conversations]
+        "conversations": [
+            {**dict(c), "conv_idx": c["conv_idx"] if "conv_idx" in c else (c["metadata"].get("conv_idx", 0) if c["metadata"] else 0)}
+            for c in conversations
+        ]
     }
 
 # API endpoints for chat history
@@ -179,16 +182,17 @@ async def get_session(session_id: str):
 async def create_conversation(
     session_id: str,
     agent_id: int = 1,
+    conv_idx: int = 0
 ):
     """Create a new conversation"""
     conversation_id = str(uuid.uuid4())
     async with pool.acquire() as conn:
         await conn.execute("""
-            INSERT INTO conversations (id, session_id, agent_id)
-            VALUES ($1, $2, $3)
-        """, conversation_id, session_id, agent_id)
+            INSERT INTO conversations (id, session_id, agent_id, conv_idx, metadata)
+            VALUES ($1, $2, $3, $4, $5)
+        """, conversation_id, session_id, agent_id, conv_idx, json.dumps({"conv_idx": conv_idx}))
     
-    return {"conversation_id": conversation_id}
+    return {"conversation_id": conversation_id, "conv_idx": conv_idx}
 
 @app.get("/conversations")
 async def get_conversations(
@@ -199,7 +203,7 @@ async def get_conversations(
     """Get list of conversations for a user"""
     async with pool.acquire() as conn:
         conversations = await conn.fetch("""
-            SELECT id, created_at, updated_at, metadata
+            SELECT id, created_at, updated_at, conv_idx, metadata
             FROM conversations 
             WHERE agent_id = $3
             ORDER BY updated_at DESC
@@ -207,7 +211,10 @@ async def get_conversations(
         """, limit, offset, agent_id)
     
     return {
-        "conversations": [dict(c) for c in conversations]
+        "conversations": [
+            {**dict(c), "conv_idx": c["conv_idx"] if "conv_idx" in c else (c["metadata"].get("conv_idx", 0) if c["metadata"] else 0)}
+            for c in conversations
+        ]
     }
 
 @app.get("/conversations/{conversation_id}")
