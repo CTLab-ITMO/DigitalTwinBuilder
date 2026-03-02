@@ -10,10 +10,11 @@ import pandas as pd
 import plotly.express as px
 import requests
 import streamlit as st
-import prompts
+from prompts import system as system_prompts
+from prompts import user as user_prompts
 
 # Configuration
-API_URL = "http://localhost:8000"  # Change to your API URL
+API_URL = "http://188.119.67.226:8000/"  # Change to your API URL
 if "response_queue" not in st.session_state:
     st.session_state.response_queue = queue.Queue()
 
@@ -98,7 +99,7 @@ def background_poll_task_result(response_queue, task_id):
         poll += 1
 
 
-def create_new_conversation(session_id, agent_id, system_prompt):
+def create_new_conversation(session_id, agent_id, system_prompt, conv_idx=0):
     """Create a new conversation"""
     response = requests.post(
         f"{API_URL}/conversations",
@@ -160,7 +161,7 @@ def load_session(session_id):
         st.session_state.conversations[agent_id - 1][conv_idx] = conv["id"]
 
 
-def load_conversation(conversation_id, agent_id):
+def load_conversation(conversation_id, agent_id, conv_idx=0):
     """Load a conversation from API"""
     response = requests.get(f"{API_URL}/conversations/{conversation_id}")
     if response.status_code != 200:
@@ -220,13 +221,13 @@ def setup_interview_tab():
     if user_input:
         params = {"temperature": temperature, "max_tokens": max_tokens}
         response = add_message_to_conversation(
-            st.session_state.conversations[ui_agent_id - 1],
+            st.session_state.conversations[ui_agent_id - 1][conv_idx],
             role="user",
             content=user_input,
         )
         if response is not None:
             submit_chat_to_agent(
-                ui_agent_id, st.session_state.conversations[ui_agent_id - 1], params
+                ui_agent_id, st.session_state.conversations[ui_agent_id - 1][conv_idx], params
             )
             st.rerun()
     if st.session_state.get("interview_completed", False):
@@ -249,12 +250,12 @@ def setup_database_tab():
 
     if st.session_state.conversations[db_agent_id - 1][conv_idx] is None:
         st.session_state.conversations[db_agent_id - 1][conv_idx] = create_new_conversation(
-            st.session_state.session_id, db_agent_id, prompts.system.DB, conv_idx
+            st.session_state.session_id, db_agent_id, system_prompts.DB, conv_idx
         )
         add_message_to_conversation(
             st.session_state.conversations[db_agent_id - 1][conv_idx],
             "user",
-            prompts.user.make_db(st.session_state.interview_result),
+            user_prompts.make_db(st.session_state.interview_result),
         )
         submit_chat_to_agent(
             db_agent_id, st.session_state.conversations[db_agent_id - 1][conv_idx], {}
@@ -266,47 +267,50 @@ def setup_database_tab():
         st.json(st.session_state.db_json)
 
 def dt_generate_config():
+    dt_agent_id = 3
+    conv_idx = 0
     try:
-        # TODO: 2d array for conversations and messages
-        prompt = prompts.user.make_config(
+        prompt = user_prompts.make_config(
             st.session_state.interview_result,
             st.session_state.db_schema
         )
         add_message_to_conversation(
-            st.session_state.conversations[2], role="user", content=prompt)
+            st.session_state.conversations[dt_agent_id - 1][conv_idx], role="user", content=prompt)
         submit_chat_to_agent(
-            3, st.session_state.conversations[2], {})
+            dt_agent_id, st.session_state.conversations[dt_agent_id - 1][conv_idx], {})
         st.rerun()
     except Exception as e:
         st.error(f"Ошибка: {str(e)}")
 
 def dt_generate_simulation():
+    dt_agent_id = 3
+    conv_idx = 0
     try:
-        # TODO: 2d array for conversations and messages
-        prompt = prompts.user.make_simulation(
+        prompt = user_prompts.make_simulation(
             st.session_state.interview_result,
             st.session_state.db_schema,
             st.session_state.twin_config
         )
         add_message_to_conversation(
-            st.session_state.conversations[2], role="user", content=prompt)
+            st.session_state.conversations[dt_agent_id - 1][conv_idx], role="user", content=prompt)
         submit_chat_to_agent(
-            3, st.session_state.conversations[2], {})
+            dt_agent_id, st.session_state.conversations[dt_agent_id - 1][conv_idx], {})
         st.rerun()
     except Exception as e:
         st.error(f"Ошибка: {str(e)}")
 
 def dt_generate_db_schema():
+    dt_agent_id = 3
+    conv_idx = 0
     try:
-        # TODO: 2d array for conversations and messages
-        prompt = prompts.user.make_db_schema(
+        prompt = user_prompts.make_db_schema(
             st.session_state.interview_result,
             st.session_state.db_schema
         )
         add_message_to_conversation(
-            st.session_state.conversations[2], role="user", content=prompt)
+            st.session_state.conversations[dt_agent_id - 1][conv_idx], role="user", content=prompt)
         submit_chat_to_agent(
-            3, st.session_state.conversations[2], {})
+            dt_agent_id, st.session_state.conversations[dt_agent_id - 1][conv_idx], {})
         st.rerun()
     except Exception as e:
         st.error(f"Ошибка: {str(e)}")
@@ -426,6 +430,9 @@ def setup_twin_tab():
     #         st.success("⏹️ Остановлено")
     # 
 
+def setup_sensor_tab():
+    # TODO: implement
+    pass
 
 def init_session_state():
     """Initialize session state for chat"""
@@ -491,10 +498,10 @@ def initialize_ui():
         if st.button("➕ New Chat", use_container_width=True):
             session_id = create_new_session()
             load_session(session_id)
-            st.session_state.conversations[0] = create_new_conversation(
-                st.session_state.session_id, 1, prompts.system.UI
+            st.session_state.conversations[0][0] = create_new_conversation(
+                st.session_state.session_id, 1, system_prompts.UI, conv_idx=0
             )
-            submit_chat_to_agent(1, st.session_state.conversations[0], {})
+            submit_chat_to_agent(1, st.session_state.conversations[0][0], {})
 
         st.divider()
 
