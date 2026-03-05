@@ -2,7 +2,7 @@ import json
 
 def make_db_prompt(requirements, *args):
     prompt = f"""
-Generate a PostgreSQL database schema for an industrial digital twin based on the following requirements:
+Generate a PostgreSQL database schema in json form for an industrial digital twin based on the following requirements:
 
 {json.dumps(requirements, ensure_ascii=False, indent=2)}
 
