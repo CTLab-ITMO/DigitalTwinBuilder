@@ -104,8 +104,8 @@ app = FastAPI(
 # Pydantic models
 class TaskRequest(BaseModel):
     agent_id: int
-    conversation_id: str
     conv_idx: int
+    conversation_id: str
     params: Dict[str, Any] = {}
     priority: int = 0
 
@@ -317,12 +317,13 @@ async def process_agent_chain(
     # 2. Create task for User Interaction Agent
     task_id = await create_task({
         "agent_id": 1,  # UIA
-        "conversation_id": conversation_id,
         "conv_idx": 0,
+        "conversation_id": conversation_id,
         "params": {
             "user_message_id": user_msg_id["message_id"],
             "context": context
-        }
+        },
+        "priority": 0,
     })
     
     return {"task_id": task_id, "conversation_id": conversation_id}
