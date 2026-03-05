@@ -440,9 +440,9 @@ async def get_task_status(task_id: str):
     try:
         async with (await get_db_connection()).acquire() as conn:
             task = await conn.fetchrow('''
-                SELECT id, agent_id, conversation_id, status, result, error,
-                       created_at, started_at, completed_at
-                FROM tasks WHERE id = $1
+                SELECT t.id, t.agent_id, c.conv_idx, t.conversation_id, t.status, t.result, t.error,
+                       t.created_at, t.started_at, t.completed_at
+                FROM tasks t, conversations c WHERE id = $1, c.conversation_id = t.conversation_id
             ''', task_id)
             
             if not task:
