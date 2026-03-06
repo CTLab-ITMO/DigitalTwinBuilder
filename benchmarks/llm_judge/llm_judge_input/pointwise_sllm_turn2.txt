@@ -1,0 +1,73 @@
+You are an expert in digital twin development for industrial production systems, tasked with evaluating a SINGLE generated digital twin implementation. 
+
+Here is the digital twin code to evaluate:
+[CODE TO EVALUATE]
+
+[END OF CODE]
+
+PyChrono API documentation:
+PyChrono::ChSystemNSC(), AddBody(), AddLink(), ChLidarSensor, DoStepDynamics(), chrono_irrlicht
+
+Task specification:
+[Task Specification]
+МОДИФИЦИРУЙ КОД ИЗ Turn 1 для АВАРИЙНОГО РЕЖИМА:
+
+Объект: участок непрерывной разливки стали (МНЛЗ) на металлургическом комбинате.
+
+Основное оборудование: промежуточный ковш, кристаллизатор, зона вторичного охлаждения, тянущие валки, разрезка.
+Цели цифрового двойника:
+Контроль температуры стали в кристаллизаторе
+Оптимизация скорости разливки
+Прогнозирование дефектов слитков (раковины, трещины)
+Анализ износа оборудования
+
+
+Доступные данные:
+Температура стали в кристаллизаторе (термопары)
+Скорость разливки (датчики скорости валков)
+Расход воды охлаждения (расходомеры)
+Вибрация оборудования (акселерометры)
+Химический состав стали (лабораторные анализы)
+Данные обновляются каждые 3 секунды. Требуется хранение данных за 6 месяцев.
+
+Особые требования:
+Режим реального времени для критических параметров
+
+
+Пороги: Температура ±20 °C от нормы, расход воды ±20% от номинала, вибрация +30–50% от базового уровня — аварийные значения.
+Хим. состав: Поступает с лаборатории каждые 15–30 минут, интегрируется пакетно, не в реальном времени.
+
+Изменения:
+1. Температура стали: 1510°C (нижний АВАРИЙНЫЙ порог)
+2. Скорость разливки: 1.2 м/мин (АВАРИЙНАЯ <1.2 м/мин)  
+3. Расход воды: 1440 м³/ч (верхний АВАРИЙНЫЙ предел)
+4. Вибрация: 5.2 мм/с RMS (АВАРИЙНАЯ 5.2–6.0 мм/с)
+
+Дополнительно:
+5. Добавить предупредительные индикаторы (print/warnings)
+6. Изменить визуализацию (красный цвет для аварии)
+
+ВЫВЕДИ ТОЛЬКО ОБНОВЛЁННЫЙ ИСПОЛНЯЕМЫЙ PYTHON КОД.
+[End of Task Specification]
+
+EVALUATION CRITERIA (100 points total):
+1. Completeness (40): missing components -15 each
+2. Correctness (30): wrong API usage -15 each  
+3. Code Quality (10): poor structure -5-10
+4. Efficiency (10): redundant code -5 each
+5. Error Handling (5): no try/except -5
+6. Visualization (5): wrong Irrlicht -3-5
+
+RULES:
+- Compare ONLY to task requirements and PyChrono API
+- Ignore code length/position bias
+- Be objective and consistent
+
+OUTPUT FORMAT (MANDATORY):
+1. Brief explanation of deductions
+2. Final score: [[X]] where X=0-100.0
+
+EXAMPLE:
+Missing ChSystem: -15
+Wrong sensor setup: -10
+[[75.0]]
