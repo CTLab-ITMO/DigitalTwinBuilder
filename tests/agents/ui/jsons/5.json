@@ -1,0 +1,78 @@
+{
+  "device_name": "Силовой трансформатор ТМГ-1000/10",
+  "sensor_count": 4,
+  "sensors": [
+    {
+      "sensor_name": "Датчик температуры обмотки (WTI)",
+      "parameter_type": "температура",
+      "unit": "°C",
+      "measurement_range": {
+        "min": -40,
+        "max": 180
+      },
+      "alarm_thresholds": {
+        "critical_min": -20,
+        "critical_max": 120
+      },
+      "data_update_frequency": "0.5 Гц",
+      "data_processing_algorithms": [
+        "Тепловая модель (нагрев/охлаждение)",
+        "Прогноз точки перегрузки"
+      ]
+    },
+    {
+      "sensor_name": "Датчик температуры масла (OTI)",
+      "parameter_type": "температура",
+      "unit": "°C",
+      "measurement_range": {
+        "min": -40,
+        "max": 120
+      },
+      "alarm_thresholds": {
+        "critical_min": -20,
+        "critical_max": 95
+      },
+      "data_update_frequency": "0.5 Гц",
+      "data_processing_algorithms": [
+        "Расчет дельты относительно обмотки",
+        "Анализ скорости роста температуры"
+      ]
+    },
+    {
+      "sensor_name": "Датчик уровня масла",
+      "parameter_type": "уровень",
+      "unit": "мм",
+      "measurement_range": {
+        "min": 0,
+        "max": 300
+      },
+      "alarm_thresholds": {
+        "critical_min": 50,
+        "critical_max": 280
+      },
+      "data_update_frequency": "0.1 Гц",
+      "data_processing_algorithms": [
+        "Компенсация по температуре",
+        "Обнаружение резких изменений"
+      ]
+    },
+    {
+      "sensor_name": "Датчик содержания газов в масле (DGA)",
+      "parameter_type": "концентрация",
+      "unit": "ppm",
+      "measurement_range": {
+        "min": 0,
+        "max": 2000
+      },
+      "alarm_thresholds": {
+        "critical_min": 0,
+        "critical_max": 500
+      },
+      "data_update_frequency": "0.0035 Гц",
+      "data_processing_algorithms": [
+        "Соотношение ключевых газов (Duval Triangle)",
+        "Тренд-анализ нарастания концентрации"
+      ]
+    }
+  ]
+}

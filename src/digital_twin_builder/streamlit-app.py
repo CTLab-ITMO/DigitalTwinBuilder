@@ -1,15 +1,17 @@
 # streamlit_app.py
+import streamlit as st
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+import time
 import json
 from logging import config
 import queue
 import threading
-import time
 from datetime import datetime
 
 import pandas as pd
 import plotly.express as px
-import requests
-import streamlit as st
 from prompts import system as system_prompts
 from prompts import user as user_prompts
 
@@ -18,12 +20,13 @@ API_URL = "http://188.119.67.226:8000/"  # Change to your API URL
 if "response_queue" not in st.session_state:
     st.session_state.response_queue = queue.Queue()
 
+requests_session = None
 
 # Helper functions
 def submit_task(agent_id, conv_idx, conversation_id, params):
     """Submit task to API"""
     try:
-        response = requests.post(
+        response = requests_session.post(
             f"{API_URL}/tasks",
             json={
                 "agent_id": agent_id,
@@ -46,8 +49,8 @@ def submit_task(agent_id, conv_idx, conversation_id, params):
 
 def add_message_to_conversation(conversation_id, role, content):
     try:
-        response = requests.post(
-            f"{API_URL}/conversations/{conversation_id}/messages",
+        response = requests_session.post(
+            f"{API_URL}/conversations/{conversation_id}/messages", 
             params={
                 "conversation_id": conversation_id,
                 "role": role,
@@ -62,28 +65,28 @@ def add_message_to_conversation(conversation_id, role, content):
             return None
     except Exception as e:
         st.error(f"Connection error: {str(e)}")
-        return None
+    return None
 
 
 def get_task_status(task_id):
     """Get task status from API"""
     try:
-        response = requests.get(f"{API_URL}/tasks/{task_id}", timeout=5)
+        response = requests_session.get(f"{API_URL}/tasks/{task_id}", timeout=5)
         if response.status_code == 200:
             return response.json()
-    except:
-        pass
+    except Exception as e:
+        st.error(f"Connection error: {str(e)}")
     return None
 
 
 def get_agent_status(agent_id):
     """Get agent status from API"""
     try:
-        response = requests.get(f"{API_URL}/agents/{agent_id}/status", timeout=5)
+        response = requests_session.get(f"{API_URL}/agents/{agent_id}/status", timeout=5)
         if response.status_code == 200:
             return response.json()
-    except:
-        pass
+    except Exception as e:
+        st.error(f"Connection error: {str(e)}")
     return {"status": "offline"}
 
 
@@ -102,7 +105,7 @@ def background_poll_task_result(response_queue, task_id):
 
 def create_new_conversation(session_id, agent_id, system_prompt, conv_idx=0):
     """Create a new conversation"""
-    response = requests.post(
+    response = requests_session.post(
         f"{API_URL}/conversations",
         params={"session_id": session_id, "agent_id": agent_id, "conv_idx": conv_idx},
     )
@@ -127,7 +130,7 @@ def create_new_conversation(session_id, agent_id, system_prompt, conv_idx=0):
 
 
 def create_new_session():
-    response = requests.post(
+    response = requests_session.post(
         f"{API_URL}/sessions", params={"user_id": "streamlit_user", "title": "New Chat"}
     )
     if response.status_code == 200:
@@ -142,7 +145,7 @@ def create_new_session():
 
 def load_session(session_id):
     """Load a conversation from API"""
-    response = requests.get(f"{API_URL}/sessions/{session_id}")
+    response = requests_session.get(f"{API_URL}/sessions/{session_id}")
     if response.status_code != 200:
         st.error(
             f"Не удалось загрузить сессию {session_id}, запрос завершился с ошибкой {response.status_code}"
@@ -189,7 +192,7 @@ def load_session(session_id):
 
 def load_conversation(conversation_id, agent_id, conv_idx=0):
     """Load a conversation from API"""
-    response = requests.get(f"{API_URL}/conversations/{conversation_id}")
+    response = requests_session.get(f"{API_URL}/conversations/{conversation_id}")
     if response.status_code != 200:
         st.error(
             f"Не удалось загрузить беседу {conversation_id}, запрос завершился с ошибкой {response.status_code}"
@@ -220,6 +223,18 @@ def submit_chat_to_agent(agent_id, conv_idx, conversation_id, params):
         # Show immediate feedback
         st.toast("Task submitted! Polling for response...")
 
+def contains_json(message: str):
+    try:
+        start = message.find('{')
+        end = message.rfind('}')
+        json_result = message[start:end+1]
+        st.session_state.interview_result = json_result
+        json.loads(json_result)
+        print("Json in message found")
+        return True
+    except ValueError:
+        print("No json in message found")
+        return False
 
 def setup_interview_tab():
     ui_agent_id = 1
@@ -549,6 +564,8 @@ def init_session_state():
         st.session_state.tasks = []
     if "temperature_history" not in st.session_state:
         st.session_state.temperature_history = []
+    if 'response_queue' not in st.session_state:
+        st.session_state.response_queue = queue.Queue()
 
 
 def process_interview_task(result):
@@ -624,11 +641,13 @@ def initialize_ui():
         st.title("💬 Sessions")
 
         # Load conversations
-        response = requests.get(
-            f"{API_URL}/sessions", params={"user_id": "streamlit_user"}
-        )
-        if response.status_code == 200:
-            st.session_state.sessions = response.json()["sessions"]
+        try:
+            response = requests_session.get(f"{API_URL}/sessions", params={"user_id": "streamlit_user"})
+            if response.status_code == 200:
+                st.session_state.sessions = response.json()["sessions"]
+        except Exception as e:
+            st.error(f"Connection error: {str(e)}")
+            return
 
         # New chat button
         if st.button("➕ New Chat", use_container_width=True):
@@ -659,13 +678,16 @@ def initialize_ui():
 
             st.markdown(f"**agent {agent_id}** {status_color}")
             caption_str = f"status: {status.get('status', 'offline')}"
+            try:
+                response = requests_session.get(f"{API_URL}/queue/{agent_id}", timeout=5)
+                if response.status_code == 200:
+                    queue = response.json()
+                    caption_str += f", pending {queue["pending_count"]}"
+                    if queue["active_task"]:
+                        caption_str += f", active: {queue['active_task']['id'][:8]}..."
+            except Exception as e:
+                st.error(f"Connection error: {str(e)}")
 
-            response = requests.get(f"{API_URL}/queue/{agent_id}", timeout=5)
-            if response.status_code == 200:
-                queue = response.json()
-                caption_str += f", pending {queue['pending_count']}"
-                if queue["active_task"]:
-                    caption_str += f", active: {queue['active_task']['id'][:8]}..."
             st.caption(caption_str)
 
     tab1, tab2, tab3, tab4 = st.tabs(
@@ -696,6 +718,12 @@ def initialize_ui():
 
 
 def main():
+    global requests_session
+    requests_session = requests.Session()
+    retry = Retry(connect=3, backoff_factor=0.5)
+    adapter = HTTPAdapter(max_retries=retry)
+    requests_session.mount('http://', adapter)
+    requests_session.mount('https://', adapter)
     initialize_ui()
 
 

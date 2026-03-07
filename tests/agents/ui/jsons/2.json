@@ -1,0 +1,60 @@
+{
+  "device_name": "Пластинчатый теплообменник Alfa Laval M10",
+  "sensor_count": 3,
+  "sensors": [
+    {
+      "sensor_name": "Термопара контура 1 (первичный)",
+      "parameter_type": "температура",
+      "unit": "°C",
+      "measurement_range": {
+        "min": -20,
+        "max": 180
+      },
+      "alarm_thresholds": {
+        "critical_min": 5,
+        "critical_max": 150
+      },
+      "data_update_frequency": "1 Гц",
+      "data_processing_algorithms": [
+        "Компенсация холодного спая",
+        "Линейная калибровка"
+      ]
+    },
+    {
+      "sensor_name": "Термопара контура 2 (вторичный)",
+      "parameter_type": "температура",
+      "unit": "°C",
+      "measurement_range": {
+        "min": -20,
+        "max": 120
+      },
+      "alarm_thresholds": {
+        "critical_min": 10,
+        "critical_max": 95
+      },
+      "data_update_frequency": "1 Гц",
+      "data_processing_algorithms": [
+        "Компенсация холодного спая",
+        "Линейная калибровка"
+      ]
+    },
+    {
+      "sensor_name": "Датчик перепада давления dP-01",
+      "parameter_type": "давление",
+      "unit": "кПа",
+      "measurement_range": {
+        "min": 0,
+        "max": 100
+      },
+      "alarm_thresholds": {
+        "critical_min": 10,
+        "critical_max": 80
+      },
+      "data_update_frequency": "5 Гц",
+      "data_processing_algorithms": [
+        "Фильтр низких частот",
+        "Расчет среднего за цикл"
+      ]
+    }
+  ]
+}
