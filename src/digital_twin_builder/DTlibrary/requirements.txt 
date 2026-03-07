@@ -1,8 +1,0 @@
-streamlit
-psycopg2-binary
-transformers
-torch
-accelerate
-plotly
-pandas
-numpy
