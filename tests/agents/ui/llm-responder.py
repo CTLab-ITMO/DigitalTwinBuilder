@@ -11,6 +11,7 @@ from alive_progress import alive_bar
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../src'))
 from digital_twin_builder.prompts.system import DB_old as DB, UI_old as UI
+from digital_twin_builder.config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, LLM_MODEL
 from digital_twin_builder.api_utils import (
     init_session,
     submit_task,
@@ -96,7 +97,7 @@ def main():
     # Initialize API session
     init_session()
     
-    client = OpenAI(api_key='sk-c6e4a1d681db4b41b46ef062bdf07c59', base_url="https://api.deepseek.com")
+    client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
     json_path = sys.argv[1] if len(sys.argv) > 1 else 'tests/agents/ui/jsons/1.json'
 
     with alive_bar(30) as bar:

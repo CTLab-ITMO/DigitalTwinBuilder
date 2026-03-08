@@ -7,11 +7,11 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import time
 import logging
+from config import API_URL
 
 logger = logging.getLogger(__name__)
 
-# Configuration
-API_URL = "http://188.119.67.226:8000"
+# requests_session is initialized at module level
 requests_session = None
 
 

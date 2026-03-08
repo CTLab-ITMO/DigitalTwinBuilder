@@ -11,6 +11,7 @@ import pandas as pd
 import plotly.express as px
 from prompts import system as system_prompts
 from prompts import user as user_prompts
+from config import API_URL
 from api_utils import (
     init_session,
     get_session,
@@ -23,7 +24,6 @@ from api_utils import (
 )
 
 # Configuration
-API_URL = "http://188.119.67.226:8000"  # Change to your API URL
 if "response_queue" not in st.session_state:
     st.session_state.response_queue = queue.Queue()
 
