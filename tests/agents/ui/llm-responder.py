@@ -10,7 +10,7 @@ import sys
 from alive_progress import alive_bar
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../src'))
-from digital_twin_builder.prompts.system import DB_old as DB, UI_old as UI
+from digital_twin_builder.prompts.system import DB, UI
 from digital_twin_builder.config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, LLM_MODEL
 from digital_twin_builder.api_utils import (
     init_session,
