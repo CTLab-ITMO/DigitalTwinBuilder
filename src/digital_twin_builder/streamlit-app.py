@@ -493,36 +493,34 @@ def setup_twin_tab():
             key="download_sql"
         )
     
-    # st.divider()
-    # st.subheader("🚀 Запуск цифрового двойника")
-    # 
-    # mode = st.radio(
-    #     "Режим сенсоров", 
-    #     ["Симуляция", "Реальное оборудование"],
-    #     key="sensor_mode_radio"
-    # )
-    # sensor_mode = 'sim' if mode == "Симуляция" else 'real'
-    # 
-    # col1, col2 = st.columns(2)
-    # 
-    # with col1:
-    #     if st.button("▶️ Запустить", key="start_twin_btn", type="primary"):
-    #         try:
-    #             self.sensor_manager = SensorManager(mode=sensor_mode)
-    #             self.sensor_manager.start()
-    #             
-    #             self.db_manager = DatabaseManager(
-    #                 dbname="digital_twin",
-    #                 user="postgres",
-    #                 password="omgssmyalg"
-    #             )
-    #             self.db_manager.create_sensor_tables()
-    #             
-    #             st.session_state.sensor_running = True
-    #             st.session_state.sensor_mode = sensor_mode
-    #             st.success("✅ Цифровой двойник запущен!")
-    #         except Exception as e:
-    #             st.error(f"❌ Ошибка: {str(e)}")
+    st.divider()
+    st.subheader("🚀 Запуск цифрового двойника")
+    mode = st.radio(
+        "Режим сенсоров", 
+        ["Симуляция", "Реальное оборудование"],
+        key="sensor_mode_radio"
+    )
+    sensor_mode = 'sim' if mode == "Симуляция" else 'real'
+    col1, col2 = st.columns(2)
+ 
+    with col1:
+        if st.button("Запустить цифровой двойник"):
+            try:
+                st.session_state.sensor_manager = SensorManager(mode='sim')
+                st.session_state.sensor_manager.start()
+
+                db_config = {
+                    "dbname": os.environ.get("DB_NAME", "digital_twin"),
+                    "user": os.environ.get("DB_USER", "postgres"),
+                    "password": os.environ.get("DB_PASSWORD", ""),
+                }
+                st.session_state.db_manager = DatabaseManager(**db_config)
+                # Применяем сгенерированную агентом схему (CREATE TABLE + INSERT и т.д.)
+                st.session_state.db_manager.execute(st.session_state.db_schema.strip())
+                st.session_state.sensor_running = True
+                st.success("Цифровой двойник успешно запущен!")
+            except Exception as e:
+                st.error(f"Ошибка запуска: {str(e)}")
     # 
     # with col2:
     #     if st.button(
