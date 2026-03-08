@@ -141,10 +141,7 @@ class BaseAgent(ABC):
                     self.logger.info(f"Received task: {task_data['task_id'][:8]}")
                     return task_data
                 else:
-                    self.logger.debug("No tasks available")
-            elif response.status_code == 204:
-                self.logger.debug("No tasks: no content")
-                pass
+                    self.logger.info(f"No tasks available {response}")
             else:
                 self.logger.warning(f"Unexpected response: {response.status_code}")
 
