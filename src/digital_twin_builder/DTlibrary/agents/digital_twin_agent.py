@@ -9,7 +9,6 @@ import sys
 import signal
 from typing import Dict, Any, Optional
 
-
 class DigitalTwinAgent(BaseAgent):
     def __init__(self, agent_id: int, api_url: str, model="bigcode/starcoder2-7b"):
         super().__init__("DigitalTwinAgent")
