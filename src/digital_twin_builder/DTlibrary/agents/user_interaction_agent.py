@@ -10,7 +10,7 @@ import signal
 from typing import Dict, Any, Optional
 
 class UserInteractionAgent(BaseAgent):
-    def __init__(self, agent_id: int, api_url: str, model = "MTSAIR/Cotype-Nano"):
+    def __init__(self, agent_id: int, api_url: str, model = "HuggingFaceTB/SmolLM3-3B"):
         super().__init__("UserInteractionAgent")
         self.agent_id = agent_id
         self.api_url = api_url.rstrip('/')
@@ -39,7 +39,6 @@ class UserInteractionAgent(BaseAgent):
 
             text = self.tokenizer.apply_chat_template(
                 context,
-                enable_thinking=True,
                 tokenize=False,
                 add_generation_prompt=True,
             )
@@ -76,7 +75,7 @@ def main():
                        help="Polling interval in seconds (default: 2.0)")
     parser.add_argument("--once", action="store_true",
                        help="Run once and exit (useful for testing)")
-    parser.add_argument("--model", type=str, default="MTSAIR/Cotype-Nano",
+    parser.add_argument("--model", type=str, default="HuggingFaceTB/SmolLM3-3B",
                        help="Model from hugging face or local path to it")
 
     args = parser.parse_args()
