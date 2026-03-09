@@ -1,0 +1,588 @@
+[
+  {
+    "schema_name": "oil_refinery_digital_twin",
+    "tables": [
+      {
+        "name": "equipment",
+        "columns": [
+          {"name": "equipment_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "equipment_name", "type": "VARCHAR(100)", "constraints": ["NOT NULL"]},
+          {"name": "equipment_type", "type": "VARCHAR(50)", "constraints": ["NOT NULL"]},
+          {"name": "location", "type": "VARCHAR(100)"},
+          {"name": "installation_date", "type": "DATE"}
+        ]
+      },
+      {
+        "name": "sensors",
+        "columns": [
+          {"name": "sensor_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "equipment_id", "type": "INTEGER", "constraints": ["NOT NULL", "REFERENCES equipment(equipment_id)"]},
+          {"name": "sensor_name", "type": "VARCHAR(100)", "constraints": ["NOT NULL"]},
+          {"name": "parameter", "type": "VARCHAR(50)", "constraints": ["NOT NULL"]},
+          {"name": "unit", "type": "VARCHAR(20)"}
+        ]
+      },
+      {
+        "name": "readings",
+        "columns": [
+          {"name": "reading_id", "type": "BIGSERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "sensor_id", "type": "INTEGER", "constraints": ["NOT NULL", "REFERENCES sensors(sensor_id)"]},
+          {"name": "timestamp", "type": "TIMESTAMPTZ", "constraints": ["NOT NULL"]},
+          {"name": "value", "type": "NUMERIC(10,2)", "constraints": ["NOT NULL"]}
+        ]
+      },
+      {
+        "name": "lab_results",
+        "columns": [
+          {"name": "result_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "timestamp", "type": "TIMESTAMPTZ", "constraints": ["NOT NULL"]},
+          {"name": "sample_type", "type": "VARCHAR(50)"},
+          {"name": "parameter", "type": "VARCHAR(50)"},
+          {"name": "value", "type": "NUMERIC(10,2)"},
+          {"name": "unit", "type": "VARCHAR(20)"}
+        ]
+      },
+      {
+        "name": "critical_parameters",
+        "columns": [
+          {"name": "param_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "parameter", "type": "VARCHAR(50)", "constraints": ["NOT NULL"]},
+          {"name": "threshold_value", "type": "NUMERIC(10,2)", "constraints": ["NOT NULL"]},
+          {"name": "condition", "type": "VARCHAR(10)"}
+        ]
+      },
+      {
+        "name": "alarms",
+        "columns": [
+          {"name": "alarm_id", "type": "BIGSERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "sensor_id", "type": "INTEGER", "constraints": ["REFERENCES sensors(sensor_id)"]},
+          {"name": "timestamp", "type": "TIMESTAMPTZ", "constraints": ["NOT NULL"]},
+          {"name": "value", "type": "NUMERIC(10,2)"},
+          {"name": "message", "type": "TEXT"}
+        ]
+      }
+    ]
+  },
+  {
+    "schema_name": "foundry_digital_twin",
+    "tables": [
+      {
+        "name": "furnaces",
+        "columns": [
+          {"name": "furnace_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "furnace_name", "type": "VARCHAR(100)", "constraints": ["NOT NULL"]},
+          {"name": "type", "type": "VARCHAR(50)"},
+          {"name": "capacity_kg", "type": "INTEGER"}
+        ]
+      },
+      {
+        "name": "melts",
+        "columns": [
+          {"name": "melt_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "furnace_id", "type": "INTEGER", "constraints": ["REFERENCES furnaces(furnace_id)"]},
+          {"name": "start_time", "type": "TIMESTAMPTZ", "constraints": ["NOT NULL"]},
+          {"name": "end_time", "type": "TIMESTAMPTZ"},
+          {"name": "material", "type": "VARCHAR(50)"}
+        ]
+      },
+      {
+        "name": "temperature_readings",
+        "columns": [
+          {"name": "reading_id", "type": "BIGSERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "melt_id", "type": "INTEGER", "constraints": ["REFERENCES melts(melt_id)"]},
+          {"name": "timestamp", "type": "TIMESTAMPTZ", "constraints": ["NOT NULL"]},
+          {"name": "temperature_c", "type": "NUMERIC(5,1)", "constraints": ["NOT NULL"]}
+        ]
+      },
+      {
+        "name": "casts",
+        "columns": [
+          {"name": "cast_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "melt_id", "type": "INTEGER", "constraints": ["REFERENCES melts(melt_id)"]},
+          {"name": "mold_id", "type": "VARCHAR(50)"},
+          {"name": "thickness_mm", "type": "NUMERIC(5,2)"},
+          {"name": "timestamp", "type": "TIMESTAMPTZ"}
+        ]
+      },
+      {
+        "name": "defects",
+        "columns": [
+          {"name": "defect_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "cast_id", "type": "INTEGER", "constraints": ["REFERENCES casts(cast_id)"]},
+          {"name": "defect_type", "type": "VARCHAR(50)"},
+          {"name": "location", "type": "VARCHAR(50)"}
+        ]
+      },
+      {
+        "name": "critical_limits",
+        "columns": [
+          {"name": "limit_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "parameter", "type": "VARCHAR(50)"},
+          {"name": "min_value", "type": "NUMERIC(10,2)"},
+          {"name": "max_value", "type": "NUMERIC(10,2)"}
+        ]
+      }
+    ]
+  },
+  {
+    "schema_name": "dairy_plant_digital_twin",
+    "tables": [
+      {
+        "name": "tanks",
+        "columns": [
+          {"name": "tank_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "tank_name", "type": "VARCHAR(50)", "constraints": ["NOT NULL"]},
+          {"name": "capacity_liters", "type": "INTEGER"}
+        ]
+      },
+      {
+        "name": "batches",
+        "columns": [
+          {"name": "batch_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "product_type", "type": "VARCHAR(50)", "constraints": ["NOT NULL"]},
+          {"name": "start_time", "type": "TIMESTAMPTZ"},
+          {"name": "tank_id", "type": "INTEGER", "constraints": ["REFERENCES tanks(tank_id)"]}
+        ]
+      },
+      {
+        "name": "pasteurization_log",
+        "columns": [
+          {"name": "log_id", "type": "BIGSERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "batch_id", "type": "INTEGER", "constraints": ["REFERENCES batches(batch_id)"]},
+          {"name": "timestamp", "type": "TIMESTAMPTZ", "constraints": ["NOT NULL"]},
+          {"name": "temperature_c", "type": "NUMERIC(4,1)", "constraints": ["NOT NULL"]},
+          {"name": "flow_rate_lph", "type": "NUMERIC(6,1)"}
+        ]
+      },
+      {
+        "name": "quality_tests",
+        "columns": [
+          {"name": "test_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "batch_id", "type": "INTEGER", "constraints": ["REFERENCES batches(batch_id)"]},
+          {"name": "test_time", "type": "TIMESTAMPTZ", "constraints": ["NOT NULL"]},
+          {"name": "acidity", "type": "NUMERIC(4,2)"},
+          {"name": "fat_percent", "type": "NUMERIC(4,2)"}
+        ]
+      },
+      {
+        "name": "cip_cycles",
+        "columns": [
+          {"name": "cip_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "equipment_id", "type": "INTEGER"},
+          {"name": "start_time", "type": "TIMESTAMPTZ"},
+          {"name": "end_time", "type": "TIMESTAMPTZ"}
+        ]
+      }
+    ]
+  },
+  {
+    "schema_name": "chemical_plant_digital_twin",
+    "tables": [
+      {
+        "name": "reactors",
+        "columns": [
+          {"name": "reactor_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "reactor_name", "type": "VARCHAR(50)", "constraints": ["NOT NULL"]},
+          {"name": "type", "type": "VARCHAR(50)"},
+          {"name": "catalyst_type", "type": "VARCHAR(50)"}
+        ]
+      },
+      {
+        "name": "reactions",
+        "columns": [
+          {"name": "reaction_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "reactor_id", "type": "INTEGER", "constraints": ["REFERENCES reactors(reactor_id)"]},
+          {"name": "start_time", "type": "TIMESTAMPTZ", "constraints": ["NOT NULL"]},
+          {"name": "end_time", "type": "TIMESTAMPTZ"}
+        ]
+      },
+      {
+        "name": "process_readings",
+        "columns": [
+          {"name": "reading_id", "type": "BIGSERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "reaction_id", "type": "INTEGER", "constraints": ["REFERENCES reactions(reaction_id)"]},
+          {"name": "timestamp", "type": "TIMESTAMPTZ", "constraints": ["NOT NULL"]},
+          {"name": "temperature_c", "type": "NUMERIC(5,1)"},
+          {"name": "pressure_bar", "type": "NUMERIC(6,2)"},
+          {"name": "h2_n2_ratio", "type": "NUMERIC(4,2)"}
+        ]
+      },
+      {
+        "name": "gas_analysis",
+        "columns": [
+          {"name": "analysis_id", "type": "BIGSERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "reaction_id", "type": "INTEGER", "constraints": ["REFERENCES reactions(reaction_id)"]},
+          {"name": "timestamp", "type": "TIMESTAMPTZ", "constraints": ["NOT NULL"]},
+          {"name": "nh3_concentration_ppm", "type": "NUMERIC(8,2)"},
+          {"name": "nox_ppm", "type": "NUMERIC(6,2)"}
+        ]
+      },
+      {
+        "name": "catalyst_replacements",
+        "columns": [
+          {"name": "replacement_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "reactor_id", "type": "INTEGER", "constraints": ["REFERENCES reactors(reactor_id)"]},
+          {"name": "replacement_date", "type": "DATE"},
+          {"name": "catalyst_type", "type": "VARCHAR(50)"}
+        ]
+      }
+    ]
+  },
+  {
+    "schema_name": "thermal_power_plant_digital_twin",
+    "tables": [
+      {
+        "name": "boilers",
+        "columns": [
+          {"name": "boiler_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "boiler_name", "type": "VARCHAR(50)", "constraints": ["NOT NULL"]},
+          {"name": "capacity_mw", "type": "NUMERIC(5,1)"}
+        ]
+      },
+      {
+        "name": "turbines",
+        "columns": [
+          {"name": "turbine_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "turbine_name", "type": "VARCHAR(50)", "constraints": ["NOT NULL"]},
+          {"name": "rated_speed_rpm", "type": "INTEGER"}
+        ]
+      },
+      {
+        "name": "generators",
+        "columns": [
+          {"name": "generator_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "turbine_id", "type": "INTEGER", "constraints": ["REFERENCES turbines(turbine_id)"]},
+          {"name": "rated_power_mw", "type": "NUMERIC(5,1)"}
+        ]
+      },
+      {
+        "name": "boiler_readings",
+        "columns": [
+          {"name": "reading_id", "type": "BIGSERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "boiler_id", "type": "INTEGER", "constraints": ["REFERENCES boilers(boiler_id)"]},
+          {"name": "timestamp", "type": "TIMESTAMPTZ", "constraints": ["NOT NULL"]},
+          {"name": "steam_temp_c", "type": "NUMERIC(5,1)"},
+          {"name": "steam_pressure_bar", "type": "NUMERIC(6,2)"},
+          {"name": "gas_flow_m3h", "type": "NUMERIC(8,2)"}
+        ]
+      },
+      {
+        "name": "turbine_readings",
+        "columns": [
+          {"name": "reading_id", "type": "BIGSERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "turbine_id", "type": "INTEGER", "constraints": ["REFERENCES turbines(turbine_id)"]},
+          {"name": "timestamp", "type": "TIMESTAMPTZ", "constraints": ["NOT NULL"]},
+          {"name": "speed_rpm", "type": "INTEGER"},
+          {"name": "vibration_mm_s", "type": "NUMERIC(4,2)"}
+        ]
+      },
+      {
+        "name": "electrical_output",
+        "columns": [
+          {"name": "output_id", "type": "BIGSERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "generator_id", "type": "INTEGER", "constraints": ["REFERENCES generators(generator_id)"]},
+          {"name": "timestamp", "type": "TIMESTAMPTZ", "constraints": ["NOT NULL"]},
+          {"name": "power_mw", "type": "NUMERIC(6,2)"},
+          {"name": "voltage_kv", "type": "NUMERIC(5,2)"}
+        ]
+      }
+    ]
+  },
+  {
+    "schema_name": "rolling_mill_digital_twin",
+    "tables": [
+      {
+        "name": "stands",
+        "columns": [
+          {"name": "stand_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "stand_name", "type": "VARCHAR(20)", "constraints": ["NOT NULL"]},
+          {"name": "type", "type": "VARCHAR(20)"}
+        ]
+      },
+      {
+        "name": "coils",
+        "columns": [
+          {"name": "coil_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "coil_number", "type": "VARCHAR(30)", "constraints": ["NOT NULL"]},
+          {"name": "start_time", "type": "TIMESTAMPTZ"},
+          {"name": "end_time", "type": "TIMESTAMPTZ"}
+        ]
+      },
+      {
+        "name": "rolling_readings",
+        "columns": [
+          {"name": "reading_id", "type": "BIGSERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "coil_id", "type": "INTEGER", "constraints": ["REFERENCES coils(coil_id)"]},
+          {"name": "stand_id", "type": "INTEGER", "constraints": ["REFERENCES stands(stand_id)"]},
+          {"name": "timestamp", "type": "TIMESTAMPTZ", "constraints": ["NOT NULL"]},
+          {"name": "thickness_mm", "type": "NUMERIC(5,3)"},
+          {"name": "force_mn", "type": "NUMERIC(5,2)"},
+          {"name": "speed_mps", "type": "NUMERIC(5,2)"},
+          {"name": "temperature_c", "type": "NUMERIC(5,1)"}
+        ]
+      },
+      {
+        "name": "thickness_measurements",
+        "columns": [
+          {"name": "measurement_id", "type": "BIGSERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "coil_id", "type": "INTEGER", "constraints": ["REFERENCES coils(coil_id)"]},
+          {"name": "position_m", "type": "NUMERIC(6,2)"},
+          {"name": "thickness_mm", "type": "NUMERIC(5,3)"},
+          {"name": "timestamp", "type": "TIMESTAMPTZ"}
+        ]
+      },
+      {
+        "name": "roll_changes",
+        "columns": [
+          {"name": "change_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "stand_id", "type": "INTEGER", "constraints": ["REFERENCES stands(stand_id)"]},
+          {"name": "change_time", "type": "TIMESTAMPTZ"},
+          {"name": "roll_diameter_mm", "type": "NUMERIC(6,1)"}
+        ]
+      }
+    ]
+  },
+  {
+    "schema_name": "cement_plant_digital_twin",
+    "tables": [
+      {
+        "name": "kilns",
+        "columns": [
+          {"name": "kiln_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "kiln_name", "type": "VARCHAR(50)", "constraints": ["NOT NULL"]},
+          {"name": "length_m", "type": "NUMERIC(6,1)"},
+          {"name": "diameter_m", "type": "NUMERIC(5,1)"}
+        ]
+      },
+      {
+        "name": "mills",
+        "columns": [
+          {"name": "mill_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "mill_name", "type": "VARCHAR(50)", "constraints": ["NOT NULL"]},
+          {"name": "type", "type": "VARCHAR(30)"}
+        ]
+      },
+      {
+        "name": "clinker_production",
+        "columns": [
+          {"name": "production_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "kiln_id", "type": "INTEGER", "constraints": ["REFERENCES kilns(kiln_id)"]},
+          {"name": "start_time", "type": "TIMESTAMPTZ"},
+          {"name": "end_time", "type": "TIMESTAMPTZ"}
+        ]
+      },
+      {
+        "name": "kiln_readings",
+        "columns": [
+          {"name": "reading_id", "type": "BIGSERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "production_id", "type": "INTEGER", "constraints": ["REFERENCES clinker_production(production_id)"]},
+          {"name": "timestamp", "type": "TIMESTAMPTZ", "constraints": ["NOT NULL"]},
+          {"name": "temperature_c", "type": "NUMERIC(5,1)"},
+          {"name": "pressure_pa", "type": "NUMERIC(8,2)"},
+          {"name": "co_ppm", "type": "INTEGER"},
+          {"name": "free_lime_pct", "type": "NUMERIC(4,2)"}
+        ]
+      },
+      {
+        "name": "raw_mix",
+        "columns": [
+          {"name": "mix_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "production_id", "type": "INTEGER", "constraints": ["REFERENCES clinker_production(production_id)"]},
+          {"name": "limestone_pct", "type": "NUMERIC(5,2)"},
+          {"name": "clay_pct", "type": "NUMERIC(5,2)"}
+        ]
+      },
+      {
+        "name": "mill_readings",
+        "columns": [
+          {"name": "reading_id", "type": "BIGSERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "mill_id", "type": "INTEGER", "constraints": ["REFERENCES mills(mill_id)"]},
+          {"name": "timestamp", "type": "TIMESTAMPTZ", "constraints": ["NOT NULL"]},
+          {"name": "power_kw", "type": "NUMERIC(8,2)"},
+          {"name": "product_fineness", "type": "NUMERIC(5,2)"}
+        ]
+      }
+    ]
+  },
+  {
+    "schema_name": "pharma_tableting_digital_twin",
+    "tables": [
+      {
+        "name": "equipment",
+        "columns": [
+          {"name": "equipment_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "equipment_name", "type": "VARCHAR(100)", "constraints": ["NOT NULL"]},
+          {"name": "equipment_type", "type": "VARCHAR(50)"}
+        ]
+      },
+      {
+        "name": "batches",
+        "columns": [
+          {"name": "batch_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "product_name", "type": "VARCHAR(100)", "constraints": ["NOT NULL"]},
+          {"name": "start_time", "type": "TIMESTAMPTZ"},
+          {"name": "end_time", "type": "TIMESTAMPTZ"},
+          {"name": "status", "type": "VARCHAR(20)"}
+        ]
+      },
+      {
+        "name": "granulation_readings",
+        "columns": [
+          {"name": "reading_id", "type": "BIGSERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "batch_id", "type": "INTEGER", "constraints": ["REFERENCES batches(batch_id)"]},
+          {"name": "timestamp", "type": "TIMESTAMPTZ", "constraints": ["NOT NULL"]},
+          {"name": "moisture_pct", "type": "NUMERIC(4,2)"},
+          {"name": "temperature_c", "type": "NUMERIC(4,1)"}
+        ]
+      },
+      {
+        "name": "tablet_press_readings",
+        "columns": [
+          {"name": "reading_id", "type": "BIGSERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "batch_id", "type": "INTEGER", "constraints": ["REFERENCES batches(batch_id)"]},
+          {"name": "press_id", "type": "INTEGER", "constraints": ["REFERENCES equipment(equipment_id)"]},
+          {"name": "timestamp", "type": "TIMESTAMPTZ", "constraints": ["NOT NULL"]},
+          {"name": "compression_force_kN", "type": "NUMERIC(5,1)"},
+          {"name": "tablet_weight_mg", "type": "INTEGER"}
+        ]
+      },
+      {
+        "name": "quality_tests",
+        "columns": [
+          {"name": "test_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "batch_id", "type": "INTEGER", "constraints": ["REFERENCES batches(batch_id)"]},
+          {"name": "test_time", "type": "TIMESTAMPTZ"},
+          {"name": "hardness_N", "type": "NUMERIC(5,1)"},
+          {"name": "disintegration_time_s", "type": "INTEGER"}
+        ]
+      },
+      {
+        "name": "coating_readings",
+        "columns": [
+          {"name": "coating_id", "type": "BIGSERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "batch_id", "type": "INTEGER", "constraints": ["REFERENCES batches(batch_id)"]},
+          {"name": "timestamp", "type": "TIMESTAMPTZ"},
+          {"name": "spray_rate_ml_min", "type": "NUMERIC(6,2)"},
+          {"name": "drum_temp_c", "type": "NUMERIC(4,1)"}
+        ]
+      }
+    ]
+  },
+  {
+    "schema_name": "automotive_welding_digital_twin",
+    "tables": [
+      {
+        "name": "robots",
+        "columns": [
+          {"name": "robot_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "robot_name", "type": "VARCHAR(50)", "constraints": ["NOT NULL"]},
+          {"name": "model", "type": "VARCHAR(50)"}
+        ]
+      },
+      {
+        "name": "body_in_white",
+        "columns": [
+          {"name": "body_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "vin", "type": "VARCHAR(17)", "constraints": ["UNIQUE"]},
+          {"name": "model", "type": "VARCHAR(50)"},
+          {"name": "production_date", "type": "DATE"}
+        ]
+      },
+      {
+        "name": "weld_spots",
+        "columns": [
+          {"name": "spot_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "body_id", "type": "INTEGER", "constraints": ["REFERENCES body_in_white(body_id)"]},
+          {"name": "robot_id", "type": "INTEGER", "constraints": ["REFERENCES robots(robot_id)"]},
+          {"name": "spot_number", "type": "VARCHAR(20)"},
+          {"name": "timestamp", "type": "TIMESTAMPTZ", "constraints": ["NOT NULL"]}
+        ]
+      },
+      {
+        "name": "welding_parameters",
+        "columns": [
+          {"name": "param_id", "type": "BIGSERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "spot_id", "type": "INTEGER", "constraints": ["REFERENCES weld_spots(spot_id)"]},
+          {"name": "current_a", "type": "NUMERIC(6,1)"},
+          {"name": "voltage_v", "type": "NUMERIC(5,1)"},
+          {"name": "time_ms", "type": "INTEGER"},
+          {"name": "force_n", "type": "NUMERIC(6,1)"}
+        ]
+      },
+      {
+        "name": "geometry_inspections",
+        "columns": [
+          {"name": "inspection_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "body_id", "type": "INTEGER", "constraints": ["REFERENCES body_in_white(body_id)"]},
+          {"name": "timestamp", "type": "TIMESTAMPTZ"},
+          {"name": "deviation_mm", "type": "NUMERIC(5,2)"},
+          {"name": "location", "type": "VARCHAR(50)"}
+        ]
+      }
+    ]
+  },
+  {
+    "schema_name": "pulp_paper_digital_twin",
+    "tables": [
+      {
+        "name": "digesters",
+        "columns": [
+          {"name": "digester_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "digester_name", "type": "VARCHAR(50)", "constraints": ["NOT NULL"]},
+          {"name": "type", "type": "VARCHAR(30)"}
+        ]
+      },
+      {
+        "name": "paper_machines",
+        "columns": [
+          {"name": "machine_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "machine_name", "type": "VARCHAR(50)", "constraints": ["NOT NULL"]},
+          {"name": "width_m", "type": "NUMERIC(5,2)"},
+          {"name": "max_speed_m_min", "type": "INTEGER"}
+        ]
+      },
+      {
+        "name": "pulp_cooks",
+        "columns": [
+          {"name": "cook_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "digester_id", "type": "INTEGER", "constraints": ["REFERENCES digesters(digester_id)"]},
+          {"name": "start_time", "type": "TIMESTAMPTZ"},
+          {"name": "end_time", "type": "TIMESTAMPTZ"},
+          {"name": "wood_type", "type": "VARCHAR(30)"}
+        ]
+      },
+      {
+        "name": "cooking_readings",
+        "columns": [
+          {"name": "reading_id", "type": "BIGSERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "cook_id", "type": "INTEGER", "constraints": ["REFERENCES pulp_cooks(cook_id)"]},
+          {"name": "timestamp", "type": "TIMESTAMPTZ", "constraints": ["NOT NULL"]},
+          {"name": "temperature_c", "type": "NUMERIC(5,1)"},
+          {"name": "pressure_bar", "type": "NUMERIC(5,2)"},
+          {"name": "alkali_concentration_gl", "type": "NUMERIC(5,2)"}
+        ]
+      },
+      {
+        "name": "paper_production",
+        "columns": [
+          {"name": "production_id", "type": "SERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "machine_id", "type": "INTEGER", "constraints": ["REFERENCES paper_machines(machine_id)"]},
+          {"name": "start_time", "type": "TIMESTAMPTZ"},
+          {"name": "end_time", "type": "TIMESTAMPTZ"},
+          {"name": "paper_grade", "type": "VARCHAR(30)"}
+        ]
+      },
+      {
+        "name": "paper_quality",
+        "columns": [
+          {"name": "quality_id", "type": "BIGSERIAL", "constraints": ["PRIMARY KEY"]},
+          {"name": "production_id", "type": "INTEGER", "constraints": ["REFERENCES paper_production(production_id)"]},
+          {"name": "timestamp", "type": "TIMESTAMPTZ", "constraints": ["NOT NULL"]},
+          {"name": "moisture_pct", "type": "NUMERIC(4,2)"},
+          {"name": "thickness_mm", "type": "NUMERIC(5,3)"},
+          {"name": "tension_n_m", "type": "NUMERIC(6,1)"}
+        ]
+      }
+    ]
+  }
+]
