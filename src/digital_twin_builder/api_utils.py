@@ -7,7 +7,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import time
 import logging
-from config import API_URL
+from .config import API_URL
 
 logger = logging.getLogger(__name__)
 
@@ -34,14 +34,14 @@ def get_session():
     return requests_session
 
 
-def submit_task(agent_id, conversation_id, params, conv_idx=None):
+def submit_task(agent_id, conversation_id, params, conv_idx=0):
     """Submit task to API
     
     Args:
         agent_id: ID of the agent
         conversation_id: ID of the conversation
         params: Parameters for the task
-        conv_idx: Optional conversation index (for streamlit compatibility)
+        conv_idx: Conversation index for multi-turn tasks (default 0)
     
     Returns:
         dict: Response JSON or None if error
@@ -50,6 +50,7 @@ def submit_task(agent_id, conversation_id, params, conv_idx=None):
         session = get_session()
         payload = {
             "agent_id": agent_id,
+            "conv_idx": conv_idx,
             "conversation_id": conversation_id,
             "params": params,
             "priority": 5,
