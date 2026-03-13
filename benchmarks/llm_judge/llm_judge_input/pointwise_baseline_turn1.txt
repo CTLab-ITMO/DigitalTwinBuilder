@@ -2,225 +2,794 @@ You are an expert in digital twin development for industrial production systems,
 
 Here is the digital twin code to evaluate:
 [CODE TO EVALUATE]
-import pychrono as chrono
-import pychrono.irrlicht as chronoirr
-import numpy as np
+import os
+import sys
 import time
+import math
+import json
+import queue
+import signal
+import random
+import logging
+import argparse
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Callable, Dict, Optional, List, Tuple
 
-# System
-system = chrono.ChSystemNSC()
-system.SetGravitationalAcceleration(chrono.ChVector3d(0, -9.81, 0))
+import pychrono as chrono
 
-# Materials
-steel_mat = chrono.ChContactMaterialNSC()
-steel_mat.SetFriction(0.3)
-steel_mat.SetRestitution(0.1)
+try:
+    import psycopg2
+    import psycopg2.extras
+except Exception as e:
+    psycopg2 = None
 
-# --- Промежуточный ковш (tundish) ---
-tundish_body = chrono.ChBodyEasyBox(1.5, 0.8, 0.8, 7800, True, True, steel_mat)
-tundish_body.SetPos(chrono.ChVector3d(0, 4.0, 0))
-tundish_body.SetFixed(True)
-system.Add(tundish_body)
 
-# --- Кристаллизатор (mold) - цилиндр/труба ---
-mold_body = chrono.ChBodyEasyCylinder(chrono.ChAxis_Y, 0.15, 0.9, 7800, True, True, steel_mat)
-mold_body.SetPos(chrono.ChVector3d(0, 2.5, 0))
-mold_body.SetFixed(True)
-system.Add(mold_body)
+def _utcnow():
+    return datetime.now(timezone.utc)
 
-# --- Зона вторичного охлаждения ---
-cooling_zone = chrono.ChBodyEasyBox(0.4, 1.5, 0.4, 7800, True, True, steel_mat)
-cooling_zone.SetPos(chrono.ChVector3d(0, 1.0, 0))
-cooling_zone.SetFixed(True)
-system.Add(cooling_zone)
 
-# --- Тянущие валки (пара) ---
-roll1 = chrono.ChBodyEasyCylinder(chrono.ChAxis_Z, 0.12, 0.5, 7800, True, True, steel_mat)
-roll1.SetPos(chrono.ChVector3d(0.3, -0.3, 0))
-roll1.SetFixed(True)
-system.Add(roll1)
+def _get_const_function(value: float):
+    # PyChrono API differs by version
+    if hasattr(chrono, "ChFunction_Const"):
+        return chrono.ChFunction_Const(value)
+    if hasattr(chrono, "ChFunctionConst"):
+        f = chrono.ChFunctionConst()
+        f.SetConstant(value)
+        return f
+    raise RuntimeError("Cannot find a constant function class in this PyChrono build.")
 
-roll2 = chrono.ChBodyEasyCylinder(chrono.ChAxis_Z, 0.12, 0.5, 7800, True, True, steel_mat)
-roll2.SetPos(chrono.ChVector3d(-0.3, -0.3, 0))
-roll2.SetFixed(True)
-system.Add(roll2)
 
-# --- Слиток (заготовка) ---
-strand_body = chrono.ChBodyEasyBox(0.25, 2.0, 0.25, 7800, True, True, steel_mat)
-strand_body.SetPos(chrono.ChVector3d(0, 0.5, 0))
-strand_body.SetFixed(False)
-system.Add(strand_body)
+@dataclass(frozen=True)
+class SensorDef:
+    sensor_uid: int               # unique "sensor_id" per schema (sensor_metadata.sensor_id)
+    sensor_type: str              # sensor_metadata.sensor_type
+    location: str                 # sensor_metadata.location
+    calibration_status: bool
+    period_s: float               # polling period in seconds
+    value_fn: Callable[[], float] # returns a single scalar value to store in plant_data.value
 
-# --- Параметры нормального режима ---
-TEMP_NORMAL = 1520.0
-TEMP_MIN = 1510.0
-TEMP_MAX = 1550.0
-TEMP_ALARM_DELTA = 20.0
 
-CASTING_SPEED_NORMAL = 1.4
-CASTING_SPEED_MIN = 1.3
-CASTING_SPEED_MAX = 1.5
+class DatabaseClient:
+    """
+    Minimal DB client aligned to the provided schema.
+    Expects tables to exist. Can optionally ensure presence (best-effort).
+    """
+    def __init__(self, dsn: str, plant_name: str, plant_location: str, plant_version: int, ensure_schema: bool = False):
+        if psycopg2 is None:
+            raise RuntimeError("psycopg2 is required for database logging but is not installed.")
+        self.dsn = dsn
+        self.plant_name = plant_name
+        self.plant_location = plant_location
+        self.plant_version = plant_version
+        self.ensure_schema = ensure_schema
 
-WATER_FLOW_NORMAL = 1200.0
-WATER_FLOW_MIN = 960.0
-WATER_FLOW_MAX = 1440.0
-WATER_ALARM_PCT = 0.20
+        self.conn = None
+        self.cur = None
+        self.plant_id = None
+        self.sensor_uid_to_pk: Dict[int, int] = {}
+        self._pending = queue.Queue(maxsize=100000)
 
-VIBRATION_NORMAL = 4.0
-VIBRATION_ALARM_FACTOR_LOW = 1.30
-VIBRATION_ALARM_FACTOR_HIGH = 1.50
+    def connect(self):
+        self.conn = psycopg2.connect(self.dsn)
+        self.conn.autocommit = False
+        self.cur = self.conn.cursor()
+        if self.ensure_schema:
+            self._ensure_schema_best_effort()
+        self.plant_id = self._upsert_plant_metadata()
+        self.conn.commit()
 
-# --- Сенсорные данные (симуляция) ---
-sensor_data = {
-    "temperature": TEMP_NORMAL,
-    "casting_speed": CASTING_SPEED_NORMAL,
-    "water_flow": WATER_FLOW_NORMAL,
-    "vibration": VIBRATION_NORMAL,
-    "chem_composition": {"C": 0.18, "Mn": 0.75, "Si": 0.22, "S": 0.015, "P": 0.018},
-    "defect_risk": 0.0,
-    "equipment_wear": 0.0,
-    "timestamp": 0.0,
-}
+    def close(self):
+        try:
+            self.flush()
+        except Exception:
+            pass
+        try:
+            if self.cur:
+                self.cur.close()
+        finally:
+            self.cur = None
+        try:
+            if self.conn:
+                self.conn.close()
+        finally:
+            self.conn = None
 
-last_chem_update = 0.0
-CHEM_UPDATE_INTERVAL = 900.0
+    def _ensure_schema_best_effort(self):
+        # Best-effort only; respects given schema but won't fight existing migrations.
+        stmts = [
+            """
+            CREATE TABLE IF NOT EXISTS metadata (
+                id SERIAL PRIMARY KEY,
+                plant_name VARCHAR(255) NOT NULL,
+                location VARCHAR(255) NOT NULL,
+                version integer NOT NULL,
+                last_updated TIMESTAMPTZ NOT NULL
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS sensor_metadata (
+                id SERIAL PRIMARY KEY,
+                sensor_type VARCHAR(255) NOT NULL,
+                location VARCHAR(255) NOT NULL,
+                calibration_status BOOLEAN NOT NULL,
+                sensor_id integer NOT NULL UNIQUE
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS plant_data (
+                id SERIAL PRIMARY KEY,
+                timestamp TIMESTAMPTZ NOT NULL,
+                value DOUBLE PRECISION NOT NULL,
+                sensor_id integer NOT NULL REFERENCES sensor_metadata(id) ON DELETE CASCADE,
+                plant_id integer NOT NULL REFERENCES metadata(id) ON DELETE CASCADE
+            );
+            """,
+        ]
+        for s in stmts:
+            try:
+                self.cur.execute(s)
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
 
-def simulate_sensors(t, dt):
-    noise_temp = np.random.normal(0, 1.5)
-    noise_speed = np.random.normal(0, 0.01)
-    noise_water = np.random.normal(0, 15.0)
-    noise_vib = np.random.normal(0, 0.1)
+    def _upsert_plant_metadata(self) -> int:
+        now = _utcnow()
+        # No uniqueness constraint specified in schema. We'll insert a row per run unless one matches name+location+version.
+        # Use a select-first approach.
+        self.cur.execute(
+            """
+            SELECT id FROM metadata
+            WHERE plant_name=%s AND location=%s AND version=%s
+            ORDER BY id DESC
+            LIMIT 1;
+            """,
+            (self.plant_name, self.plant_location, self.plant_version),
+        )
+        row = self.cur.fetchone()
+        if row:
+            plant_id = int(row[0])
+            self.cur.execute(
+                "UPDATE metadata SET last_updated=%s WHERE id=%s;",
+                (now, plant_id),
+            )
+            return plant_id
 
-    sensor_data["temperature"] = TEMP_NORMAL + noise_temp
-    sensor_data["casting_speed"] = CASTING_SPEED_NORMAL + noise_speed
-    sensor_data["water_flow"] = WATER_FLOW_NORMAL + noise_water
-    sensor_data["vibration"] = VIBRATION_NORMAL + abs(noise_vib)
-    sensor_data["timestamp"] = t
+        self.cur.execute(
+            """
+            INSERT INTO metadata(plant_name, location, version, last_updated)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id;
+            """,
+            (self.plant_name, self.plant_location, self.plant_version, now),
+        )
+        return int(self.cur.fetchone()[0])
 
-def check_alarms():
-    alarms = []
-    temp = sensor_data["temperature"]
-    if abs(temp - TEMP_NORMAL) > TEMP_ALARM_DELTA:
-        alarms.append(f"ALARM: Temperature {temp:.1f}C out of range [{TEMP_NORMAL - TEMP_ALARM_DELTA}, {TEMP_NORMAL + TEMP_ALARM_DELTA}]")
+    def ensure_sensor(self, s: SensorDef) -> int:
+        """
+        Ensures a row exists in sensor_metadata for the given sensor_uid (schema: sensor_id unique).
+        Returns PK id (sensor_metadata.id), which is what plant_data.sensor_id references.
+        """
+        if s.sensor_uid in self.sensor_uid_to_pk:
+            return self.sensor_uid_to_pk[s.sensor_uid]
 
-    water = sensor_data["water_flow"]
-    water_dev = abs(water - WATER_FLOW_NORMAL) / WATER_FLOW_NORMAL
-    if water_dev > WATER_ALARM_PCT:
-        alarms.append(f"ALARM: Water flow {water:.1f} m3/h deviation {water_dev*100:.1f}%")
+        self.cur.execute(
+            "SELECT id FROM sensor_metadata WHERE sensor_id=%s LIMIT 1;",
+            (s.sensor_uid,),
+        )
+        row = self.cur.fetchone()
+        if row:
+            pk = int(row[0])
+            # Keep metadata fresh
+            self.cur.execute(
+                """
+                UPDATE sensor_metadata
+                SET sensor_type=%s, location=%s, calibration_status=%s
+                WHERE id=%s;
+                """,
+                (s.sensor_type, s.location, s.calibration_status, pk),
+            )
+            self.sensor_uid_to_pk[s.sensor_uid] = pk
+            return pk
 
-    vib = sensor_data["vibration"]
-    vib_factor = vib / VIBRATION_NORMAL
-    if vib_factor >= VIBRATION_ALARM_FACTOR_LOW:
-        alarms.append(f"ALARM: Vibration {vib:.2f} mm/s RMS factor {vib_factor:.2f}")
-    return alarms
+        self.cur.execute(
+            """
+            INSERT INTO sensor_metadata(sensor_type, location, calibration_status, sensor_id)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id;
+            """,
+            (s.sensor_type, s.location, s.calibration_status, s.sensor_uid),
+        )
+        pk = int(self.cur.fetchone()[0])
+        self.sensor_uid_to_pk[s.sensor_uid] = pk
+        return pk
 
-def predict_defects():
-    temp_dev = abs(sensor_data["temperature"] - TEMP_NORMAL) / TEMP_ALARM_DELTA
-    speed_norm = (sensor_data["casting_speed"] - CASTING_SPEED_MIN) / (CASTING_SPEED_MAX - CASTING_SPEED_MIN)
-    speed_norm = np.clip(speed_norm, 0, 1)
-    risk = 0.0
-    risk += temp_dev * 0.4
-    risk += (1.0 - speed_norm) * 0.3
-    vib_factor = sensor_data["vibration"] / VIBRATION_NORMAL
-    risk += (vib_factor - 1.0) * 0.3
-    sensor_data["defect_risk"] = np.clip(risk, 0.0, 1.0)
-    return sensor_data["defect_risk"]
+    def log_value(self, ts: datetime, value: float, sensor_pk: int):
+        """
+        Writes a plant_data row. On transient failure, queues data in memory.
+        """
+        item = (ts, float(value), int(sensor_pk), int(self.plant_id))
+        try:
+            self.cur.execute(
+                """
+                INSERT INTO plant_data(timestamp, value, sensor_id, plant_id)
+                VALUES (%s, %s, %s, %s);
+                """,
+                item,
+            )
+        except Exception as e:
+            self.conn.rollback()
+            try:
+                self._pending.put_nowait(item)
+            except queue.Full:
+                raise RuntimeError("DB logging failed and pending buffer is full.") from e
 
-def update_wear(dt):
-    vib_factor = sensor_data["vibration"] / VIBRATION_NORMAL
-    wear_rate = 1e-6 * vib_factor * dt
-    sensor_data["equipment_wear"] += wear_rate
+    def flush(self):
+        if self.conn is None or self.cur is None:
+            return
+        # Flush pending first
+        flushed = 0
+        while True:
+            try:
+                item = self._pending.get_nowait()
+            except queue.Empty:
+                break
+            self.cur.execute(
+                """
+                INSERT INTO plant_data(timestamp, value, sensor_id, plant_id)
+                VALUES (%s, %s, %s, %s);
+                """,
+                item,
+            )
+            flushed += 1
+        self.conn.commit()
+        return flushed
 
-def update_chem_composition(t):
-    global last_chem_update
-    if t - last_chem_update >= CHEM_UPDATE_INTERVAL:
-        sensor_data["chem_composition"] = {
-            "C": round(0.18 + np.random.normal(0, 0.005), 4),
-            "Mn": round(0.75 + np.random.normal(0, 0.02), 4),
-            "Si": round(0.22 + np.random.normal(0, 0.01), 4),
-            "S": round(0.015 + np.random.normal(0, 0.001), 5),
-            "P": round(0.018 + np.random.normal(0, 0.001), 5),
-        }
-        last_chem_update = t
-        print(f"[t={t:.1f}s] Chem update (batch): {sensor_data['chem_composition']}")
 
-# --- Irrlicht визуализация ---
-vis = chronoirr.ChVisualSystemIrrlicht()
-vis.AttachSystem(system)
-vis.SetWindowSize(1280, 720)
-vis.SetWindowTitle("Digital Twin: Continuous Steel Casting (Normal Mode)")
-vis.Initialize()
-vis.AddLogo()
-vis.AddSkyBox()
-vis.AddCamera(chrono.ChVector3d(3, 3, 4), chrono.ChVector3d(0, 1, 0))
-vis.AddTypicalLights()
+class CementPlantDigitalTwin:
+    """
+    PyChrono-based digital twin (mechanical core) with virtual process/quality sensors.
+    Equipment represented as simplified rigid bodies with motors.
+    """
+    def __init__(self, seed: int = 42):
+        self.rng = random.Random(seed)
 
-tundish_asset = chrono.ChVisualShapeBox(1.5, 0.8, 0.8)
-tundish_asset.SetColor(chrono.ChColor(0.6, 0.3, 0.1))
-tundish_body.AddVisualShape(tundish_asset)
+        self.system = chrono.ChSystemNSC()
+        self.system.Set_G_acc(chrono.ChVectorD(0, -9.81, 0))
 
-mold_asset = chrono.ChVisualShapeCylinder(0.15, 0.9)
-mold_asset.SetColor(chrono.ChColor(0.7, 0.7, 0.8))
-mold_body.AddVisualShape(mold_asset)
+        self.mat_steel = chrono.ChMaterialSurfaceNSC()
+        self.mat_steel.SetFriction(0.4)
+        self.mat_steel.SetRestitution(0.1)
 
-strand_asset = chrono.ChVisualShapeBox(0.25, 2.0, 0.25)
-strand_asset.SetColor(chrono.ChColor(0.9, 0.5, 0.1))
-strand_body.AddVisualShape(strand_asset)
+        self.mat_refractory = chrono.ChMaterialSurfaceNSC()
+        self.mat_refractory.SetFriction(0.6)
+        self.mat_refractory.SetRestitution(0.05)
 
-# --- Параметры симуляции ---
-step_size = 3.0
-sim_time = 0.0
-max_sim_time = 3600.0
-print_interval = 30.0
-last_print = -print_interval
-frame_count = 0
+        self.ground = chrono.ChBody()
+        self.ground.SetBodyFixed(True)
+        self.ground.SetName("GROUND")
+        self.system.Add(self.ground)
 
-print("=== Digital Twin: Continuous Casting (NORMAL MODE) ===")
-print(f"Temp norm: {TEMP_NORMAL}C | Speed: {CASTING_SPEED_NORMAL} m/min | Water: {WATER_FLOW_NORMAL} m3/h | Vib: {VIBRATION_NORMAL} mm/s")
+        self.bodies: Dict[str, chrono.ChBody] = {}
+        self.motors: Dict[str, object] = {}
 
-# --- Симуляционный цикл ---
-while vis.Run() and sim_time < max_sim_time:
-    vis.BeginScene()
-    vis.Render()
+        # Process surrogate states (simple, stable, bounded)
+        self.fuel_rate = 1.0          # normalized (0.7..1.3 typical)
+        self.raw_feed_rate = 1.0      # normalized
+        self.airflow_rate = 1.0       # normalized
+        self.kiln_speed_rps = 0.04    # ~2.4 rpm
+        self.raw_mill_speed_rps = 0.20
+        self.cement_mill_speed_rps = 0.22
+        self.crusher_speed_rps = 1.50
 
-    simulate_sensors(sim_time, step_size)
-    update_chem_composition(sim_time)
-    update_wear(step_size)
-    defect_risk = predict_defects()
-    alarms = check_alarms()
+        self._last_control_update_s = 0.0
 
-    cast_speed_ms = sensor_data["casting_speed"] / 60.0
-    pos = strand_body.GetPos()
-    new_y = pos.y - cast_speed_ms * step_size
-    if new_y < -5.0:
-        new_y = 2.0
-    strand_body.SetPos(chrono.ChVector3d(pos.x, new_y, pos.z))
+        # Derived states
+        self._kiln_temp_c = 1450.0
+        self._free_lime_pct = 1.2
+        self._co_pct = 0.05
+        self._nox_ppm = 900.0
+        self._cyclone_draft_pa = -2500.0
+        self._cement_fineness_blaine = 3300.0
+        self._mill_load_pct = 65.0
 
-    vib_offset = 0.005 * np.sin(sim_time * 10) * (sensor_data["vibration"] / VIBRATION_NORMAL)
-    roll1.SetPos(chrono.ChVector3d(0.3 + vib_offset, -0.3, 0))
-    roll2.SetPos(chrono.ChVector3d(-0.3 - vib_offset, -0.3, 0))
+        self._build_equipment()
 
-    if sim_time - last_print >= print_interval:
-        print(f"\n[t={sim_time:.0f}s]")
-        print(f"  Temp: {sensor_data['temperature']:.1f}C | Speed: {sensor_data['casting_speed']:.3f} m/min | Water: {sensor_data['water_flow']:.1f} m3/h | Vib: {sensor_data['vibration']:.2f} mm/s")
-        print(f"  Defect Risk: {defect_risk*100:.1f}% | Wear Index: {sensor_data['equipment_wear']*1e6:.4f}")
-        if alarms:
-            for a in alarms:
-                print(f"  {a}")
+    def _add_body(self, body: chrono.ChBody, name: str):
+        body.SetName(name)
+        self.system.Add(body)
+        self.bodies[name] = body
+        return body
+
+    def _build_equipment(self):
+        # Layout along X axis for clarity
+        x0 = 0.0
+
+        # Crusher: base + two rollers
+        crusher_base = chrono.ChBodyEasyBox(2.0, 0.5, 1.5, 2000.0, False, True, self.mat_steel)
+        crusher_base.SetPos(chrono.ChVectorD(x0, 0.25, 0))
+        crusher_base.SetBodyFixed(True)
+        self._add_body(crusher_base, "crusher_base")
+
+        roller1 = chrono.ChBodyEasyCylinder(0.25, 1.2, 7800.0, False, True, self.mat_steel)
+        roller1.SetPos(chrono.ChVectorD(x0, 0.9, -0.4))
+        self._add_body(roller1, "crusher_roller_1")
+
+        roller2 = chrono.ChBodyEasyCylinder(0.25, 1.2, 7800.0, False, True, self.mat_steel)
+        roller2.SetPos(chrono.ChVectorD(x0, 0.9, 0.4))
+        self._add_body(roller2, "crusher_roller_2")
+
+        # Revolute joints to ground
+        for name, body, z in [("crusher_rev_1", roller1, -0.4), ("crusher_rev_2", roller2, 0.4)]:
+            rev = chrono.ChLinkLockRevolute()
+            frame = chrono.ChFrameD(chrono.ChVectorD(x0, 0.9, z), chrono.Q_from_AngAxis(math.pi / 2.0, chrono.ChVectorD(1, 0, 0)))
+            rev.Initialize(body, self.ground, frame)
+            self.system.Add(rev)
+
+        # Motors for rollers (counter-rotating)
+        m1 = chrono.ChLinkMotorRotationSpeed()
+        frame1 = chrono.ChFrameD(chrono.ChVectorD(x0, 0.9, -0.4), chrono.Q_from_AngAxis(math.pi / 2.0, chrono.ChVectorD(1, 0, 0)))
+        m1.Initialize(roller1, self.ground, frame1)
+        m1.SetSpeedFunction(_get_const_function(2.0 * math.pi * self.crusher_speed_rps))
+        self.system.Add(m1)
+        self.motors["crusher_motor_1"] = m1
+
+        m2 = chrono.ChLinkMotorRotationSpeed()
+        frame2 = chrono.ChFrameD(chrono.ChVectorD(x0, 0.9, 0.4), chrono.Q_from_AngAxis(math.pi / 2.0, chrono.ChVectorD(1, 0, 0)))
+        m2.Initialize(roller2, self.ground, frame2)
+        m2.SetSpeedFunction(_get_const_function(-2.0 * math.pi * self.crusher_speed_rps))
+        self.system.Add(m2)
+        self.motors["crusher_motor_2"] = m2
+
+        # Raw mill: drum on bearings
+        x1 = x0 + 6.0
+        raw_mill = chrono.ChBodyEasyCylinder(0.9, 2.2, 5200.0, False, True, self.mat_steel)
+        raw_mill.SetPos(chrono.ChVectorD(x1, 1.0, 0))
+        self._add_body(raw_mill, "raw_mill_drum")
+
+        raw_rev = chrono.ChLinkLockRevolute()
+        raw_frame = chrono.ChFrameD(chrono.ChVectorD(x1, 1.0, 0), chrono.Q_from_AngAxis(math.pi / 2.0, chrono.ChVectorD(0, 0, 1)))
+        raw_rev.Initialize(raw_mill, self.ground, raw_frame)
+        self.system.Add(raw_rev)
+
+        raw_motor = chrono.ChLinkMotorRotationSpeed()
+        raw_motor.Initialize(raw_mill, self.ground, raw_frame)
+        raw_motor.SetSpeedFunction(_get_const_function(2.0 * math.pi * self.raw_mill_speed_rps))
+        self.system.Add(raw_motor)
+        self.motors["raw_mill_motor"] = raw_motor
+
+        # Rotary kiln: long cylinder with refractory "shell" (same body, different name)
+        x2 = x1 + 10.0
+        kiln = chrono.ChBodyEasyCylinder(1.5, 12.0, 3200.0, False, True, self.mat_refractory)
+        kiln.SetPos(chrono.ChVectorD(x2, 1.8, 0))
+        self._add_body(kiln, "rotary_kiln")
+
+        kiln_rev = chrono.ChLinkLockRevolute()
+        kiln_frame = chrono.ChFrameD(chrono.ChVectorD(x2, 1.8, 0), chrono.Q_from_AngAxis(math.pi / 2.0, chrono.ChVectorD(0, 0, 1)))
+        kiln_rev.Initialize(kiln, self.ground, kiln_frame)
+        self.system.Add(kiln_rev)
+
+        kiln_motor = chrono.ChLinkMotorRotationSpeed()
+        kiln_motor.Initialize(kiln, self.ground, kiln_frame)
+        kiln_motor.SetSpeedFunction(_get_const_function(2.0 * math.pi * self.kiln_speed_rps))
+        self.system.Add(kiln_motor)
+        self.motors["kiln_motor"] = kiln_motor
+
+        # Grate cooler: fixed bed + moving grate (simplified as translating plate with motor)
+        x3 = x2 + 12.0
+        cooler_bed = chrono.ChBodyEasyBox(6.0, 0.5, 2.5, 2400.0, False, True, self.mat_steel)
+        cooler_bed.SetPos(chrono.ChVectorD(x3, 0.25, 0))
+        cooler_bed.SetBodyFixed(True)
+        self._add_body(cooler_bed, "grate_cooler_bed")
+
+        grate = chrono.ChBodyEasyBox(5.5, 0.2, 2.2, 7800.0, False, True, self.mat_steel)
+        grate.SetPos(chrono.ChVectorD(x3, 0.7, 0))
+        self._add_body(grate, "grate_cooler_grate")
+
+        # Prismatic joint along X and a simple linear motor (speed)
+        prism = chrono.ChLinkLockPrismatic()
+        prism.Initialize(grate, self.ground, chrono.ChCoordsysD(chrono.ChVectorD(x3, 0.7, 0), chrono.QUNIT))
+        self.system.Add(prism)
+
+        # Some Chrono builds have ChLinkMotorLinearSpeed; otherwise skip actuation
+        if hasattr(chrono, "ChLinkMotorLinearSpeed"):
+            lm = chrono.ChLinkMotorLinearSpeed()
+            lm.Initialize(grate, self.ground, chrono.ChFrameD(chrono.ChVectorD(x3, 0.7, 0), chrono.QUNIT))
+            lm.SetSpeedFunction(_get_const_function(0.05))  # m/s
+            self.system.Add(lm)
+            self.motors["grate_motor"] = lm
+
+        # Cement mill: drum
+        x4 = x3 + 10.0
+        cement_mill = chrono.ChBodyEasyCylinder(1.0, 2.6, 5200.0, False, True, self.mat_steel)
+        cement_mill.SetPos(chrono.ChVectorD(x4, 1.0, 0))
+        self._add_body(cement_mill, "cement_mill_drum")
+
+        cm_rev = chrono.ChLinkLockRevolute()
+        cm_frame = chrono.ChFrameD(chrono.ChVectorD(x4, 1.0, 0), chrono.Q_from_AngAxis(math.pi / 2.0, chrono.ChVectorD(0, 0, 1)))
+        cm_rev.Initialize(cement_mill, self.ground, cm_frame)
+        self.system.Add(cm_rev)
+
+        cm_motor = chrono.ChLinkMotorRotationSpeed()
+        cm_motor.Initialize(cement_mill, self.ground, cm_frame)
+        cm_motor.SetSpeedFunction(_get_const_function(2.0 * math.pi * self.cement_mill_speed_rps))
+        self.system.Add(cm_motor)
+        self.motors["cement_mill_motor"] = cm_motor
+
+        # Silos: fixed cylinders
+        x5 = x4 + 10.0
+        for i in range(2):
+            silo = chrono.ChBodyEasyCylinder(1.8, 6.0, 2400.0, False, True, self.mat_steel)
+            silo.SetPos(chrono.ChVectorD(x5 + i * 4.5, 3.0, 0))
+            silo.SetBodyFixed(True)
+            self._add_body(silo, f"silo_{i+1}")
+
+        # Shipping station: fixed platform
+        ship = chrono.ChBodyEasyBox(6.0, 0.5, 4.0, 2400.0, False, True, self.mat_steel)
+        ship.SetPos(chrono.ChVectorD(x5 + 10.0, 0.25, 0))
+        ship.SetBodyFixed(True)
+        self._add_body(ship, "shipping_platform")
+
+    def _bounded(self, x: float, lo: float, hi: float) -> float:
+        return min(max(x, lo), hi)
+
+    def _n(self, sigma: float) -> float:
+        # Approx normal via sum of uniforms (stable, avoids numpy dependency)
+        s = 0.0
+        for _ in range(6):
+            s += (self.rng.random() - 0.5)
+        return sigma * (s / 0.5) * 0.2
+
+    def _update_surrogate_process(self, t_s: float, dt_s: float):
+        """
+        Lightweight coupled surrogate:
+        - kiln temperature increases with fuel rate, decreases with feed rate and airflow mismatch
+        - free lime decreases when temperature is adequate and residence/rotation is stable
+        - CO increases when airflow is low relative to fuel (reducing atmosphere)
+        - NOx increases with higher temperature and excess air
+        - cyclone draft depends on airflow (more negative) + minor noise
+        - mill load depends on feed - grinding capacity
+        - fineness improves with higher cement mill speed and appropriate load
+        """
+        # Slowly vary "controls" to emulate operations (could be driven by real plant data)
+        if t_s - self._last_control_update_s > 30.0:
+            self._last_control_update_s = t_s
+            self.fuel_rate = self._bounded(self.fuel_rate + self._n(0.02), 0.7, 1.3)
+            self.raw_feed_rate = self._bounded(self.raw_feed_rate + self._n(0.02), 0.7, 1.3)
+            self.airflow_rate = self._bounded(self.airflow_rate + self._n(0.02), 0.7, 1.3)
+
+        # Kiln temperature dynamics
+        target_temp = 1350.0 + 180.0 * self.fuel_rate - 80.0 * (self.raw_feed_rate - 1.0) + 40.0 * (self.airflow_rate - 1.0)
+        target_temp = self._bounded(target_temp, 1200.0, 1550.0)
+        tau = 120.0  # seconds
+        self._kiln_temp_c += (target_temp - self._kiln_temp_c) * (dt_s / max(tau, 1e-6)) + self._n(0.3)
+
+        # Free lime: higher when underburned (low temp) or unstable
+        underburn = max(0.0, 1450.0 - self._kiln_temp_c) / 100.0
+        overburn = max(0.0, self._kiln_temp_c - 1500.0) / 100.0
+        self._free_lime_pct += (0.10 * underburn - 0.05 * (self._kiln_temp_c - 1450.0) / 100.0 + 0.02 * abs(self._n(0.1))) * (dt_s / 10.0)
+        self._free_lime_pct += 0.08 * overburn * (dt_s / 10.0)  # overburn can also create poor reactivity / "apparent" lime issues
+        self._free_lime_pct = self._bounded(self._free_lime_pct, 0.2, 3.5)
+
+        # CO%: increases when fuel high and air low
+        reducing_index = (self.fuel_rate / max(self.airflow_rate, 1e-3)) - 1.0
+        co_target = 0.03 + 0.25 * max(0.0, reducing_index)
+        self._co_pct += (co_target - self._co_pct) * (dt_s / 15.0) + self._n(0.002)
+        self._co_pct = self._bounded(self._co_pct, 0.0, 1.0)
+
+        # NOx ppm: increases with temperature and excess air
+        excess_air = max(0.0, self.airflow_rate - self.fuel_rate)
+        nox_target = 700.0 + 0.8 * (self._kiln_temp_c - 1350.0) + 500.0 * excess_air
+        self._nox_ppm += (nox_target - self._nox_ppm) * (dt_s / 20.0) + self._n(3.0)
+        self._nox_ppm = self._bounded(self._nox_ppm, 200.0, 2500.0)
+
+        # Cyclone draft (Pa): negative, magnitude increases with airflow
+        draft_target = -1800.0 - 1200.0 * (self.airflow_rate - 1.0)
+        self._cyclone_draft_pa += (draft_target - self._cyclone_draft_pa) * (dt_s / 10.0) + self._n(15.0)
+        self._cyclone_draft_pa = self._bounded(self._cyclone_draft_pa, -8000.0, -200.0)
+
+        # Mill load (%): depends on feed and capacity (speed)
+        capacity = 1.0 + 0.8 * (self.cement_mill_speed_rps / 0.22 - 1.0)
+        load_target = 65.0 + 35.0 * (self.raw_feed_rate - capacity)
+        self._mill_load_pct += (load_target - self._mill_load_pct) * (dt_s / 30.0) + self._n(0.2)
+        self._mill_load_pct = self._bounded(self._mill_load_pct, 10.0, 95.0)
+
+        # Fineness (Blaine, cm^2/g): higher fineness with higher speed and optimal load
+        load_penalty = abs(self._mill_load_pct - 70.0) / 30.0
+        fineness_target = 3200.0 + 400.0 * (self.cement_mill_speed_rps / 0.22 - 1.0) - 250.0 * load_penalty
+        self._cement_fineness_blaine += (fineness_target - self._cement_fineness_blaine) * (dt_s / 120.0) + self._n(4.0)
+        self._cement_fineness_blaine = self._bounded(self._cement_fineness_blaine, 2500.0, 4500.0)
+
+    def step(self, dt_s: float):
+        t0 = self.system.GetChTime()
+        # Mechanical dynamics step
+        self.system.DoStepDynamics(dt_s)
+        t1 = self.system.GetChTime()
+        # Surrogate process update using dt (in case integrator changes dt)
+        self._update_surrogate_process(t1, float(t1 - t0))
+
+    # --- Sensor readouts (virtual instrumentation) ---
+    def read_kiln_temperature_c(self) -> float:
+        return float(self._kiln_temp_c)
+
+    def read_cyclone_draft_pa(self) -> float:
+        return float(self._cyclone_draft_pa)
+
+    def read_cement_fineness_blaine(self) -> float:
+        return float(self._cement_fineness_blaine)
+
+    def read_co_pct(self) -> float:
+        return float(self._co_pct)
+
+    def read_nox_ppm(self) -> float:
+        return float(self._nox_ppm)
+
+    def read_mill_load_pct(self) -> float:
+        return float(self._mill_load_pct)
+
+    # --- Critical parameter checks (soft alarms) ---
+    def evaluate_alarms(self) -> List[str]:
+        alarms = []
+        if not (1450.0 <= self._kiln_temp_c <= 1480.0):
+            alarms.append(f"Kiln sintering temperature out of band: {self._kiln_temp_c:.1f} °C (target 1450-1480)")
+        if not (self._free_lime_pct < 1.5):
+            alarms.append(f"Free lime high (proxy): {self._free_lime_pct:.2f}% (target < 1.5%)")
+        if not (self._co_pct < 0.1):
+            alarms.append(f"CO high: {self._co_pct:.3f}% (target < 0.1%)")
+        return alarms
+
+
+class SensorScheduler:
+    def __init__(self, sensors: List[SensorDef]):
+        self.sensors = sensors
+        self.next_t: Dict[int, float] = {s.sensor_uid: 0.0 for s in sensors}
+
+    def due(self, t_s: float) -> List[SensorDef]:
+        out = []
+        for s in self.sensors:
+            nt = self.next_t[s.sensor_uid]
+            if t_s + 1e-12 >= nt:
+                out.append(s)
+        return out
+
+    def mark(self, sensor_uid: int, t_s: float, period_s: float):
+        # Avoid drift: schedule next strictly in the future by period increments
+        nt = self.next_t.get(sensor_uid, 0.0)
+        if t_s + 1e-12 < nt:
+            return
+        if period_s <= 0:
+            self.next_t[sensor_uid] = t_s
+            return
+        k = max(1, int(math.floor((t_s - nt) / period_s)) + 1)
+        self.next_t[sensor_uid] = nt + k * period_s
+
+
+def _build_sensors(twin: CementPlantDigitalTwin) -> List[SensorDef]:
+    # Update frequencies per requirements:
+    # - temperature in kiln: 1/min
+    # - gas analysis: every 10 s
+    # - lab: 1/hour (we map fineness to lab cadence; could also map free lime but it's not in sensor list)
+    # Additional: cyclone draft every 10 s; mill load every 60 s for productivity control
+    return [
+        SensorDef(
+            sensor_uid=1001,
+            sensor_type="температура в печи",
+            location="вращающаяся печь / зона спекания",
+            calibration_status=True,
+            period_s=60.0,
+            value_fn=twin.read_kiln_temperature_c,
+        ),
+        SensorDef(
+            sensor_uid=1002,
+            sensor_type="разрежение в циклонах",
+            location="циклоны / газоход",
+            calibration_status=True,
+            period_s=10.0,
+            value_fn=twin.read_cyclone_draft_pa,
+        ),
+        SensorDef(
+            sensor_uid=1003,
+            sensor_type="тонкость помола",
+            location="лаборатория / цементная мельница",
+            calibration_status=True,
+            period_s=3600.0,
+            value_fn=twin.read_cement_fineness_blaine,
+        ),
+        SensorDef(
+            sensor_uid=1004,
+            sensor_type="состав отходящих газов (CO)",
+            location="газоанализатор / дымовая труба",
+            calibration_status=True,
+            period_s=10.0,
+            value_fn=twin.read_co_pct,
+        ),
+        SensorDef(
+            sensor_uid=1005,
+            sensor_type="состав отходящих газов (NOx)",
+            location="газоанализатор / дымовая труба",
+            calibration_status=True,
+            period_s=10.0,
+            value_fn=twin.read_nox_ppm,
+        ),
+        SensorDef(
+            sensor_uid=1006,
+            sensor_type="уровень загрузки мельницы",
+            location="цементная мельница / электропривод",
+            calibration_status=True,
+            period_s=60.0,
+            value_fn=twin.read_mill_load_pct,
+        ),
+    ]
+
+
+def _configure_logging(verbosity: str):
+    level = logging.INFO
+    if verbosity.lower() == "debug":
+        level = logging.DEBUG
+    elif verbosity.lower() == "warning":
+        level = logging.WARNING
+    elif verbosity.lower() == "error":
+        level = logging.ERROR
+
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)sZ %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    )
+    # Force UTC-ish timestamps in logs
+    logging.Formatter.converter = time.gmtime
+
+
+def main():
+    parser = argparse.ArgumentParser(description="PyChrono cement plant digital twin simulation with DB logging.")
+    parser.add_argument("--duration", type=float, default=600.0, help="Simulation duration in seconds (default: 600).")
+    parser.add_argument("--step", type=float, default=0.02, help="Simulation step size in seconds (default: 0.02).")
+    parser.add_argument("--realtime", action="store_true", help="Sleep to approximate real-time execution.")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for surrogate noise.")
+    parser.add_argument("--verbosity", type=str, default="info", help="Logging level: debug|info|warning|error")
+    parser.add_argument("--db-dsn", type=str, default=os.environ.get("DB_DSN", ""), help="PostgreSQL DSN string (or set DB_DSN).")
+    parser.add_argument("--plant-name", type=str, default="Cement Plant Digital Twin", help="metadata.plant_name")
+    parser.add_argument("--plant-location", type=str, default="RU", help="metadata.location")
+    parser.add_argument("--plant-version", type=int, default=1, help="metadata.version")
+    parser.add_argument("--ensure-schema", action="store_true", help="Best-effort create tables if missing.")
+    parser.add_argument("--no-db", action="store_true", help="Run without database logging.")
+    args = parser.parse_args()
+
+    _configure_logging(args.verbosity)
+    log = logging.getLogger("cement_twin")
+
+    twin = CementPlantDigitalTwin(seed=args.seed)
+    sensors = _build_sensors(twin)
+    scheduler = SensorScheduler(sensors)
+
+    db: Optional[DatabaseClient] = None
+    sensor_pk: Dict[int, int] = {}
+
+    shutting_down = {"flag": False}
+
+    def _handle_signal(signum, frame):
+        shutting_down["flag"] = True
+
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
+
+    sim_start_wall = _utcnow()
+    last_commit_wall = time.time()
+    commit_interval_s = 2.0
+
+    try:
+        if not args.no_db:
+            if not args.db_dsn:
+                raise RuntimeError("Database DSN is empty. Provide --db-dsn or set DB_DSN, or use --no-db.")
+            db = DatabaseClient(
+                dsn=args.db_dsn,
+                plant_name=args.plant_name,
+                plant_location=args.plant_location,
+                plant_version=args.plant_version,
+                ensure_schema=args.ensure_schema,
+            )
+            db.connect()
+            for s in sensors:
+                pk = db.ensure_sensor(s)
+                sensor_pk[s.sensor_uid] = pk
+            db.conn.commit()
+            log.info("Database connected. plant_id=%s, sensors=%d", db.plant_id, len(sensors))
         else:
-            print("  Status: NORMAL")
-        last_print = sim_time
+            log.warning("Running with --no-db (sensor data will not be persisted).")
 
-    system.DoStepDynamics(step_size)
-    sim_time += step_size
-    frame_count += 1
+        # Simulation loop
+        target_dt = float(args.step)
+        if target_dt <= 0:
+            raise ValueError("--step must be > 0")
 
-    vis.EndScene()
+        end_t = float(args.duration)
+        if end_t <= 0:
+            raise ValueError("--duration must be > 0")
 
-print("\n=== Simulation complete ===")
-print(f"Total time: {sim_time:.0f}s | Frames: {frame_count}")
-print(f"Final wear index: {sensor_data['equipment_wear']*1e6:.4f}")
-print(f"Final defect risk: {sensor_data['defect_risk']*100:.1f}%")
+        last_rt = time.time()
+        last_alarm_print_t = -1e9
+
+        while True:
+            if shutting_down["flag"]:
+                log.warning("Shutdown requested by signal.")
+                break
+
+            t_s = float(twin.system.GetChTime())
+            if t_s >= end_t:
+                break
+
+            # Step simulation
+            twin.step(target_dt)
+
+            t_s = float(twin.system.GetChTime())
+            sim_ts = sim_start_wall + timedelta(seconds=t_s)
+
+            # Read sensors that are due
+            due = scheduler.due(t_s)
+            if due:
+                for s in due:
+                    try:
+                        val = float(s.value_fn())
+                        if db is not None:
+                            db.log_value(sim_ts, val, sensor_pk[s.sensor_uid])
+                        scheduler.mark(s.sensor_uid, t_s, s.period_s)
+                    except Exception as e:
+                        log.exception("Sensor read/log failed (uid=%s, type=%s): %s", s.sensor_uid, s.sensor_type, e)
+                        # keep scheduling so a single failure doesn't freeze that sensor
+                        scheduler.mark(s.sensor_uid, t_s, s.period_s)
+
+            # Commit periodically
+            if db is not None:
+                now = time.time()
+                if now - last_commit_wall >= commit_interval_s:
+                    try:
+                        flushed = db.flush()
+                        last_commit_wall = now
+                        if args.verbosity.lower() == "debug" and flushed:
+                            log.debug("DB flush committed. flushed=%d", flushed)
+                    except Exception as e:
+                        log.exception("DB flush failed: %s", e)
+                        # keep running; data will queue (or raise if buffer full)
+
+            # Soft alarms (do not spam)
+            if t_s - last_alarm_print_t >= 10.0:
+                alarms = twin.evaluate_alarms()
+                if alarms:
+                    for a in alarms:
+                        log.warning("ALARM: %s", a)
+                last_alarm_print_t = t_s
+
+            # Real-time pacing
+            if args.realtime:
+                now = time.time()
+                elapsed_rt = now - last_rt
+                if elapsed_rt < target_dt:
+                    time.sleep(max(0.0, target_dt - elapsed_rt))
+                last_rt = time.time()
+
+        log.info("Simulation finished at t=%.2fs (duration=%.2fs).", float(twin.system.GetChTime()), end_t)
+
+    except KeyboardInterrupt:
+        log.warning("Interrupted by user.")
+    except Exception as e:
+        log.exception("Fatal error: %s", e)
+        raise
+    finally:
+        # Cleanup
+        try:
+            if db is not None:
+                try:
+                    db.flush()
+                except Exception:
+                    pass
+                db.close()
+                log.info("Database connection closed.")
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    main()
 [END OF CODE]
 
 PyChrono API documentation:
