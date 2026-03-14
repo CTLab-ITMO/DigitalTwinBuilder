@@ -2,6 +2,61 @@ import json
 
 def make_db_prompt(requirements, *args):
     prompt = f"""
+    Generate a PostgreSQL database schema in JSON format for an industrial digital twin based on the following requirements:
+
+{json.dumps(requirements, ensure_ascii=False, indent=2)}
+
+The schema must include tables for:
+- Sensor data (temperature, pressure, vibration, level, etc.)
+- Equipment status
+- Production quality metrics
+- Material composition
+- Maintenance history (optional)
+- Events/alerts (optional)
+
+The output must be a **valid JSON object** with the following strict structure:
+
+```json
+{{
+  "schema_name": "schema_name",
+  "tables": [
+    {{
+      "name": "table_name",
+      "description": "Brief description of the table purpose.",
+      "columns": [
+        {{
+          "name": "column_name",
+          "data_type": "PostgreSQL data type (e.g., SERIAL, TIMESTAMP, NUMERIC(10,2), TEXT, BOOLEAN, etc.)",
+          "constraints": [ "Constraints array (e.g., PRIMARY KEY, NOT NULL, UNIQUE, etc.)" ],
+          "description": "Description of the column."
+        }}
+      ],
+      "relationships": [
+        {{
+          "column": "column_name",
+          "references": {{
+            "table": "referenced_table",
+            "column": "referenced_column"
+          }},
+          "on_delete": "CASCADE | SET NULL | RESTRICT | NO ACTION",
+          "on_update": "CASCADE | SET NULL | RESTRICT | NO ACTION"
+        }}
+      ]
+    }}
+  ]
+}}
+```
+
+Ensure that:
+- Data types are appropriate for the measured values (e.g., NUMERIC for floating-point readings, INTEGER for discrete counts, TIMESTAMP for time series).
+- Primary keys are defined for each table (e.g., a surrogate SERIAL or a composite key).
+- Foreign keys correctly link related tables (e.g., sensor_data references equipment via equipment_id).
+- Constraints like NOT NULL are used where data must always be present.
+- The schema reflects the provided requirements (production type, processes, equipment, sensors, goals, data sources, update frequency, critical parameters, etc.).
+
+The entire response must be a single JSON object (no additional text before or after).
+"""
+    prompt = f"""
 Generate a PostgreSQL database schema in json form for an industrial digital twin based on the following requirements:
 
 {json.dumps(requirements, ensure_ascii=False, indent=2)}
