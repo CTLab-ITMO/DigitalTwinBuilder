@@ -1,5 +1,5 @@
-from .base_agent import BaseAgent
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from base_agent import BaseAgent
+from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer
 import torch
 import json
 import requests
@@ -8,22 +8,22 @@ import logging
 import sys
 import signal
 from typing import Dict, Any, Optional
-from ...config import API_URL, UI_AGENT_INDEX, UI_AGENT_MODEL
+from ..config import API_URL, DT_AGENT_INDEX, DT_AGENT_MODEL
 
-class UserInteractionAgent(BaseAgent):
-    def __init__(self)
-        super().__init__("UserInteractionAgent")
-        self.agent_id = UI_AGENT_INDEX
+class DigitalTwinAgent(BaseAgent):
+    def __init__(self):
+        super().__init__("DigitalTwinAgent")
+        self.agent_id = DT_AGENT_INDEX
         self.api_url = API_URL.rstrip('/')
         self.running = False
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.logger.info(f"device: {self.device}")
         try:
             # self.model = pipeline("text-generation", model= model)
-            self.tokenizer = AutoTokenizer.from_pretrained(UI_AGENT_MODEL)
+            self.tokenizer = AutoTokenizer.from_pretrained(DT_AGENT_MODEL)
             self.model = AutoModelForCausalLM.from_pretrained(
-                UI_AGENT_MODEL,
-            ).to(self.device)
+                DT_AGENT_MODEL, 
+                device_map="auto", 
+                torch_dtype=torch.bfloat16
+            )
         except Exception as e:
             self.logger.error(f"Model loading failed: {str(e)}")
             raise
@@ -40,6 +40,7 @@ class UserInteractionAgent(BaseAgent):
 
             text = self.tokenizer.apply_chat_template(
                 context,
+                enable_thinking=True,
                 tokenize=False,
                 add_generation_prompt=True,
             )
@@ -72,13 +73,12 @@ def main():
                        help="Polling interval in seconds (default: 2.0)")
     parser.add_argument("--once", action="store_true",
                        help="Run once and exit (useful for testing)")
-    parser.add_argument("--model", type=str, default="HuggingFaceTB/SmolLM3-3B",
-                       help="Model from hugging face or local path to it")
 
     args = parser.parse_args()
     
     # Create and run agent
-    agent = UserInteractionAgent()
+    agent = DigitalTwinAgent()
+    
     # Handle graceful shutdown
     def signal_handler(sig, frame):
         agent.stop()
