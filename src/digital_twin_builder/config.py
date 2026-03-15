@@ -18,6 +18,14 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-chat")
 
+# Agents configuration
+UI_AGENT_INDEX = int(os.getenv("UI_AGENT_INDEX", "0"))
+DB_AGENT_INDEX = int(os.getenv("DB_AGENT_INDEX", "1"))
+DT_AGENT_INDEX = int(os.getenv("DB_AGENT_INDEX", "2"))
+UI_AGENT_MODEL = os.getenv("UI_AGENT_MODEL")
+DB_AGENT_MODEL = os.getenv("DB_AGENT_MODEL")
+DT_AGENT_MODEL = os.getenv("DT_AGENT_MODEL")
+
 # Database Configuration
 POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "admin")
@@ -38,6 +46,12 @@ __all__ = [
     "DEEPSEEK_API_KEY",
     "DEEPSEEK_BASE_URL",
     "LLM_MODEL",
+    "UI_AGENT_INDEX",
+    "DB_AGENT_INDEX",
+    "DT_AGENT_INDEX",
+    "UI_AGENT_MODEL",
+    "DB_AGENT_MODEL",
+    "DT_AGENT_MODEL",
     "POSTGRES_USER",
     "POSTGRES_PASSWORD",
     "POSTGRES_DB",

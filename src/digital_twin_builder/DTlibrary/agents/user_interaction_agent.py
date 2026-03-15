@@ -8,20 +8,21 @@ import logging
 import sys
 import signal
 from typing import Dict, Any, Optional
+from ...config import API_URL, UI_AGENT_INDEX, UI_AGENT_MODEL
 
 class UserInteractionAgent(BaseAgent):
-    def __init__(self, agent_id: int, api_url: str, model = "HuggingFaceTB/SmolLM3-3B"):
+    def __init__(self)
         super().__init__("UserInteractionAgent")
-        self.agent_id = agent_id
-        self.api_url = api_url.rstrip('/')
+        self.agent_id = UI_AGENT_INDEX
+        self.api_url = API_URL.rstrip('/')
         self.running = False
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.logger.info(f"device: {self.device}")
         try:
             # self.model = pipeline("text-generation", model= model)
-            self.tokenizer = AutoTokenizer.from_pretrained(model)
+            self.tokenizer = AutoTokenizer.from_pretrained(UI_AGENT_MODEL)
             self.model = AutoModelForCausalLM.from_pretrained(
-                model,
+                UI_AGENT_MODEL,
             ).to(self.device)
         except Exception as e:
             self.logger.error(f"Model loading failed: {str(e)}")
@@ -67,10 +68,6 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="Simple LLM Agent")
-    parser.add_argument("--agent-id", type=int, required=True,
-                       help="Agent ID (1, 2, 3, etc.)")
-    parser.add_argument("--api-url", default="http://localhost:8000",
-                       help="API server URL (default: http://localhost:8000)")
     parser.add_argument("--poll-interval", type=float, default=2.0,
                        help="Polling interval in seconds (default: 2.0)")
     parser.add_argument("--once", action="store_true",
@@ -81,8 +78,7 @@ def main():
     args = parser.parse_args()
     
     # Create and run agent
-    agent = UserInteractionAgent(args.agent_id, args.api_url, args.model)
-    
+    agent = UserInteractionAgent()
     # Handle graceful shutdown
     def signal_handler(sig, frame):
         agent.stop()
