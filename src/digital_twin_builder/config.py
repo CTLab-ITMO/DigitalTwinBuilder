@@ -21,10 +21,10 @@ LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-chat")
 # Agents configuration
 UI_AGENT_INDEX = int(os.getenv("UI_AGENT_INDEX", "0"))
 DB_AGENT_INDEX = int(os.getenv("DB_AGENT_INDEX", "1"))
-DT_AGENT_INDEX = int(os.getenv("DB_AGENT_INDEX", "2"))
-UI_AGENT_MODEL = os.getenv("UI_AGENT_MODEL")
-DB_AGENT_MODEL = os.getenv("DB_AGENT_MODEL")
-DT_AGENT_MODEL = os.getenv("DT_AGENT_MODEL")
+DT_AGENT_INDEX = int(os.getenv("DT_AGENT_INDEX", "2"))
+UI_AGENT_MODEL = os.getenv("UI_AGENT_MODEL", "")
+DB_AGENT_MODEL = os.getenv("DB_AGENT_MODEL", "")
+DT_AGENT_MODEL = os.getenv("DT_AGENT_MODEL", "")
 
 # Database Configuration
 POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")

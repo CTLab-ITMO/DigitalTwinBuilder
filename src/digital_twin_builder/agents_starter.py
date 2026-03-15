@@ -1,6 +1,4 @@
-from DTlibrary.agents.database_agent import DatabaseAgent
-from DTlibrary.agents.user_interaction_agent import UserInteractionAgent
-from DTlibrary.agents.digital_twin_agent import DigitalTwinAgent
+from agents import UserInteractionAgent, DatabaseAgent, DigitalTwinAgent
 from config import API_URL
 
 def start_agents(api_url=None, models=[]):
