@@ -21,7 +21,9 @@ class DigitalTwinAgent(BaseAgent):
             # self.model = pipeline("text-generation", model= model)
             self.tokenizer = AutoTokenizer.from_pretrained(model)
             self.model = AutoModelForCausalLM.from_pretrained(
-                model,
+                model, 
+                device_map="auto", 
+                torch_dtype=torch.bfloat16
             ).to(self.device)
         except Exception as e:
             self.logger.error(f"Model loading failed: {str(e)}")
