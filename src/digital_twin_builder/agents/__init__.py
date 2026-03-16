@@ -7,12 +7,14 @@ Public agents exported by digital_twin_builder.DTlibrary.agents.
 
 from .base_agent import BaseAgent
 from .orchestrator_agent import OrchestratorAgent
+from .user_interaction_agent import UserInteractionAgent
 from .database_agent import DatabaseAgent
 from .digital_twin_agent import DigitalTwinAgent
 
 __all__ = [
     "BaseAgent",
     "OrchestratorAgent",
+    "UserInteractionAgent",
     "DatabaseAgent",
     "DigitalTwinAgent",
 ]

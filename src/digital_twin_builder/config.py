@@ -7,9 +7,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # Load .env file from the workspace root
-env_path = Path(__file__).parent.parent.parent / ".env"
+env_path = ".env"
 load_dotenv(dotenv_path=env_path)
-
 # API Configuration
 API_URL = os.getenv("API_URL", "http://188.119.67.226:8000")
 
@@ -17,6 +16,14 @@ API_URL = os.getenv("API_URL", "http://188.119.67.226:8000")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-chat")
+
+# Agents configuration
+UI_AGENT_INDEX = int(os.getenv("UI_AGENT_INDEX", "0"))
+DB_AGENT_INDEX = int(os.getenv("DB_AGENT_INDEX", "1"))
+DT_AGENT_INDEX = int(os.getenv("DT_AGENT_INDEX", "2"))
+UI_AGENT_MODEL = os.getenv("UI_AGENT_MODEL", "")
+DB_AGENT_MODEL = os.getenv("DB_AGENT_MODEL", "")
+DT_AGENT_MODEL = os.getenv("DT_AGENT_MODEL", "")
 
 # Database Configuration
 POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
@@ -38,6 +45,12 @@ __all__ = [
     "DEEPSEEK_API_KEY",
     "DEEPSEEK_BASE_URL",
     "LLM_MODEL",
+    "UI_AGENT_INDEX",
+    "DB_AGENT_INDEX",
+    "DT_AGENT_INDEX",
+    "UI_AGENT_MODEL",
+    "DB_AGENT_MODEL",
+    "DT_AGENT_MODEL",
     "POSTGRES_USER",
     "POSTGRES_PASSWORD",
     "POSTGRES_DB",
