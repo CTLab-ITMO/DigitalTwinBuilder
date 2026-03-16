@@ -8,6 +8,7 @@ import sys
 from alive_progress import alive_bar, alive_it
 from datetime import datetime
 from deep_json_eval import compare_values, json_evaluation_new
+from judge_llm_eval import evaluate_json
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../src'))
 from digital_twin_builder.prompts.system import DB, UI
@@ -26,15 +27,23 @@ from digital_twin_builder.api_utils import (
 
 # Conversation logging setup
 LOGS_DIR = "conversation_logs"
+CSV_DELIMIT = ","
 
-def init_logs_dir():
+def init_logs_dir(args):
     """Initialize logs directory"""
     if not os.path.exists(LOGS_DIR):
         os.makedirs(LOGS_DIR)
-    with open(os.path.join(LOGS_DIR, "score_requirements.csv"), 'w+') as f:
-        f.write("test_num, format, simularity, comment\n")
-    with open(os.path.join(LOGS_DIR, "score_db.csv"), 'w+') as f:
-        f.write("test_num, format, simularity, comment\n")
+    if args.ui_agent_test:
+        headers = ["test_num"]
+        if args.deep_eval:
+            headers += ["format_score", "similarity_score", "comment"]
+        if args.jllm_eval:
+            headers += ["jllm_score", "jllm_comment"]
+        with open(os.path.join(LOGS_DIR, "score_requirements.csv"), 'w+') as f:
+            f.write(CSV_DELIMIT.join(headers) + "\n")
+    if args.db_agent_test:
+        with open(os.path.join(LOGS_DIR, "score_db.csv"), 'w+') as f:
+            f.write("test_num" + CSV_DELIMIT + "format" + CSV_DELIMIT + "simularity" + CSV_DELIMIT + "comment\n")
 
 def get_log_filename(conversation_id, agent_type):
     """Generate log filename from conversation ID and current timestamp"""
@@ -151,38 +160,11 @@ def run_db_agent(session_id, json_result, bar):
     bar.text = f"got actual sql"
     return db_result_json
 
-
-def evaluate_results(client, requirements_json_expected, requirements_json_actual, db_json_expected, db_json_actual, bar):
-    """Evaluate both JSON and SQL results"""
-    json_score = evaluate_json(client, requirements_json_expected, requirements_json_actual)
-    bar()
-    bar.text = f"json evaluated, score: {json_score.split()[0]}"
-    
-    sql_score = evaluate_json(client, db_json_expected, db_json_actual)
-    bar()
-    bar.text = f"sql evaluated, score: {sql_score.split()[0]}"
-    return json_score, sql_score
-
-
 def write_results(score, result_path): 
     """Write results to output files"""
     with open(result_path, 'a') as f:
-        f.write(f"{",".join(map(str, score))}\n")
+        f.write(f"{CSV_DELIMIT.join(map(str, score))}\n")
     print(f"Results written to {result_path}")
-
-def process_json_pair(client, requirements_json_expected, db_json_expected, requirements_json_actual, db_json_actual, bar_context):
-    """Process a single JSON requirements file with a new session"""
-    # Evaluate results
-    json_score, sql_score = evaluate_results(client, requirements_json_expected, requirements_json_actual, db_json_expected, db_json_actual, bar_context)
-    
-    # Write results
-    req_result_path = os.path.join(LOGS_DIR, "score_requirements.csv")
-    db_result_path = os.path.join(LOGS_DIR, "score_db.csv")
-    write_results(json_score.split()[0], req_result_path)
-    write_results(sql_score.split()[0], db_result_path)
-    
-    return True
-
 
 def parse_json_arrays(requirements_jsons_path, sql_jsons_path):
     """Parse comma-separated JSON file paths"""
@@ -227,7 +209,28 @@ def gen_sql_json_single(client, requirements_json):
         response_json = {}
     return response_json
 
-def main():
+def gen_missing_sql_json(client, requirements_json_expected):
+    print(f"Generating pair {i+1} due to empty expected SQL JSON")
+    db_json_expected = gen_sql_json_single(client, requirements_json_expected)
+    if db_json_expected == {}:
+        print(f"Failed to generate SQL JSON for pair {i+1}, skipping")
+        return None
+    return db_json_expected
+
+def retries_exceeded(args, i):
+    print(f"Exceeded maximum retries for pair {i+1}, skipping to next pair")
+    if args.ui_agent_test:
+        values = [i]
+        if args.deep_eval:
+            values += ["0", "0", "UI agent failed to produce valid JSON after 5 retries"]
+        if args.jllm_eval:
+            values += ["0", "UI agent failed to produce valid JSON after 5 retries"]
+        
+        write_results(values, os.path.join(LOGS_DIR, "score_requirements.csv"))
+    if args.db_agent_test:
+        write_results([i, 0, 0, "DB agent failed to produce valid JSON after 5 retries"], os.path.join(LOGS_DIR, "score_db.csv"))
+
+def parse_args():
     import argparse
     
     parser = argparse.ArgumentParser(description="Simple LLM Agent")
@@ -239,33 +242,26 @@ def main():
                         help="Runs judge llm evaluation for testing")
     parser.add_argument("--deep_eval", action=argparse.BooleanOptionalAction,
                         help="Runs deep evaluation for testing")
-    parser.set_defaults(db_agent_test=False)
-    parser.set_defaults(ui_agent_test=False)
-    args = parser.parse_args()
+    parser.set_defaults(db_agent_test=False, ui_agent_test=False, jllm_eval=False, deep_eval=False)
+    return parser.parse_args()
 
+def main():
+    args = parse_args()
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.DEBUG)
 
     # Initialize logs directory
-    init_logs_dir()
+    init_logs_dir(args)
     
     # Initialize API session
     init_session()
     
     client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
     
-    # Parse command line arguments
-    if len(sys.argv) > 4:
-        req_json = sys.argv[1]
-        sql_json = sys.argv[2]
-        req_schema_json = sys.argv[3]
-        db_schema_json = sys.argv[4]
-    else:
-        # Default to test files
-        req_json = 'tests/agents/jsons/requirements.json'
-        sql_json = 'tests/agents/jsons/sql.json'
-        req_schema_json = 'tests/agents/jsons/requirements_schema.json'
-        db_schema_json = 'tests/agents/jsons/db_schema.json'
+    req_json = 'tests/agents/jsons/requirements.json'
+    sql_json = 'tests/agents/jsons/sql.json'
+    req_schema_json = 'tests/agents/jsons/requirements_schema.json'
+    db_schema_json = 'tests/agents/jsons/db_schema.json'
 
     if not os.path.exists(sql_json):
         gen_sql_json(client, req_json, sql_json)
@@ -276,22 +272,23 @@ def main():
         db_schema = json.load(f)
 
     requirements_jsons, db_jsons = parse_json_arrays(req_json, sql_json)
-    
+    requirements_jsons_actual = []
+    # with open(os.path.join(LOGS_DIR, "requirements_logs.json"), 'r') as f:
+    #     requirements_jsons_actual = json.load(f) 
     
     # Ensure we have matching pairs
     num_pairs = min(len(requirements_jsons), len(db_jsons))
     print(f"Processing {num_pairs} JSON pairs...")
     
     success_count = 0
-    bars_per_test = 3 if args.ui_agent_test else 0
-    bars_per_test += 4 if args.db_agent_test else 0
+    bars_per_test = ((0 + args.jllm_eval + args.deep_eval) if args.ui_agent_test else 0) +\
+                    (4 if args.db_agent_test else 0)
+    
     with alive_bar(num_pairs * bars_per_test) as bar:
         for i, (requirements_json_expected, db_json_expected) in enumerate(zip(requirements_jsons, db_jsons)):
             if db_json_expected == {} and args.db_agent_test:
-                print(f"Generating pair {i+1} due to empty expected SQL JSON")
-                db_json_expected = gen_sql_json_single(client, requirements_json_expected)
-                if db_json_expected == {}:
-                    print(f"Failed to generate SQL JSON for pair {i+1}, skipping")
+                db_json_expected = gen_missing_sql_json(client, requirements_json_expected)
+                if db_json_expected is None:
                     bar(bars_per_test)
                     continue
                 db_jsons[i] = db_json_expected
@@ -303,12 +300,8 @@ def main():
             while True:
                 bar_before_test = bar.current
                 if retry > 5:
-                    print(f"Exceeded maximum retries for pair {i+1}, skipping to next pair")
-                    if args.ui_agent_test:
-                        write_results([i, 0, 0, "UI agent failed to produce valid JSON after 5 retries"], os.path.join(LOGS_DIR, "score_requirements.csv"))
-                    if args.db_agent_test:
-                        write_results([i, 0, 0, "DB agent failed to produce valid JSON after 5 retries"], os.path.join(LOGS_DIR, "score_db.csv"))
-                    bar(bar_before_test - bar.current + bars_per_test)
+                    retries_exceeded(args, i)
+                    bar(bars_per_test)
                     break
                 try:
                     # Create a new session for each test pair
@@ -316,7 +309,8 @@ def main():
                     print(f"Created session: {session_id}")
     
                     # Run UI agent and get requirements
-                    if args.ui_agent_test:
+                    if args.ui_agent_test: 
+                        # requirements_json_actual = requirements_jsons_actual[i]
                         requirements_json_actual = run_ui_agent(client, session_id, requirements_json_expected, bar)
                         req_result_path = os.path.join(LOGS_DIR, "score_requirements.csv")
                         if requirements_json_actual is None:
@@ -324,9 +318,19 @@ def main():
                             retry += 1
                             bar(bar_before_test - bar.current)
                             continue
-                        json_score = json_evaluation_new(requirements_json_expected, requirements_json_actual, requirements_schema)
+                        json_score = []
+                        if args.deep_eval:
+                            json_score += json_evaluation_new(requirements_json_expected, requirements_json_actual, requirements_schema)
+                            bar()
+                        if args.jllm_eval:
+                            result = evaluate_json(client, requirements_json_expected, requirements_json_actual)
+                            score, comment = result.split(maxsplit=1)
+                            comment = comment.replace(",", ";")
+                            comment = comment.replace("\n", " ")
+                            json_score += [score, comment]
+                            bar()
+                        requirements_jsons_actual.append(requirements_json_actual)
                         write_results([i] + list(json_score), req_result_path)
-                        bar()
     
                     # Run DB agent and get actual JSON
                     if args.db_agent_test:
@@ -348,6 +352,8 @@ def main():
                     bar(bar_before_test - bar.current)
                     pass
     
+    with open(os.path.join(LOGS_DIR, "requirements_logs.json"), 'w') as f:
+        json.dump(requirements_jsons_actual, f, ensure_ascii=False, indent=2)
     # Summary
     print(f"\nCompleted: {success_count}/{num_pairs} pairs processed successfully")
 
