@@ -1,0 +1,184 @@
+You are an expert in digital twin development for industrial production systems, tasked with evaluating a SINGLE generated digital twin implementation. 
+
+Here is the digital twin code to evaluate:
+[CODE TO EVALUATE]
+import chrono
+import numpy as np
+import time
+import json
+import logging
+from datetime import datetime, timedelta
+from typing import Dict, List
+
+# Configuration
+simulation_duration = 3600 * 24  # 1 day in seconds
+update_frequency = 3  # seconds
+sensor_data_update_interval = update_frequency
+
+# Logging configuration
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Constants
+GRAVITY = 9.81  # m/s^2
+SCALE = 1.0  # scale factor for simulation units
+
+# Initialize the Chrono system
+chrono.init()
+
+# Define materials
+class SteelMaterial(chrono.Material):
+    def __init__(self):
+        super().__init__()
+        self.properties['density'] = 7850.0  # kg/m^3
+        self.properties['thermal_conductivity'] = 50.0  # W/mK
+        self.properties['specific_heat_capacity'] = 450.0  # J/kgK
+
+class RefractoryMaterial(chrono.Material):
+    def __init__(self):
+        super().__init__()
+        self.properties['density'] = 3500.0  # kg/m^3
+        self.properties['thermal_conductivity'] = 1.0  # W/mK
+        self.properties['specific_heat_capacity'] = 800.0  # J/kgK
+
+# Define equipment
+class Furnace(chrono.Body):
+    def __init__(self):
+        super().__init__()
+        self.joints['top_fan'] = chrono.Joint(type='follower', follower=chrono.Body(), axis=chrono.Axis(chrono.Vector(0, 0, 0), chrono.Vector(0, 0, 0)))
+        self.material = SteelMaterial()
+
+class Crystallizer(chrono.Body):
+    def __init__(self):
+        super().__init__()
+        self.joints['top_fan'] = chrono.Joint(type='follower', follower=chrono.Body(), axis=chrono.Axis(chrono.Vector(0, 0, 0), chrono.Vector(0, 0, 0)))
+        self.material = RefractoryMaterial()
+        self.sensors = [
+            chrono.Sensor(name='temperature', type='temperature', units='°C', value=0.0),
+            chrono.Sensor(name='speed', type='velocity', units='m/s', value=0.0)
+        ]
+
+class Roller(chrono.Body):
+    def __init__(self):
+        super().__init__()
+        self.material = SteelMaterial()
+        self.joints['roller'] = chrono.Joint(type='follower', follower=chrono.Body(), axis=chrono.Axis(chrono.Vector(0, 0, 0), chrono.Vector(0, 0, 0)))
+
+# Create equipment
+furnace = Furnace()
+crystallizer = Crystallizer()
+roller = Roller()
+
+# Define joints and constraints
+chrono.connect(furnace, crystallizer, chrono.Joint(type='follower', follower=chrono.Body(), axis=chrono.Axis(chrono.Vector(0, 0, 0), chrono.Vector(0, 0, 0)))
+chrono.connect(crystallizer, roller, chrono.Joint(type='follower', follower=chrono.Body(), axis=chrono.Axis(chrono.Vector(0, 0, 0), chrono.Vector(0, 0, 0)))
+
+# Set up simulation environment
+chrono.world.add_body(furnace)
+chrono.world.add_body(crystallizer)
+chrono.world.add_body(roller)
+chrono.world.gravity = chrono.Vector(0, 0, GRAVITY)
+
+# Initialize sensors
+crystallizer.sensors[0].sensor = chrono.SensorObject('temperature', 'furnace', 'crystallizer')
+crystallizer.sensors[1].sensor = chrono.SensorObject('speed', 'roller', 'crystallizer')
+
+# Initialize data storage
+sensor_data = {}
+equipment_status = {}
+production_quality_metrics = {}
+material_composition = {}
+maintenance_history = {}
+events_alerts = {}
+
+# Simulation loop
+while True:
+    # Step the simulation forward
+    chrono.step(timestep=1.0)
+
+    # Collect sensor data
+    timestamp = time.time()
+    data = {
+       'sensor_id': None,
+       'sensor_name': None,
+        'value': None,
+        'timestamp': datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
+    }
+
+    # Update furnace temperature sensor
+    if 'temperature' in crystallizer.sensors:
+        data['sensor_id'] = crystallizer.sensors['temperature'].sensor_id
+        data['sensor_name'] = 'temperatur_furnace'
+        data['value'] = crystallizer.sensors['temperature'].value
+        data['timestamp'] = timestamp
+[END OF CODE]
+
+PyChrono API documentation:
+PyChrono::ChSystemNSC(), AddBody(), AddLink(), ChLidarSensor, DoStepDynamics(), chrono_irrlicht
+
+Task specification:
+[Task Specification]
+PyChrono эксперт. Создай цифровой двойник непрерывной разливки стали в НОРМАЛЬНОМ режиме:
+
+Объект: участок непрерывной разливки стали (МНЛЗ) на металлургическом комбинате.
+
+Основное оборудование: промежуточный ковш, кристаллизатор, зона вторичного охлаждения, тянущие валки, разрезка.
+Цели цифрового двойника:
+Контроль температуры стали в кристаллизаторе
+Оптимизация скорости разливки
+Прогнозирование дефектов слитков (раковины, трещины)
+Анализ износа оборудования
+
+
+Доступные данные:
+Температура стали в кристаллизаторе (термопары)
+Скорость разливки (датчики скорости валков)
+Расход воды охлаждения (расходомеры)
+Вибрация оборудования (акселерометры)
+Химический состав стали (лабораторные анализы)
+Данные обновляются каждые 3 секунды. Требуется хранение данных за 6 месяцев.
+
+Особые требования:
+Режим реального времени для критических параметров
+
+
+Пороги: Температура ±20 °C от нормы, расход воды ±20% от номинала, вибрация +30–50% от базового уровня — аварийные значения.
+Хим. состав: Поступает с лаборатории каждые 15–30 минут, интегрируется пакетно, не в реальном времени.
+
+Параметры:
+• Температура стали: 1520°C (норма 1510–1550°C)  
+• Скорость разливки: 1.4 м/мин (норма 1.3–1.5 м/мин)
+• Расход воды охлаждения: 1200 м³/ч (норма 960–1440 м³/ч)
+• Вибрация оборудования: 4.0 мм/с RMS (норма)
+
+Требования:
+1. PyChrono ChSystemNSC
+2. Модель кристаллизатора (цилиндр/труба)
+3. Базовые сенсоры (LiDAR/camera)
+4. Irrlicht визуализация
+5. Симуляционный цикл
+
+ВЫВЕДИ ТОЛЬКО ИСПОЛНЯЕМЫЙ PYTHON КОД БЕЗ КОММЕНТАРИЕВ.
+[End of Task Specification]
+
+EVALUATION CRITERIA (100 points total):
+1. Completeness (40): missing components -15 each
+2. Correctness (30): wrong API usage -15 each  
+3. Code Quality (10): poor structure -5-10
+4. Efficiency (10): redundant code -5 each
+5. Error Handling (5): no try/except -5
+6. Visualization (5): wrong Irrlicht -3-5
+
+RULES:
+- Compare ONLY to task requirements and PyChrono API
+- Ignore code length/position bias
+- Be objective and consistent
+
+OUTPUT FORMAT (MANDATORY):
+1. Brief explanation of deductions
+2. Final score: [[X]] where X=0-100.0
+
+EXAMPLE:
+Missing ChSystem: -15
+Wrong sensor setup: -10
+[[75.0]]

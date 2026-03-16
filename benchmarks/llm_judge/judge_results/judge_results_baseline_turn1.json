@@ -1,0 +1,132 @@
+{
+  "evaluation": {
+    "total_score": 58.0,
+    "max_score": 100,
+    "criteria": {
+      "completeness": {
+        "max_points": 40,
+        "deductions": [
+          {
+            "reason": "Missing LiDAR/camera sensors (ChLidarSensor required by task)",
+            "points": -15
+          },
+          {
+            "reason": "No cutting zone (разрезка) from equipment list",
+            "points": -5
+          },
+          {
+            "reason": "No data storage/history mechanism for 6-month requirement",
+            "points": -5
+          }
+        ],
+        "present_components": [
+          "ChSystemNSC with gravity",
+          "Tundish (промежуточный ковш)",
+          "Mold/crystallizer as cylinder",
+          "Secondary cooling zone",
+          "Pulling rolls (тянущие валки)",
+          "Strand/ingot (слиток)",
+          "Temperature monitoring with alarms ±20°C",
+          "Casting speed monitoring",
+          "Water flow monitoring ±20%",
+          "Vibration monitoring +30-50%",
+          "Chemical composition with batch update",
+          "Defect risk prediction",
+          "Equipment wear analysis",
+          "Irrlicht visualization",
+          "Simulation loop with 3-second step"
+        ],
+        "score": 15
+      },
+      "correctness": {
+        "max_points": 30,
+        "deductions": [
+          {
+            "reason": "ChBodyEasyCylinder axis parameter placement is questionable",
+            "points": -5
+          },
+          {
+            "reason": "Duplicate visual shapes added to bodies that already have auto-generated shapes from EasyBox/EasyCylinder",
+            "points": -5
+          },
+          {
+            "reason": "Physics step_size=3.0 seconds is unrealistically large for stable dynamics simulation",
+            "points": -3
+          }
+        ],
+        "correct_usage": [
+          "SetGravitationalAcceleration",
+          "DoStepDynamics",
+          "ChVisualSystemIrrlicht setup",
+          "Sensor simulation logic",
+          "Alarm thresholds per specification"
+        ],
+        "score": 17
+      },
+      "code_quality": {
+        "max_points": 10,
+        "deductions": [
+          {
+            "reason": "Global variable for last_chem_update could be cleaner",
+            "points": -1
+          }
+        ],
+        "positive_aspects": [
+          "Well-structured with separate functions",
+          "Constants clearly defined",
+          "Good use of global state dictionary"
+        ],
+        "score": 9
+      },
+      "efficiency": {
+        "max_points": 10,
+        "deductions": [
+          {
+            "reason": "Redundant visual shapes on bodies that already have auto-generated ones",
+            "points": -2
+          }
+        ],
+        "score": 8
+      },
+      "error_handling": {
+        "max_points": 5,
+        "deductions": [
+          {
+            "reason": "No try/except blocks anywhere in the code",
+            "points": -5
+          }
+        ],
+        "score": 0
+      },
+      "visualization": {
+        "max_points": 5,
+        "deductions": [
+          {
+            "reason": "Strand reset is abrupt (teleportation instead of smooth reset)",
+            "points": -1
+          }
+        ],
+        "positive_aspects": [
+          "Irrlicht properly initialized",
+          "Camera, lights, skybox added",
+          "Colors applied to components",
+          "Vibration animation on rolls"
+        ],
+        "score": 4
+      }
+    },
+    "deductions_summary": [
+      { "reason": "Missing LiDAR/camera sensors", "points": -15 },
+      { "reason": "No cutting zone", "points": -5 },
+      { "reason": "No data storage for 6-month requirement", "points": -5 },
+      { "reason": "Duplicate visual shapes on Easy bodies", "points": -5 },
+      { "reason": "Physics step size too large (3s)", "points": -3 },
+      { "reason": "No error handling (try/except)", "points": -5 },
+      { "reason": "Code quality minor issue", "points": -1 },
+      { "reason": "Efficiency: duplicate visuals", "points": -2 },
+      { "reason": "Visualization: abrupt strand reset", "points": -1 }
+    ],
+    "total_deductions": -42,
+    "final_score": 58.0
+  }
+}

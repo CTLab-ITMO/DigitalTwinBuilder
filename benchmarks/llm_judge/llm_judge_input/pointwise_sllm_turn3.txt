@@ -1,0 +1,75 @@
+You are an expert in digital twin development for industrial production systems, tasked with evaluating a SINGLE generated digital twin implementation. 
+
+Here is the digital twin code to evaluate:
+[CODE TO EVALUATE]
+
+[END OF CODE]
+
+PyChrono API documentation:
+PyChrono::ChSystemNSC(), AddBody(), AddLink(), ChLidarSensor, DoStepDynamics(), chrono_irrlicht
+
+Task specification:
+[Task Specification]
+РАСШИРЬ КОД ИЗ Turn 2 для КРИТИЧЕСКОГО РЕЖИМА + продвинутые сенсоры:
+
+Объект: участок непрерывной разливки стали (МНЛЗ) на металлургическом комбинате.
+
+Основное оборудование: промежуточный ковш, кристаллизатор, зона вторичного охлаждения, тянущие валки, разрезка.
+Цели цифрового двойника:
+Контроль температуры стали в кристаллизаторе
+Оптимизация скорости разливки
+Прогнозирование дефектов слитков (раковины, трещины)
+Анализ износа оборудования
+
+
+Доступные данные:
+Температура стали в кристаллизаторе (термопары)
+Скорость разливки (датчики скорости валков)
+Расход воды охлаждения (расходомеры)
+Вибрация оборудования (акселерометры)
+Химический состав стали (лабораторные анализы)
+Данные обновляются каждые 3 секунды. Требуется хранение данных за 6 месяцев.
+
+Особые требования:
+Режим реального времени для критических параметров
+
+
+Пороги: Температура ±20 °C от нормы, расход воды ±20% от номинала, вибрация +30–50% от базового уровня — аварийные значения.
+Хим. состав: Поступает с лаборатории каждые 15–30 минут, интегрируется пакетно, не в реальном времени.
+
+Критические параметры:
+1. Температура: 1485°C (КРИТИЧЕСКАЯ <1490°C)
+2. Расход воды: 830 м³/ч (КРИТИЧЕСКИЙ <840 м³/ч)
+3. Вибрация: 6.2 мм/с RMS (КРИТИЧЕСКАЯ >6.0 мм/с)
+
+Технические требования:
+4. pychrono.sensor.ChSensorManager
+5. High-res LiDAR: 1024x64 samples, 360° HFoV, 50m range  
+6. RGB Camera: 90° FoV, front mount
+7. Логика АВАРИЙНОЙ ОСТАНОВКИ при любом критич. параметре
+8. PointCloud визуализация (800x600)
+
+ВЫВЕДИ ТОЛЬКО ФИНАЛЬНЫЙ ИСПОЛНЯЕМЫЙ PYTHON КОД.
+[End of Task Specification]
+
+EVALUATION CRITERIA (100 points total):
+1. Completeness (40): missing components -15 each
+2. Correctness (30): wrong API usage -15 each  
+3. Code Quality (10): poor structure -5-10
+4. Efficiency (10): redundant code -5 each
+5. Error Handling (5): no try/except -5
+6. Visualization (5): wrong Irrlicht -3-5
+
+RULES:
+- Compare ONLY to task requirements and PyChrono API
+- Ignore code length/position bias
+- Be objective and consistent
+
+OUTPUT FORMAT (MANDATORY):
+1. Brief explanation of deductions
+2. Final score: [[X]] where X=0-100.0
+
+EXAMPLE:
+Missing ChSystem: -15
+Wrong sensor setup: -10
+[[75.0]]

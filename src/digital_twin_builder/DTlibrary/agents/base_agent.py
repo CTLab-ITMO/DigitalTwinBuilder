@@ -1,4 +1,3 @@
-from transformers import pipeline
 import json
 import requests
 import time

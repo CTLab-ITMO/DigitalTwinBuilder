@@ -1,0 +1,332 @@
+You are an expert judge comparing TWO digital twin implementations for the SAME task.
+
+S-LLM CODE:
+[SL-LM]
+
+[END S-LLM]
+
+BASELINE CODE (REFERENCE):  
+[BASELINE]
+import pychrono as chrono
+import pychrono.irrlicht as chronoirr
+import numpy as np
+import warnings
+
+# System
+system = chrono.ChSystemNSC()
+system.SetGravitationalAcceleration(chrono.ChVector3d(0, -9.81, 0))
+
+# Materials
+steel_mat = chrono.ChContactMaterialNSC()
+steel_mat.SetFriction(0.3)
+steel_mat.SetRestitution(0.1)
+
+# --- Промежуточный ковш (tundish) ---
+tundish_body = chrono.ChBodyEasyBox(1.5, 0.8, 0.8, 7800, True, True, steel_mat)
+tundish_body.SetPos(chrono.ChVector3d(0, 4.0, 0))
+tundish_body.SetFixed(True)
+system.Add(tundish_body)
+
+# --- Кристаллизатор (mold) - цилиндр/труба ---
+mold_body = chrono.ChBodyEasyCylinder(chrono.ChAxis_Y, 0.15, 0.9, 7800, True, True, steel_mat)
+mold_body.SetPos(chrono.ChVector3d(0, 2.5, 0))
+mold_body.SetFixed(True)
+system.Add(mold_body)
+
+# --- Зона вторичного охлаждения ---
+cooling_zone = chrono.ChBodyEasyBox(0.4, 1.5, 0.4, 7800, True, True, steel_mat)
+cooling_zone.SetPos(chrono.ChVector3d(0, 1.0, 0))
+cooling_zone.SetFixed(True)
+system.Add(cooling_zone)
+
+# --- Тянущие валки (пара) ---
+roll1 = chrono.ChBodyEasyCylinder(chrono.ChAxis_Z, 0.12, 0.5, 7800, True, True, steel_mat)
+roll1.SetPos(chrono.ChVector3d(0.3, -0.3, 0))
+roll1.SetFixed(True)
+system.Add(roll1)
+
+roll2 = chrono.ChBodyEasyCylinder(chrono.ChAxis_Z, 0.12, 0.5, 7800, True, True, steel_mat)
+roll2.SetPos(chrono.ChVector3d(-0.3, -0.3, 0))
+roll2.SetFixed(True)
+system.Add(roll2)
+
+# --- Слиток (заготовка) ---
+strand_body = chrono.ChBodyEasyBox(0.25, 2.0, 0.25, 7800, True, True, steel_mat)
+strand_body.SetPos(chrono.ChVector3d(0, 0.5, 0))
+strand_body.SetFixed(False)
+system.Add(strand_body)
+
+# --- Параметры аварийного режима ---
+TEMP_NORMAL = 1520.0
+TEMP_ALARM_DELTA = 20.0
+TEMP_EMERGENCY = 1510.0
+
+CASTING_SPEED_NORMAL = 1.4
+CASTING_SPEED_MIN = 1.3
+CASTING_SPEED_MAX = 1.5
+CASTING_SPEED_EMERGENCY = 1.2
+
+WATER_FLOW_NORMAL = 1200.0
+WATER_FLOW_MIN = 960.0
+WATER_FLOW_MAX = 1440.0
+WATER_FLOW_EMERGENCY = 1440.0
+WATER_ALARM_PCT = 0.20
+
+VIBRATION_NORMAL = 4.0
+VIBRATION_EMERGENCY = 5.2
+VIBRATION_ALARM_FACTOR_LOW = 1.30
+VIBRATION_ALARM_FACTOR_HIGH = 1.50
+
+# --- Сенсорные данные (аварийный режим) ---
+sensor_data = {
+    "temperature": TEMP_EMERGENCY,
+    "casting_speed": CASTING_SPEED_EMERGENCY,
+    "water_flow": WATER_FLOW_EMERGENCY,
+    "vibration": VIBRATION_EMERGENCY,
+    "chem_composition": {"C": 0.18, "Mn": 0.75, "Si": 0.22, "S": 0.015, "P": 0.018},
+    "defect_risk": 0.0,
+    "equipment_wear": 0.0,
+    "timestamp": 0.0,
+    "alarm_active": False,
+}
+
+last_chem_update = 0.0
+CHEM_UPDATE_INTERVAL = 900.0
+alarm_log = []
+
+def simulate_sensors(t, dt):
+    noise_temp = np.random.normal(0, 1.0)
+    noise_speed = np.random.normal(0, 0.008)
+    noise_water = np.random.normal(0, 10.0)
+    noise_vib = np.random.normal(0, 0.08)
+
+    sensor_data["temperature"] = TEMP_EMERGENCY + noise_temp
+    sensor_data["casting_speed"] = CASTING_SPEED_EMERGENCY + noise_speed
+    sensor_data["water_flow"] = WATER_FLOW_EMERGENCY + abs(noise_water)
+    sensor_data["vibration"] = VIBRATION_EMERGENCY + abs(noise_vib)
+    sensor_data["timestamp"] = t
+
+def check_alarms():
+    alarms = []
+    temp = sensor_data["temperature"]
+    if abs(temp - TEMP_NORMAL) > TEMP_ALARM_DELTA:
+        msg = f"[EMERGENCY] Temperature {temp:.1f}C — deviation {abs(temp - TEMP_NORMAL):.1f}C > {TEMP_ALARM_DELTA}C threshold"
+        alarms.append(msg)
+        warnings.warn(msg, RuntimeWarning)
+
+    water = sensor_data["water_flow"]
+    water_dev = abs(water - WATER_FLOW_NORMAL) / WATER_FLOW_NORMAL
+    if water_dev > WATER_ALARM_PCT:
+        msg = f"[EMERGENCY] Water flow {water:.1f} m3/h — deviation {water_dev*100:.1f}% > {WATER_ALARM_PCT*100:.0f}% threshold"
+        alarms.append(msg)
+        warnings.warn(msg, RuntimeWarning)
+
+    vib = sensor_data["vibration"]
+    vib_factor = vib / VIBRATION_NORMAL
+    if vib_factor >= VIBRATION_ALARM_FACTOR_LOW:
+        msg = f"[EMERGENCY] Vibration {vib:.2f} mm/s RMS — factor {vib_factor:.2f} >= {VIBRATION_ALARM_FACTOR_LOW}"
+        alarms.append(msg)
+        warnings.warn(msg, RuntimeWarning)
+
+    speed = sensor_data["casting_speed"]
+    if speed <= CASTING_SPEED_EMERGENCY:
+        msg = f"[EMERGENCY] Casting speed {speed:.3f} m/min — at or below emergency threshold {CASTING_SPEED_EMERGENCY} m/min"
+        alarms.append(msg)
+        warnings.warn(msg, RuntimeWarning)
+
+    sensor_data["alarm_active"] = len(alarms) > 0
+    return alarms
+
+def predict_defects():
+    temp_dev = abs(sensor_data["temperature"] - TEMP_NORMAL) / TEMP_ALARM_DELTA
+    speed_norm = (sensor_data["casting_speed"] - CASTING_SPEED_MIN) / (CASTING_SPEED_MAX - CASTING_SPEED_MIN)
+    speed_norm = np.clip(speed_norm, 0, 1)
+    risk = 0.0
+    risk += temp_dev * 0.4
+    risk += (1.0 - speed_norm) * 0.3
+    vib_factor = sensor_data["vibration"] / VIBRATION_NORMAL
+    risk += (vib_factor - 1.0) * 0.3
+    sensor_data["defect_risk"] = np.clip(risk, 0.0, 1.0)
+    return sensor_data["defect_risk"]
+
+def update_wear(dt):
+    vib_factor = sensor_data["vibration"] / VIBRATION_NORMAL
+    wear_rate = 1e-6 * vib_factor * dt * 1.5
+    sensor_data["equipment_wear"] += wear_rate
+
+def update_chem_composition(t):
+    global last_chem_update
+    if t - last_chem_update >= CHEM_UPDATE_INTERVAL:
+        sensor_data["chem_composition"] = {
+            "C": round(0.18 + np.random.normal(0, 0.005), 4),
+            "Mn": round(0.75 + np.random.normal(0, 0.02), 4),
+            "Si": round(0.22 + np.random.normal(0, 0.01), 4),
+            "S": round(0.015 + np.random.normal(0, 0.001), 5),
+            "P": round(0.018 + np.random.normal(0, 0.001), 5),
+        }
+        last_chem_update = t
+        print(f"[t={t:.1f}s] Chem update (batch): {sensor_data['chem_composition']}")
+
+def update_visual_alarm(alarm_active):
+    if alarm_active:
+        strand_asset.SetColor(chrono.ChColor(1.0, 0.0, 0.0))
+        mold_asset.SetColor(chrono.ChColor(1.0, 0.1, 0.1))
+        tundish_asset.SetColor(chrono.ChColor(0.9, 0.0, 0.0))
+    else:
+        strand_asset.SetColor(chrono.ChColor(0.9, 0.5, 0.1))
+        mold_asset.SetColor(chrono.ChColor(0.7, 0.7, 0.8))
+        tundish_asset.SetColor(chrono.ChColor(0.6, 0.3, 0.1))
+
+# --- Irrlicht визуализация ---
+vis = chronoirr.ChVisualSystemIrrlicht()
+vis.AttachSystem(system)
+vis.SetWindowSize(1280, 720)
+vis.SetWindowTitle("Digital Twin: Continuous Steel Casting [!!! EMERGENCY MODE !!!]")
+vis.Initialize()
+vis.AddLogo()
+vis.AddSkyBox()
+vis.AddCamera(chrono.ChVector3d(3, 3, 4), chrono.ChVector3d(0, 1, 0))
+vis.AddTypicalLights()
+
+tundish_asset = chrono.ChVisualShapeBox(1.5, 0.8, 0.8)
+tundish_asset.SetColor(chrono.ChColor(0.9, 0.0, 0.0))
+tundish_body.AddVisualShape(tundish_asset)
+
+mold_asset = chrono.ChVisualShapeCylinder(0.15, 0.9)
+mold_asset.SetColor(chrono.ChColor(1.0, 0.1, 0.1))
+mold_body.AddVisualShape(mold_asset)
+
+strand_asset = chrono.ChVisualShapeBox(0.25, 2.0, 0.25)
+strand_asset.SetColor(chrono.ChColor(1.0, 0.0, 0.0))
+strand_body.AddVisualShape(strand_asset)
+
+# --- Параметры симуляции ---
+step_size = 3.0
+sim_time = 0.0
+max_sim_time = 3600.0
+print_interval = 30.0
+last_print = -print_interval
+frame_count = 0
+
+print("=== Digital Twin: Continuous Casting [!!! EMERGENCY MODE !!!] ===")
+print(f"EMERGENCY Temp: {TEMP_EMERGENCY}C | Speed: {CASTING_SPEED_EMERGENCY} m/min | Water: {WATER_FLOW_EMERGENCY} m3/h | Vib: {VIBRATION_EMERGENCY} mm/s")
+print(f"Thresholds: Temp +-{TEMP_ALARM_DELTA}C | Water +-{WATER_ALARM_PCT*100:.0f}% | Vib x{VIBRATION_ALARM_FACTOR_LOW}")
+print("=" * 60)
+
+# --- Симуляционный цикл ---
+while vis.Run() and sim_time < max_sim_time:
+    vis.BeginScene()
+    vis.Render()
+
+    simulate_sensors(sim_time, step_size)
+    update_chem_composition(sim_time)
+    update_wear(step_size)
+    defect_risk = predict_defects()
+    alarms = check_alarms()
+
+    update_visual_alarm(sensor_data["alarm_active"])
+
+    cast_speed_ms = sensor_data["casting_speed"] / 60.0
+    pos = strand_body.GetPos()
+    new_y = pos.y - cast_speed_ms * step_size
+    if new_y < -5.0:
+        new_y = 2.0
+    strand_body.SetPos(chrono.ChVector3d(pos.x, new_y, pos.z))
+
+    vib_offset = 0.012 * np.sin(sim_time * 10) * (sensor_data["vibration"] / VIBRATION_NORMAL)
+    roll1.SetPos(chrono.ChVector3d(0.3 + vib_offset, -0.3, 0))
+    roll2.SetPos(chrono.ChVector3d(-0.3 - vib_offset, -0.3, 0))
+
+    if sim_time - last_print >= print_interval:
+        status = "!!! ALARM !!!" if sensor_data["alarm_active"] else "OK"
+        print(f"\n[t={sim_time:.0f}s] STATUS: {status}")
+        print(f"  Temp: {sensor_data['temperature']:.1f}C | Speed: {sensor_data['casting_speed']:.3f} m/min | Water: {sensor_data['water_flow']:.1f} m3/h | Vib: {sensor_data['vibration']:.2f} mm/s")
+        print(f"  Defect Risk: {defect_risk*100:.1f}% | Wear Index: {sensor_data['equipment_wear']*1e6:.4f}")
+        if alarms:
+            for a in alarms:
+                print(f"  {a}")
+                alarm_log.append({"t": sim_time, "msg": a})
+        last_print = sim_time
+
+    system.DoStepDynamics(step_size)
+    sim_time += step_size
+    frame_count += 1
+
+    vis.EndScene()
+
+print("\n=== Simulation complete ===")
+print(f"Total time: {sim_time:.0f}s | Frames: {frame_count}")
+print(f"Final wear index: {sensor_data['equipment_wear']*1e6:.4f}")
+print(f"Final defect risk: {sensor_data['defect_risk']*100:.1f}%")
+print(f"Total alarms logged: {len(alarm_log)}")
+if alarm_log:
+    print("Last 5 alarms:")
+    for entry in alarm_log[-5:]:
+        print(f"  [t={entry['t']:.0f}s] {entry['msg']}")
+[END BASELINE]
+
+PyChrono API:
+PyChrono::ChSystemNSC(), AddBody(), AddLink(), ChLidarSensor, DoStepDynamics(), chrono_irrlicht
+
+Task:
+[Task Specification]
+МОДИФИЦИРУЙ КОД ИЗ Turn 1 для АВАРИЙНОГО РЕЖИМА:
+
+Объект: участок непрерывной разливки стали (МНЛЗ) на металлургическом комбинате.
+
+Основное оборудование: промежуточный ковш, кристаллизатор, зона вторичного охлаждения, тянущие валки, разрезка.
+Цели цифрового двойника:
+Контроль температуры стали в кристаллизаторе
+Оптимизация скорости разливки
+Прогнозирование дефектов слитков (раковины, трещины)
+Анализ износа оборудования
+
+
+Доступные данные:
+Температура стали в кристаллизаторе (термопары)
+Скорость разливки (датчики скорости валков)
+Расход воды охлаждения (расходомеры)
+Вибрация оборудования (акселерометры)
+Химический состав стали (лабораторные анализы)
+Данные обновляются каждые 3 секунды. Требуется хранение данных за 6 месяцев.
+
+Особые требования:
+Режим реального времени для критических параметров
+
+
+Пороги: Температура ±20 °C от нормы, расход воды ±20% от номинала, вибрация +30–50% от базового уровня — аварийные значения.
+Хим. состав: Поступает с лаборатории каждые 15–30 минут, интегрируется пакетно, не в реальном времени.
+
+Изменения:
+1. Температура стали: 1510°C (нижний АВАРИЙНЫЙ порог)
+2. Скорость разливки: 1.2 м/мин (АВАРИЙНАЯ <1.2 м/мин)  
+3. Расход воды: 1440 м³/ч (верхний АВАРИЙНЫЙ предел)
+4. Вибрация: 5.2 мм/с RMS (АВАРИЙНАЯ 5.2–6.0 мм/с)
+
+Дополнительно:
+5. Добавить предупредительные индикаторы (print/warnings)
+6. Изменить визуализацию (красный цвет для аварии)
+
+ВЫВЕДИ ТОЛЬКО ОБНОВЛЁННЫЙ ИСПОЛНЯЕМЫЙ PYTHON КОД.
+[End Task]
+
+COMPARE AND RANK:
+1. Which code better implements the physical simulation?
+2. Which has better sensor integration?  
+3. Which follows task requirements closer?
+4. Which has higher code quality?
+
+WINNER DETERMINATION:
+- Score S-LLM relative to Baseline (0-100%)
+- 100 = S-LLM clearly better
+- 50 = equal quality
+- 0 = Baseline clearly better
+
+OUTPUT FORMAT (MANDATORY):
+Explanation which is better and why
+Final relative score: [[X]] where X=0-100 (S-LLM vs Baseline)
+
+EXAMPLE:
+S-LLM missing sensors (-20), baseline complete
+S-LLM poor structure (-10)
+[[35.0]]
