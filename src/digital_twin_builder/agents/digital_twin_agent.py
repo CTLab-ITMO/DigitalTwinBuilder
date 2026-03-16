@@ -1,14 +1,11 @@
-from base_agent import BaseAgent
-from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
-import json
-import requests
-import time
-import logging
 import sys
 import signal
-from typing import Dict, Any, Optional
-from ..config import API_URL, DT_AGENT_INDEX, DT_AGENT_MODEL
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../'))
+from digital_twin_builder.agents import BaseAgent
+from digital_twin_builder.config import API_URL, DT_AGENT_INDEX, DT_AGENT_MODEL
 
 class DigitalTwinAgent(BaseAgent):
     def __init__(self):

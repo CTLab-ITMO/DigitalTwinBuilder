@@ -1,9 +1,11 @@
-from .base_agent import BaseAgent
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 import sys
 import signal
-from ..config import API_URL, DB_AGENT_MODEL, DB_AGENT_INDEX
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../'))
+from digital_twin_builder.agents import BaseAgent
+from digital_twin_builder.config import API_URL, DB_AGENT_MODEL, DB_AGENT_INDEX
 
 class DatabaseAgent(BaseAgent):
     def __init__(self):

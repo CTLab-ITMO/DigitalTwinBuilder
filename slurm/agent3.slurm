@@ -2,7 +2,7 @@
 #SBATCH --job-name=dt_a3
 #SBATCH --time=08:00:00
 #SBATCH --partition=gpu
-#SBATCH --nodelist=kali
+#SBATCH --exclude=turing,laplas,midas,mars
 #SBATCH --gres=gpu:1
 #SBATCH --mem=20G
 #SBATCH --output=logs/digital_twin_%j.out

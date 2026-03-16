@@ -7,9 +7,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # Load .env file from the workspace root
-env_path = Path(__file__).parent.parent.parent / ".env"
+env_path = ".env"
 load_dotenv(dotenv_path=env_path)
-
 # API Configuration
 API_URL = os.getenv("API_URL", "http://188.119.67.226:8000")
 

@@ -14,6 +14,7 @@ from .digital_twin_agent import DigitalTwinAgent
 __all__ = [
     "BaseAgent",
     "OrchestratorAgent",
+    "UserInteractionAgent",
     "DatabaseAgent",
     "DigitalTwinAgent",
 ]

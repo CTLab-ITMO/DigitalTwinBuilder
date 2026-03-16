@@ -1,14 +1,11 @@
-from .base_agent import BaseAgent
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
-import json
-import requests
-import time
-import logging
 import sys
 import signal
-from typing import Dict, Any, Optional
-from ..config import API_URL, UI_AGENT_INDEX, UI_AGENT_MODEL
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../'))
+from digital_twin_builder.agents import BaseAgent
+from digital_twin_builder.config import API_URL, UI_AGENT_INDEX, UI_AGENT_MODEL
 
 class UserInteractionAgent(BaseAgent):
     def __init__(self):
@@ -23,8 +20,9 @@ class UserInteractionAgent(BaseAgent):
                 UI_AGENT_MODEL,
                 device_map="auto"
             )
+            self.logger.info(f"Model {UI_AGENT_MODEL} loaded")
         except Exception as e:
-            self.logger.error(f"Model loading failed: {str(e)}")
+            self.logger.error(f"Model {UI_AGENT_MODEL} loading failed: {str(e)}")
             raise
 
     def process_task(self, task):
