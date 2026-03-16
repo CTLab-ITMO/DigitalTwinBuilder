@@ -1,8 +1,5 @@
 # streamlit_app.py
 import streamlit as st
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 import time
 import json
 from logging import config
@@ -14,34 +11,41 @@ import pandas as pd
 import plotly.express as px
 from prompts import system as system_prompts
 from prompts import user as user_prompts
+from config import API_URL
+from api_utils import (
+    init_session,
+    get_session,
+    submit_task as api_submit_task,
+    add_message_to_conversation as api_add_message_to_conversation,
+    get_task_status as api_get_task_status,
+    get_agent_status as api_get_agent_status,
+    create_new_session as api_create_new_session,
+    create_new_conversation as api_create_new_conversation
+)
 
 # Configuration
-API_URL = "http://188.119.67.226:8000/"  # Change to your API URL
 if "response_queue" not in st.session_state:
     st.session_state.response_queue = queue.Queue()
 
+# Initialize API session
 requests_session = None
 
-# Helper functions
+
+def init_requests_session():
+    """Initialize requests session for API calls"""
+    global requests_session
+    requests_session = init_session()
+    return requests_session
+
+
+# Streamlit wrapper functions that add st.error for UI feedback
 def submit_task(agent_id, conv_idx, conversation_id, params):
     """Submit task to API"""
     try:
-        response = requests_session.post(
-            f"{API_URL}/tasks",
-            json={
-                "agent_id": agent_id,
-                "conv_idx": conv_idx,
-                "conversation_id": conversation_id,
-                "params": params,
-                "priority": 5,
-            },
-            timeout=10,
-        )
-        if response.status_code == 200:
-            return response.json()
-        else:
-            st.error(f"API Error: {response.status_code}")
-            return None
+        result = api_submit_task(agent_id, conversation_id, params, conv_idx=conv_idx)
+        if result is None:
+            st.error("API Error: Failed to submit task")
+        return result
     except Exception as e:
         st.error(f"Connection error: {str(e)}")
         return None
@@ -49,20 +53,7 @@ def submit_task(agent_id, conv_idx, conversation_id, params):
 
 def add_message_to_conversation(conversation_id, role, content):
     try:
-        response = requests_session.post(
-            f"{API_URL}/conversations/{conversation_id}/messages", 
-            params={
-                "conversation_id": conversation_id,
-                "role": role,
-                "content": content,
-            },
-            timeout=10,
-        )
-        if response.status_code == 200:
-            return response.json()
-        else:
-            st.error(f"API Error: {response.status_code}")
-            return None
+        return api_add_message_to_conversation(conversation_id, role, content)
     except Exception as e:
         st.error(f"Connection error: {str(e)}")
     return None
@@ -71,9 +62,10 @@ def add_message_to_conversation(conversation_id, role, content):
 def get_task_status(task_id):
     """Get task status from API"""
     try:
-        response = requests_session.get(f"{API_URL}/tasks/{task_id}", timeout=5)
-        if response.status_code == 200:
-            return response.json()
+        result = api_get_task_status(task_id)
+        if result is None:
+            st.error("Failed to get task status")
+        return result
     except Exception as e:
         st.error(f"Connection error: {str(e)}")
     return None
@@ -82,9 +74,7 @@ def get_task_status(task_id):
 def get_agent_status(agent_id):
     """Get agent status from API"""
     try:
-        response = requests_session.get(f"{API_URL}/agents/{agent_id}/status", timeout=5)
-        if response.status_code == 200:
-            return response.json()
+        return api_get_agent_status(agent_id)
     except Exception as e:
         st.error(f"Connection error: {str(e)}")
     return {"status": "offline"}
@@ -105,42 +95,24 @@ def background_poll_task_result(response_queue, task_id):
 
 def create_new_conversation(session_id, agent_id, system_prompt, conv_idx=0):
     """Create a new conversation"""
-    response = requests_session.post(
-        f"{API_URL}/conversations",
-        params={"session_id": session_id, "agent_id": agent_id, "conv_idx": conv_idx},
-    )
-    if response.status_code == 200:
-        conversation_id = response.json()["conversation_id"]
+    conversation_id = api_create_new_conversation(session_id, agent_id, system_prompt)
+    if conversation_id:
         st.session_state.conversations[agent_id - 1][conv_idx] = conversation_id
     else:
-        st.error(
-            f"Не удалось создать новую беседу с агентом {agent_id}, запрос завершился с ошибкой {response.status_code}"
-        )
-        return None
-    response_message = add_message_to_conversation(
-        conversation_id, "system", system_prompt
-    )
-    if response_message is not None:
-        return conversation_id
-    else:
-        st.error(
-            f"Не удалось добавить системный промпт в новую беседу {conversation_id} с агентом {agent_id}"
-        )
-        return None
+        st.error(f"Не удалось создать новую беседу с агентом {agent_id}")
+    return conversation_id
 
 
 def create_new_session():
-    response = requests_session.post(
-        f"{API_URL}/sessions", params={"user_id": "streamlit_user", "title": "New Chat"}
-    )
-    if response.status_code == 200:
-        session_id = response.json()["session_id"]
+    try:
+        session_id = api_create_new_session()
+        if session_id is None:
+            st.error("Failed to create session")
         return session_id
-    else:
-        st.error(
-            f"Не удалось создать новую сессию, запрос завершился с ошибкой {response.status_code}"
-        )
+    except Exception as e:
+        st.error(f"Connection error: {str(e)}")
         return None
+
 
 
 def load_session(session_id):
@@ -205,7 +177,6 @@ def load_conversation(conversation_id, agent_id, conv_idx=0):
 
 
 def submit_chat_to_agent(agent_id, conv_idx, conversation_id, params):
-    print(conversation_id)
     task_info = submit_task(agent_id, conv_idx, conversation_id, params)
     if task_info:
         task_id = task_info["task_id"]
@@ -713,17 +684,9 @@ def initialize_ui():
         process_incoming_task(task)
         st.rerun()
 
-    time.sleep(10)
-    st.rerun()
-
-
 def main():
     global requests_session
-    requests_session = requests.Session()
-    retry = Retry(connect=3, backoff_factor=0.5)
-    adapter = HTTPAdapter(max_retries=retry)
-    requests_session.mount('http://', adapter)
-    requests_session.mount('https://', adapter)
+    requests_session = init_requests_session()
     initialize_ui()
 
 
