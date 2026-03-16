@@ -4,9 +4,6 @@ from Levenshtein import distance as levenshtein_distance
 
 def compare_values(answer, model_output):
     # base case
-    print("ANSWER: " + str(answer))
-    print("MODEL OUTPUT: " + str(model_output))
-    print("-----")
     if isinstance(answer, (bool, int, float)):
             return 1 if answer == model_output else 0
     elif isinstance(answer, str):
@@ -76,30 +73,14 @@ def compare_values(answer, model_output):
 
 
 
-def json_evaluation_new(model_output: str, answer: str, schema: dict):
-    try:
-        raw_json_answer = model_output.split("```json")[-1].split("```")[0]
-    except:
-        return 0, 0, 0, "No markdown style JSON Pattern found"
-    
-    try:
-        model_output_json = json.loads(raw_json_answer)
-    except:
-        return 0, 0, 0, "Not a invalid JSON"
-    
-    answer_json = json.loads(answer)
+def json_evaluation_new(model_output_json: dict, answer_json: dict, schema: dict):
     try:
         validate(instance=model_output_json, schema=schema)
     except:
-        return 0, 0, 0, "JSON output doesn't match the schema"
+        return 0, 0, "JSON output doesn't match the schema"
     
     format_score = 1
 
-    if model_output_json == answer_json:
-        strict_score = 1
-    else:
-        strict_score = 0
-
     similarity_score = compare_values(answer_json, model_output_json)
 
-    return format_score, similarity_score, strict_score, "Give score in 3 criteria"
+    return format_score, similarity_score, "Give score in 3 criteria"
