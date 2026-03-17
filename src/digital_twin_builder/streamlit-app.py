@@ -1,8 +1,5 @@
 # streamlit_app.py
 import streamlit as st
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 import time
 import json
 from logging import config
@@ -14,34 +11,41 @@ import pandas as pd
 import plotly.express as px
 from prompts import system as system_prompts
 from prompts import user as user_prompts
+from config import API_URL, UI_AGENT_INDEX, DB_AGENT_INDEX, DT_AGENT_INDEX
+from api_utils import (
+    init_session,
+    get_session,
+    submit_task as api_submit_task,
+    add_message_to_conversation as api_add_message_to_conversation,
+    get_task_status as api_get_task_status,
+    get_agent_status as api_get_agent_status,
+    create_new_session as api_create_new_session,
+    create_new_conversation as api_create_new_conversation
+)
 
 # Configuration
-API_URL = "http://188.119.67.226:8000/"  # Change to your API URL
 if "response_queue" not in st.session_state:
     st.session_state.response_queue = queue.Queue()
 
+# Initialize API session
 requests_session = None
 
-# Helper functions
+
+def init_requests_session():
+    """Initialize requests session for API calls"""
+    global requests_session
+    requests_session = init_session()
+    return requests_session
+
+
+# Streamlit wrapper functions that add st.error for UI feedback
 def submit_task(agent_id, conv_idx, conversation_id, params):
     """Submit task to API"""
     try:
-        response = requests_session.post(
-            f"{API_URL}/tasks",
-            json={
-                "agent_id": agent_id,
-                "conv_idx": conv_idx,
-                "conversation_id": conversation_id,
-                "params": params,
-                "priority": 5,
-            },
-            timeout=10,
-        )
-        if response.status_code == 200:
-            return response.json()
-        else:
-            st.error(f"API Error: {response.status_code}")
-            return None
+        result = api_submit_task(agent_id, conversation_id, params, conv_idx=conv_idx)
+        if result is None:
+            st.error("API Error: Failed to submit task")
+        return result
     except Exception as e:
         st.error(f"Connection error: {str(e)}")
         return None
@@ -49,20 +53,7 @@ def submit_task(agent_id, conv_idx, conversation_id, params):
 
 def add_message_to_conversation(conversation_id, role, content):
     try:
-        response = requests_session.post(
-            f"{API_URL}/conversations/{conversation_id}/messages", 
-            params={
-                "conversation_id": conversation_id,
-                "role": role,
-                "content": content,
-            },
-            timeout=10,
-        )
-        if response.status_code == 200:
-            return response.json()
-        else:
-            st.error(f"API Error: {response.status_code}")
-            return None
+        return api_add_message_to_conversation(conversation_id, role, content)
     except Exception as e:
         st.error(f"Connection error: {str(e)}")
     return None
@@ -71,9 +62,10 @@ def add_message_to_conversation(conversation_id, role, content):
 def get_task_status(task_id):
     """Get task status from API"""
     try:
-        response = requests_session.get(f"{API_URL}/tasks/{task_id}", timeout=5)
-        if response.status_code == 200:
-            return response.json()
+        result = api_get_task_status(task_id)
+        if result is None:
+            st.error("Failed to get task status")
+        return result
     except Exception as e:
         st.error(f"Connection error: {str(e)}")
     return None
@@ -82,9 +74,7 @@ def get_task_status(task_id):
 def get_agent_status(agent_id):
     """Get agent status from API"""
     try:
-        response = requests_session.get(f"{API_URL}/agents/{agent_id}/status", timeout=5)
-        if response.status_code == 200:
-            return response.json()
+        return api_get_agent_status(agent_id)
     except Exception as e:
         st.error(f"Connection error: {str(e)}")
     return {"status": "offline"}
@@ -105,42 +95,24 @@ def background_poll_task_result(response_queue, task_id):
 
 def create_new_conversation(session_id, agent_id, system_prompt, conv_idx=0):
     """Create a new conversation"""
-    response = requests_session.post(
-        f"{API_URL}/conversations",
-        params={"session_id": session_id, "agent_id": agent_id, "conv_idx": conv_idx},
-    )
-    if response.status_code == 200:
-        conversation_id = response.json()["conversation_id"]
-        st.session_state.conversations[agent_id - 1][conv_idx] = conversation_id
+    conversation_id = api_create_new_conversation(session_id, agent_id, system_prompt)
+    if conversation_id:
+        st.session_state.conversations[agent_id][conv_idx] = conversation_id
     else:
-        st.error(
-            f"Не удалось создать новую беседу с агентом {agent_id}, запрос завершился с ошибкой {response.status_code}"
-        )
-        return None
-    response_message = add_message_to_conversation(
-        conversation_id, "system", system_prompt
-    )
-    if response_message is not None:
-        return conversation_id
-    else:
-        st.error(
-            f"Не удалось добавить системный промпт в новую беседу {conversation_id} с агентом {agent_id}"
-        )
-        return None
+        st.error(f"Не удалось создать новую беседу с агентом {agent_id}")
+    return conversation_id
 
 
 def create_new_session():
-    response = requests_session.post(
-        f"{API_URL}/sessions", params={"user_id": "streamlit_user", "title": "New Chat"}
-    )
-    if response.status_code == 200:
-        session_id = response.json()["session_id"]
+    try:
+        session_id = api_create_new_session()
+        if session_id is None:
+            st.error("Failed to create session")
         return session_id
-    else:
-        st.error(
-            f"Не удалось создать новую сессию, запрос завершился с ошибкой {response.status_code}"
-        )
+    except Exception as e:
+        st.error(f"Connection error: {str(e)}")
         return None
+
 
 
 def load_session(session_id):
@@ -163,29 +135,29 @@ def load_session(session_id):
             st.session_state.agent_count = agent_id
             st.session_state.conversations.extend([[None]*st.session_state.max_conversations_per_agent for _ in range(difference)])
             st.session_state.messages.extend([ [[] for _ in range(st.session_state.max_conversations_per_agent) ] for _ in range(difference)])
-        st.session_state.conversations[agent_id - 1][conv_idx] = conv["id"]
+        st.session_state.conversations[agent_id][conv_idx] = conv["id"]
         load_conversation(conv["id"], agent_id, conv_idx)
 
     def get_last_assistant_message(messages):
         return next((message['content'] for message in reversed(messages) if message['role'] == 'assistant'), None)
 
-    last_ui_assistant_message = get_last_assistant_message(st.session_state.messages[0][0])
+    last_ui_assistant_message = get_last_assistant_message(st.session_state.messages[UI_AGENT_INDEX][0])
     if last_ui_assistant_message is None: return
     process_interview_task(last_ui_assistant_message)
 
-    last_db_assistant_message = get_last_assistant_message(st.session_state.messages[1][0])
+    last_db_assistant_message = get_last_assistant_message(st.session_state.messages[DB_AGENT_INDEX][0])
     if last_db_assistant_message is None: return
     process_database_task(last_db_assistant_message)
 
-    last_dt_conf_assistant_message = get_last_assistant_message(st.session_state.messages[2][0])
+    last_dt_conf_assistant_message = get_last_assistant_message(st.session_state.messages[DT_AGENT_INDEX][0])
     if last_dt_conf_assistant_message is None: return
     process_dt_conf_task(last_dt_conf_assistant_message)
 
-    last_dt_sim_assistant_message = get_last_assistant_message(st.session_state.messages[2][1])
+    last_dt_sim_assistant_message = get_last_assistant_message(st.session_state.messages[DT_AGENT_INDEX][1])
     if last_dt_sim_assistant_message is None: return
     process_dt_sim_task(last_dt_sim_assistant_message)
 
-    last_dt_db_assistant_message = get_last_assistant_message(st.session_state.messages[2][2])
+    last_dt_db_assistant_message = get_last_assistant_message(st.session_state.messages[DT_AGENT_INDEX][2])
     if last_dt_db_assistant_message is None: return
     process_dt_db_task(last_dt_db_assistant_message)
 
@@ -200,17 +172,16 @@ def load_conversation(conversation_id, agent_id, conv_idx=0):
         return
 
     data = response.json()
-    st.session_state.conversations[agent_id - 1][conv_idx] = conversation_id
-    st.session_state.messages[agent_id - 1][conv_idx] = data["messages"]
+    st.session_state.conversations[agent_id][conv_idx] = conversation_id
+    st.session_state.messages[agent_id][conv_idx] = data["messages"]
 
 
 def submit_chat_to_agent(agent_id, conv_idx, conversation_id, params):
-    print(conversation_id)
     task_info = submit_task(agent_id, conv_idx, conversation_id, params)
     if task_info:
         task_id = task_info["task_id"]
         st.success(f"Task submitted! ID: {task_id[:8]}...")
-        st.session_state.waiting_for_agent[agent_id - 1][conv_idx] = True
+        st.session_state.waiting_for_agent[agent_id][conv_idx] = True
         st.session_state.tasks.append(task_id)
 
         thread = threading.Thread(
@@ -237,16 +208,15 @@ def contains_json(message: str):
         return False
 
 def setup_interview_tab():
-    ui_agent_id = 1
     conv_idx = 0
     st.header("Создание цифрового двойника производства")
 
-    if st.session_state.conversations[ui_agent_id - 1][conv_idx] is None:
+    if st.session_state.conversations[UI_AGENT_INDEX][conv_idx] is None:
         st.markdown("Пожалуйста, выберите существующий чат или создайте новый")
         return
 
-    load_conversation(st.session_state.conversations[ui_agent_id - 1][conv_idx], ui_agent_id, conv_idx)
-    for message in st.session_state.messages[ui_agent_id - 1][conv_idx]:
+    load_conversation(st.session_state.conversations[UI_AGENT_INDEX][conv_idx], UI_AGENT_INDEX, conv_idx)
+    for message in st.session_state.messages[UI_AGENT_INDEX][conv_idx]:
         if message["role"] == "system":
             continue
         with st.chat_message(message["role"]):
@@ -259,27 +229,26 @@ def setup_interview_tab():
     user_input = st.chat_input(
         "Введите информацию о вашем производстве...",
         disabled=st.session_state.get("interview_completed", False)
-            or st.session_state.waiting_for_agent[ui_agent_id - 1][conv_idx],
+            or st.session_state.waiting_for_agent[UI_AGENT_INDEX][conv_idx],
     )
     if user_input:
         params = {"temperature": temperature, "max_tokens": max_tokens}
         response = add_message_to_conversation(
-            st.session_state.conversations[ui_agent_id - 1][conv_idx],
+            st.session_state.conversations[UI_AGENT_INDEX][conv_idx],
             role="user",
             content=user_input,
         )
         if response is not None:
             submit_chat_to_agent(
-                ui_agent_id, conv_idx, st.session_state.conversations[ui_agent_id - 1][conv_idx], params
+                UI_AGENT_INDEX, conv_idx, st.session_state.conversations[UI_AGENT_INDEX][conv_idx], params
             )
     if st.session_state.get("interview_completed", False):
         st.success("Интервью завершено, переходите к следующей вкладке")
 
 
 def setup_database_tab():
-    db_agent_id = 2
     conv_idx = 0
-    db_conversation = st.session_state.conversations[db_agent_id - 1][conv_idx]
+    db_conversation = st.session_state.conversations[DB_AGENT_INDEX][conv_idx]
     st.header("Настройка базы данных")
 
     if not st.session_state.get("interview_completed", False):
@@ -293,8 +262,8 @@ def setup_database_tab():
 
     if db_conversation is None:
         try:
-            db_conversation = st.session_state.conversations[db_agent_id - 1][conv_idx] = create_new_conversation(
-                st.session_state.session_id, db_agent_id, system_prompts.DB, conv_idx
+            db_conversation = st.session_state.conversations[DB_AGENT_INDEX][conv_idx] = create_new_conversation(
+                st.session_state.session_id, DB_AGENT_INDEX, system_prompts.DB, conv_idx
             )
             add_message_to_conversation(
                 db_conversation,
@@ -302,37 +271,36 @@ def setup_database_tab():
                 user_prompts.make_db_prompt(st.session_state.interview_result),
             )
             submit_chat_to_agent(
-                db_agent_id, conv_idx, db_conversation, {"max_tokens": 3000}
+                DB_AGENT_INDEX, conv_idx, db_conversation, {"max_tokens": 3000}
             )
         except Exception:
             st.error("error in creating conversation")
-    elif not st.session_state.waiting_for_agent[db_agent_id - 1][conv_idx] and st.session_state.messages[db_agent_id - 1][conv_idx][-1]['role'] != 'assistant':
-        if st.session_state.messages[db_agent_id - 1][conv_idx][-1]['role'] != 'user':
+    elif not st.session_state.waiting_for_agent[DB_AGENT_INDEX][conv_idx] and st.session_state.messages[DB_AGENT_INDEX][conv_idx][-1]['role'] != 'assistant':
+        if st.session_state.messages[DB_AGENT_INDEX][conv_idx][-1]['role'] != 'user':
             add_message_to_conversation(
                 db_conversation,
                 "user",
                 user_prompts.make_db_prompt(st.session_state.interview_result),
             )
         submit_chat_to_agent(
-            db_agent_id, conv_idx, db_conversation, {"max_tokens": 3000}
+            DB_AGENT_INDEX, conv_idx, db_conversation, {"max_tokens": 3000}
         )
     else:
-        print(st.session_state.waiting_for_agent[db_agent_id - 1][conv_idx])
-        print(st.session_state.messages[db_agent_id - 1][conv_idx][-1])
-    load_conversation(db_conversation, db_agent_id, conv_idx)
+        print(st.session_state.waiting_for_agent[DB_AGENT_INDEX][conv_idx])
+        print(st.session_state.messages[DB_AGENT_INDEX][conv_idx][-1])
+    load_conversation(db_conversation, DB_AGENT_INDEX, conv_idx)
 
     if "db_json" in st.session_state:
         st.subheader("Сгенерированная схема базы данных")
         st.json(st.session_state.db_json)
 
 def dt_generate_config():
-    dt_agent_id = 3
     conv_idx = 0
-    dt_conversation = st.session_state.conversations[dt_agent_id - 1][conv_idx]
+    dt_conversation = st.session_state.conversations[DT_AGENT_INDEX][conv_idx]
     if dt_conversation is None:
         try:
-            dt_conversation = st.session_state.conversations[dt_agent_id - 1][conv_idx] = create_new_conversation(
-                st.session_state.session_id, dt_agent_id, system_prompts.GenConf, conv_idx
+            dt_conversation = st.session_state.conversations[DT_AGENT_INDEX][conv_idx] = create_new_conversation(
+                st.session_state.session_id, DT_AGENT_INDEX, system_prompts.GenConf, conv_idx
             )
             prompt = user_prompts.make_gen_conf(
                 st.session_state.interview_result,
@@ -341,11 +309,11 @@ def dt_generate_config():
             add_message_to_conversation(
                 dt_conversation, role="user", content=prompt)
             submit_chat_to_agent(
-                dt_agent_id, conv_idx, dt_conversation, {"max_tokens": 3000})
+                DT_AGENT_INDEX, conv_idx, dt_conversation, {"max_tokens": 3000})
         except Exception:
             st.error("error in creating conversation")
-    elif not st.session_state.waiting_for_agent[dt_agent_id - 1][conv_idx] and st.session_state.messages[dt_agent_id - 1][conv_idx][-1]['role'] != 'assistant':
-        if st.session_state.messages[dt_agent_id - 1][conv_idx][-1]['role'] != 'user':
+    elif not st.session_state.waiting_for_agent[DT_AGENT_INDEX][conv_idx] and st.session_state.messages[DT_AGENT_INDEX][conv_idx][-1]['role'] != 'assistant':
+        if st.session_state.messages[DT_AGENT_INDEX][conv_idx][-1]['role'] != 'user':
             prompt = user_prompts.make_gen_conf(
                 st.session_state.interview_result,
                 st.session_state.db_json
@@ -354,18 +322,17 @@ def dt_generate_config():
                 dt_conversation, role="user", content=prompt)
 
         submit_chat_to_agent(
-            dt_agent_id, conv_idx, dt_conversation, {"max_tokens": 3000}
+            DT_AGENT_INDEX, conv_idx, dt_conversation, {"max_tokens": 3000}
         )
-    load_conversation(dt_conversation, dt_agent_id, conv_idx)
+    load_conversation(dt_conversation, DT_AGENT_INDEX, conv_idx)
 
 def dt_generate_simulation():
-    dt_agent_id = 3
     conv_idx = 1
-    dt_conversation = st.session_state.conversations[dt_agent_id - 1][conv_idx]
+    dt_conversation = st.session_state.conversations[DT_AGENT_INDEX][conv_idx]
     if dt_conversation is None:
         try:
-            dt_conversation = st.session_state.conversations[dt_agent_id - 1][conv_idx] = create_new_conversation(
-                st.session_state.session_id, dt_agent_id, system_prompts.GenSim, conv_idx
+            dt_conversation = st.session_state.conversations[DT_AGENT_INDEX][conv_idx] = create_new_conversation(
+                st.session_state.session_id, DT_AGENT_INDEX, system_prompts.GenSim, conv_idx
             )
             prompt = user_prompts.make_gen_sim(
                 st.session_state.interview_result,
@@ -374,11 +341,11 @@ def dt_generate_simulation():
             add_message_to_conversation(
                 dt_conversation, role="user", content=prompt)
             submit_chat_to_agent(
-                dt_agent_id, conv_idx, dt_conversation, {})
+                DT_AGENT_INDEX, conv_idx, dt_conversation, {})
         except Exception:
             st.error("error in creating conversation")
-    elif not st.session_state.waiting_for_agent[dt_agent_id - 1][conv_idx] and st.session_state.messages[dt_agent_id - 1][conv_idx][-1]['role'] != 'assistant':
-        if st.session_state.messages[dt_agent_id - 1][conv_idx][-1]['role'] != 'user':
+    elif not st.session_state.waiting_for_agent[DT_AGENT_INDEX][conv_idx] and st.session_state.messages[DT_AGENT_INDEX][conv_idx][-1]['role'] != 'assistant':
+        if st.session_state.messages[DT_AGENT_INDEX][conv_idx][-1]['role'] != 'user':
             prompt = user_prompts.make_gen_sim(
                 st.session_state.interview_result,
                 st.session_state.db_json
@@ -387,18 +354,17 @@ def dt_generate_simulation():
                 dt_conversation, role="user", content=prompt)
 
         submit_chat_to_agent(
-            dt_agent_id, conv_idx, dt_conversation, {"max_tokens": 3000}
+            DT_AGENT_INDEX, conv_idx, dt_conversation, {"max_tokens": 3000}
         )
-    load_conversation(dt_conversation, dt_agent_id, conv_idx)
+    load_conversation(dt_conversation, DT_AGENT_INDEX, conv_idx)
 
 def dt_generate_db_schema():
-    dt_agent_id = 3
     conv_idx = 2
-    dt_conversation = st.session_state.conversations[dt_agent_id - 1][conv_idx]
+    dt_conversation = st.session_state.conversations[DT_AGENT_INDEX][conv_idx]
     if dt_conversation is None:
         try:
-            dt_conversation = st.session_state.conversations[dt_agent_id - 1][conv_idx] = create_new_conversation(
-                st.session_state.session_id, dt_agent_id, system_prompts.GenDB, conv_idx
+            dt_conversation = st.session_state.conversations[DT_AGENT_INDEX][conv_idx] = create_new_conversation(
+                st.session_state.session_id, DT_AGENT_INDEX, system_prompts.GenDB, conv_idx
             )
             prompt = user_prompts.make_gen_db(
                 st.session_state.db_json,
@@ -406,11 +372,11 @@ def dt_generate_db_schema():
             add_message_to_conversation(
                 dt_conversation, role="user", content=prompt)
             submit_chat_to_agent(
-                dt_agent_id, conv_idx, dt_conversation, {})
+                DT_AGENT_INDEX, conv_idx, dt_conversation, {})
         except Exception:
             st.error("error in creating conversation")
-    elif not st.session_state.waiting_for_agent[dt_agent_id - 1][conv_idx] and st.session_state.messages[dt_agent_id - 1][conv_idx][-1]['role'] != 'assistant':
-        if st.session_state.messages[dt_agent_id - 1][conv_idx][-1]['role'] != 'user':
+    elif not st.session_state.waiting_for_agent[DT_AGENT_INDEX][conv_idx] and st.session_state.messages[DT_AGENT_INDEX][conv_idx][-1]['role'] != 'assistant':
+        if st.session_state.messages[DT_AGENT_INDEX][conv_idx][-1]['role'] != 'user':
             prompt = user_prompts.make_gen_db(
                 st.session_state.db_json
             )
@@ -418,9 +384,9 @@ def dt_generate_db_schema():
                 dt_conversation, role="user", content=prompt)
 
         submit_chat_to_agent(
-            dt_agent_id, conv_idx, dt_conversation, {"max_tokens": 3000}
+            DT_AGENT_INDEX, conv_idx, dt_conversation, {"max_tokens": 3000}
         )
-    load_conversation(dt_conversation, dt_agent_id, conv_idx)
+    load_conversation(dt_conversation, DT_AGENT_INDEX, conv_idx)
 
 def dt_modify_config():
     # TODO: implement
@@ -428,7 +394,6 @@ def dt_modify_config():
 
 
 def setup_twin_tab():
-    dt_agent_id = 3
     st.header("Конфигурация цифрового двойника")
         
     if 'db_json' not in st.session_state:
@@ -615,12 +580,12 @@ def process_incoming_task(task):
     result = task.get("result", "")
     agent_id = task["agent_id"]
     conv_idx = task["conv_idx"]
-    st.session_state.waiting_for_agent[agent_id - 1][conv_idx] = False
-    if agent_id == 1:
+    st.session_state.waiting_for_agent[agent_id][conv_idx] = False
+    if agent_id == 0:
         process_interview_task(result)
-    elif agent_id == 2:
+    elif agent_id == 1:
         process_database_task(result) 
-    elif agent_id == 3:
+    elif agent_id == 2:
         print(conv_idx)
         if conv_idx == 0:
             process_dt_conf_task(result)
@@ -653,12 +618,12 @@ def initialize_ui():
         if st.button("➕ New Chat", use_container_width=True):
             session_id = create_new_session()
             load_session(session_id)
-            ui_agent_id = 1
+            UI_AGENT_INDEX = 0
             conv_idx = 0
-            st.session_state.conversations[ui_agent_id - 1][conv_idx] = create_new_conversation(
-                st.session_state.session_id, ui_agent_id, system_prompts.UI, conv_idx=0
+            st.session_state.conversations[UI_AGENT_INDEX][conv_idx] = create_new_conversation(
+                st.session_state.session_id, UI_AGENT_INDEX, system_prompts.UI, conv_idx=0
             )
-            submit_chat_to_agent(ui_agent_id, conv_idx, st.session_state.conversations[ui_agent_id - 1][conv_idx], {})
+            submit_chat_to_agent(UI_AGENT_INDEX, conv_idx, st.session_state.conversations[UI_AGENT_INDEX][conv_idx], {})
 
         st.divider()
 
@@ -713,17 +678,9 @@ def initialize_ui():
         process_incoming_task(task)
         st.rerun()
 
-    time.sleep(10)
-    st.rerun()
-
-
 def main():
     global requests_session
-    requests_session = requests.Session()
-    retry = Retry(connect=3, backoff_factor=0.5)
-    adapter = HTTPAdapter(max_retries=retry)
-    requests_session.mount('http://', adapter)
-    requests_session.mount('https://', adapter)
+    requests_session = init_requests_session()
     initialize_ui()
 
 

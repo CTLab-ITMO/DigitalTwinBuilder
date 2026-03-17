@@ -1,0 +1,68 @@
+{
+  "$schema": "http://json-schema.org/draft-04/schema#",
+  "type": "object",
+  "properties": {
+    "requirements": {
+      "type": "object",
+      "properties": {
+        "production_type": {
+          "type": "string"
+        },
+        "processes": {
+          "type": "array",
+          "items": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "equipment": {
+          "type": "array",
+          "items": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "sensors": {
+          "type": "array",
+          "items": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "goals": {
+          "type": "string"
+        },
+        "data_sources": {
+          "type": "string"
+        },
+        "update_frequency": {
+          "type": "string"
+        },
+        "critical_parameters": {
+          "type": "object",
+          "properties": {
+          }
+        },
+        "additional_info": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "production_type",
+        "processes",
+        "equipment",
+        "sensors",
+        "goals",
+        "data_sources",
+        "update_frequency",
+        "critical_parameters"
+      ]
+    }
+  },
+  "required": [
+    "requirements"
+  ]
+}

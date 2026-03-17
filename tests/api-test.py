@@ -1,8 +1,16 @@
 # test_api.py
 import requests
 import time
+import sys
+import os
 
-API_URL = "http://localhost:8000"
+# Try to load config from src
+try:
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../src'))
+    from digital_twin_builder.config import API_URL
+except ImportError:
+    # Fallback to default
+    API_URL = "http://localhost:8000"
 
 def test_api():
     # Test health endpoint
