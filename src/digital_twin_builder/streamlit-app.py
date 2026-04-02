@@ -237,9 +237,9 @@ def setup_interview_tab():
             submit_chat_to_agent(
                 UI_AGENT_INDEX, conv_idx, st.session_state.conversations[UI_AGENT_INDEX][conv_idx], params
             )
+            st.rerun()
     if st.session_state.interview_result is not None:
         st.success("Интервью завершено, переходите к следующей вкладке")
-
 
 def setup_database_tab():
     conv_idx = 0
@@ -576,7 +576,11 @@ def initialize_ui():
             st.session_state.conversations[UI_AGENT_INDEX][conv_idx] = create_new_conversation(
                 st.session_state.session_id, UI_AGENT_INDEX, system_prompts.UI, conv_idx=0
             )
-            submit_chat_to_agent(UI_AGENT_INDEX, conv_idx, st.session_state.conversations[UI_AGENT_INDEX][conv_idx], {})
+            # init message
+            add_message_to_conversation(st.session_state.conversations[UI_AGENT_INDEX][conv_idx], "assistant", user_prompts.init_ui_assistant_answer())
+            load_conversation(st.session_state.conversations[UI_AGENT_INDEX][conv_idx], UI_AGENT_INDEX, conv_idx)
+            st.rerun()
+            # submit_chat_to_agent(UI_AGENT_INDEX, conv_idx, st.session_state.conversations[UI_AGENT_INDEX][conv_idx], {})
 
         st.divider()
 
