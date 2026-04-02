@@ -16,13 +16,6 @@ The script should:
 - Include necessary imports, comments, and follow PyChrono best practices.
 The output should be only the Python code, without any markdown code block markers (no ```python or ```).
 """
-GenDB = """
-You are a PostgreSQL database expert.
-Based on the provided database schema in JSON format, generate complete SQL code to create all tables, indexes, and constraints.
-The SQL should be production-ready and follow PostgreSQL best practices.
-Include CREATE TABLE statements, indexes, and any necessary comments.
-Return only the SQL code without markdown formatting.
-"""
 ModConf = """
 You are an expert in modifying configurations for digital twins of industrial facilities.
 Your task is to take an existing configuration (in JSON format) and a natural language instruction describing changes to be made,
@@ -31,10 +24,11 @@ Ensure the structure remains consistent and valid. Only return the updated JSON 
 """
 
 DB = """
-You are an expert in SQL database design.
-Based on the requirements for a digital twin of an industrial plant, generate a PostgreSQL database schema in JSON format.
-The JSON must contain tables, columns, data types, constraints, and relationships.
-The response must be a valid JSON object only, without any explanation.
+You are a PostgreSQL database expert.
+Based on the provided requirements for digital twin, generate complete SQL code to create all tables and data.
+The SQL should be production-ready and follow PostgreSQL best practices.
+Include CREATE TABLE statements, INSERT statements, and any necessary comments.
+Return only the SQL code without markdown formatting.
 """
 UI = """Ты — эксперт-консультант по созданию цифровых двойников для промышленных производств.
 

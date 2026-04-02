@@ -82,7 +82,7 @@ def get_agent_status(agent_id):
 
 def background_poll_task_result(response_queue, task_id):
     poll = 0
-    max_poll = 100
+    max_poll = 1200
     while poll < max_poll:
         task = get_task_status(task_id)
         if task and task["status"] == "completed":
@@ -95,7 +95,7 @@ def background_poll_task_result(response_queue, task_id):
 
 def create_new_conversation(session_id, agent_id, system_prompt, conv_idx=0):
     """Create a new conversation"""
-    conversation_id = api_create_new_conversation(session_id, agent_id, system_prompt)
+    conversation_id = api_create_new_conversation(session_id, agent_id, system_prompt, conv_idx)
     if conversation_id:
         st.session_state.conversations[agent_id][conv_idx] = conversation_id
     else:
@@ -157,10 +157,6 @@ def load_session(session_id):
     if last_dt_sim_assistant_message is None: return
     process_dt_sim_task(last_dt_sim_assistant_message)
 
-    last_dt_db_assistant_message = get_last_assistant_message(st.session_state.messages[DT_AGENT_INDEX][2])
-    if last_dt_db_assistant_message is None: return
-    process_dt_db_task(last_dt_db_assistant_message)
-
 
 def load_conversation(conversation_id, agent_id, conv_idx=0):
     """Load a conversation from API"""
@@ -174,7 +170,6 @@ def load_conversation(conversation_id, agent_id, conv_idx=0):
     data = response.json()
     st.session_state.conversations[agent_id][conv_idx] = conversation_id
     st.session_state.messages[agent_id][conv_idx] = data["messages"]
-
 
 def submit_chat_to_agent(agent_id, conv_idx, conversation_id, params):
     task_info = submit_task(agent_id, conv_idx, conversation_id, params)
@@ -228,7 +223,7 @@ def setup_interview_tab():
 
     user_input = st.chat_input(
         "Введите информацию о вашем производстве...",
-        disabled=st.session_state.get("interview_completed", False)
+        disabled=st.session_state.interview_result is not None
             or st.session_state.waiting_for_agent[UI_AGENT_INDEX][conv_idx],
     )
     if user_input:
@@ -242,7 +237,7 @@ def setup_interview_tab():
             submit_chat_to_agent(
                 UI_AGENT_INDEX, conv_idx, st.session_state.conversations[UI_AGENT_INDEX][conv_idx], params
             )
-    if st.session_state.get("interview_completed", False):
+    if st.session_state.interview_result is not None:
         st.success("Интервью завершено, переходите к следующей вкладке")
 
 
@@ -251,7 +246,7 @@ def setup_database_tab():
     db_conversation = st.session_state.conversations[DB_AGENT_INDEX][conv_idx]
     st.header("Настройка базы данных")
 
-    if not st.session_state.get("interview_completed", False):
+    if st.session_state.interview_result is None:
         st.warning(
             "Пожалуйста, завершите интервью на вкладке 'Интервью с пользователем'"
         )
@@ -285,14 +280,12 @@ def setup_database_tab():
         submit_chat_to_agent(
             DB_AGENT_INDEX, conv_idx, db_conversation, {"max_tokens": 3000}
         )
-    else:
-        print(st.session_state.waiting_for_agent[DB_AGENT_INDEX][conv_idx])
-        print(st.session_state.messages[DB_AGENT_INDEX][conv_idx][-1])
     load_conversation(db_conversation, DB_AGENT_INDEX, conv_idx)
-
-    if "db_json" in st.session_state:
-        st.subheader("Сгенерированная схема базы данных")
-        st.json(st.session_state.db_json)
+    
+    if st.session_state.db_schema is None:
+        return
+    st.subheader("Сгенерированная схема базы данных")
+    st.code(st.session_state.db_schema, language="sql")
 
 def dt_generate_config():
     conv_idx = 0
@@ -304,7 +297,7 @@ def dt_generate_config():
             )
             prompt = user_prompts.make_gen_conf(
                 st.session_state.interview_result,
-                st.session_state.db_json
+                st.session_state.db_schema
             )
             add_message_to_conversation(
                 dt_conversation, role="user", content=prompt)
@@ -316,7 +309,7 @@ def dt_generate_config():
         if st.session_state.messages[DT_AGENT_INDEX][conv_idx][-1]['role'] != 'user':
             prompt = user_prompts.make_gen_conf(
                 st.session_state.interview_result,
-                st.session_state.db_json
+                st.session_state.db_schema
             )
             add_message_to_conversation(
                 dt_conversation, role="user", content=prompt)
@@ -336,7 +329,7 @@ def dt_generate_simulation():
             )
             prompt = user_prompts.make_gen_sim(
                 st.session_state.interview_result,
-                st.session_state.db_json
+                st.session_state.db_schema
             )
             add_message_to_conversation(
                 dt_conversation, role="user", content=prompt)
@@ -348,37 +341,7 @@ def dt_generate_simulation():
         if st.session_state.messages[DT_AGENT_INDEX][conv_idx][-1]['role'] != 'user':
             prompt = user_prompts.make_gen_sim(
                 st.session_state.interview_result,
-                st.session_state.db_json
-            )
-            add_message_to_conversation(
-                dt_conversation, role="user", content=prompt)
-
-        submit_chat_to_agent(
-            DT_AGENT_INDEX, conv_idx, dt_conversation, {"max_tokens": 3000}
-        )
-    load_conversation(dt_conversation, DT_AGENT_INDEX, conv_idx)
-
-def dt_generate_db_schema():
-    conv_idx = 2
-    dt_conversation = st.session_state.conversations[DT_AGENT_INDEX][conv_idx]
-    if dt_conversation is None:
-        try:
-            dt_conversation = st.session_state.conversations[DT_AGENT_INDEX][conv_idx] = create_new_conversation(
-                st.session_state.session_id, DT_AGENT_INDEX, system_prompts.GenDB, conv_idx
-            )
-            prompt = user_prompts.make_gen_db(
-                st.session_state.db_json,
-            )
-            add_message_to_conversation(
-                dt_conversation, role="user", content=prompt)
-            submit_chat_to_agent(
-                DT_AGENT_INDEX, conv_idx, dt_conversation, {})
-        except Exception:
-            st.error("error in creating conversation")
-    elif not st.session_state.waiting_for_agent[DT_AGENT_INDEX][conv_idx] and st.session_state.messages[DT_AGENT_INDEX][conv_idx][-1]['role'] != 'assistant':
-        if st.session_state.messages[DT_AGENT_INDEX][conv_idx][-1]['role'] != 'user':
-            prompt = user_prompts.make_gen_db(
-                st.session_state.db_json
+                st.session_state.db_schema
             )
             add_message_to_conversation(
                 dt_conversation, role="user", content=prompt)
@@ -396,15 +359,23 @@ def dt_modify_config():
 def setup_twin_tab():
     st.header("Конфигурация цифрового двойника")
         
-    if 'db_json' not in st.session_state:
+    if st.session_state.db_schema is None:
         st.warning("⚠️ Пожалуйста, завершите настройку базы данных")
         return
     
-    st.subheader("Схема базы данных")
-    with st.expander("Посмотреть схему БД"):
-        st.json(st.session_state.db_json)
+    st.subheader("SQL код для БД")
+    with st.expander("Просмотр SQL"):
+        st.code(st.session_state.db_schema, language="sql")
+        
+    st.download_button(
+        "📥 Скачать SQL",
+        st.session_state.db_schema,
+        "schema.sql",
+        "text/plain",
+        key="download_sql"
+    )
     
-    if 'twin_config' not in st.session_state:
+    if st.session_state.twin_config is None:
         if st.button("⚙️ Сгенерировать конфигурацию", key="generate_config_btn"):
             with st.spinner("Генерация конфигурации..."):
                 dt_generate_config()
@@ -439,24 +410,6 @@ def setup_twin_tab():
                 del st.session_state.simulation_code
                 st.rerun()
     
-    st.subheader("SQL код для БД")
-    
-    if 'database_code' not in st.session_state:
-        if st.button("🗄️ Сгенерировать SQL", key="generate_sql_btn"):
-            with st.spinner("Генерация SQL..."):
-                dt_generate_db_schema()
-    
-    if 'database_code' in st.session_state:
-        with st.expander("Просмотр SQL"):
-            st.code(st.session_state.database_code, language="sql")
-        
-        st.download_button(
-            "📥 Скачать SQL",
-            st.session_state.database_code,
-            "schema.sql",
-            "text/plain",
-            key="download_sql"
-        )
     
     # st.divider()
     # st.subheader("🚀 Запуск цифрового двойника")
@@ -508,10 +461,12 @@ def setup_sensor_tab():
     pass
 
 def reset_session_state():
-    st.session_state.interview_completed = False
     st.session_state.conversations = [ [None]*st.session_state.max_conversations_per_agent for _ in range(st.session_state.agent_count) ]
     st.session_state.waiting_for_agent = [ [False]*st.session_state.max_conversations_per_agent for _ in range(st.session_state.agent_count) ]
     st.session_state.messages = [ [[] for _ in range(st.session_state.max_conversations_per_agent) ] for _ in range(st.session_state.agent_count) ]
+    st.session_state.db_schema = None
+    st.session_state.twin_config = None
+    st.session_state.interview_result = None
     st.session_state.tasks = []
     st.session_state.temperature_history = []
 
@@ -519,6 +474,12 @@ def init_session_state():
     """Initialize session state for chat"""
     st.session_state.agent_count = 3
     st.session_state.max_conversations_per_agent = 10
+    if "db_schema" not in st.session_state:
+        st.session_state.db_schema = None
+    if "twin_config" not in st.session_state:
+        st.session_state.twin_config = None
+    if "interview_result" not in st.session_state:
+        st.session_state.interview_result = None
     if "conversations" not in st.session_state:
         st.session_state.conversations = [ [None]*st.session_state.max_conversations_per_agent for _ in range(st.session_state.agent_count) ]
     if "waiting_for_agent" not in st.session_state:
@@ -540,22 +501,18 @@ def process_interview_task(result):
         json_result = json.loads(result[start : end + 1])
         if json_result["completed"] == True:
             st.session_state.interview_result = json_result["requirements"]
-            st.session_state.interview_completed = True
     except ValueError:
         # NOTE: maybe should resend message
         print("No json in message found")
         st.error(result)
 
 def process_database_task(result):
-    try:
-        start = result.find("{")
-        end = result.rfind("}")
-        json_result = result[start : end + 1]
-        st.session_state.db_json = json.loads(json_result)
-    except ValueError:
-        # NOTE: maybe should resend message
-        print("No json in db message found")
-        st.error(result)
+    st.session_state.db_schema = result
+    return
+    start = result.find("```sql")
+    end = result.rfind("```")
+    st.session_state.db_schema = result[start + 6 : end]
+    # TODO: better parse for sql
 
 def process_dt_conf_task(result):
     try:
@@ -572,10 +529,6 @@ def process_dt_sim_task(result):
     start = result.find("</think>")
     st.session_state.simulation_code = result[start + 8:]
 
-def process_dt_db_task(result):
-    start = result.find("</think>")
-    st.session_state.database_code = result[start + 8:]
-
 def process_incoming_task(task):
     result = task.get("result", "")
     agent_id = task["agent_id"]
@@ -584,15 +537,15 @@ def process_incoming_task(task):
     if agent_id == 0:
         process_interview_task(result)
     elif agent_id == 1:
-        process_database_task(result) 
+        process_database_task(result)
     elif agent_id == 2:
         print(conv_idx)
         if conv_idx == 0:
             process_dt_conf_task(result)
         elif conv_idx == 1:
             process_dt_sim_task(result)
-        elif conv_idx == 2:
-            process_dt_db_task(result)
+        else:
+            print(f"No task processor defined for agent {agent_id} conversation index {conv_idx}")
     else:
         print(f"No agent with id = {agent_id} defined")
 
@@ -635,7 +588,7 @@ def initialize_ui():
 
         st.header("agent status")
 
-        for agent_id in range(1, st.session_state.agent_count + 1):
+        for agent_id in range(0, st.session_state.agent_count):
             status = get_agent_status(agent_id)
             status_color = {"idle": "🟢", "busy": "🟡", "offline": "🔴"}.get(
                 status.get("status", "offline"), "⚪"
@@ -677,6 +630,10 @@ def initialize_ui():
         task = st.session_state.response_queue.get()
         process_incoming_task(task)
         st.rerun()
+
+    # rerun every 10 seconds
+    time.sleep(10)
+    st.rerun()
 
 def main():
     global requests_session

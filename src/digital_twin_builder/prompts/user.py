@@ -1,79 +1,10 @@
 import json
 
-def make_db_prompt(requirements, *args):
-    prompt = f"""
-    Generate a PostgreSQL database schema in JSON format for an industrial digital twin based on the following requirements:
-
-{json.dumps(requirements, ensure_ascii=False, indent=2)}
-
-The schema must include tables for:
-- Sensor data (temperature, pressure, vibration, level, etc.)
-- Equipment status
-- Production quality metrics
-- Material composition
-- Maintenance history (optional)
-- Events/alerts (optional)
-
-The output must be a **valid JSON object** with the following strict structure:
-
-```json
-{{
-  "schema_name": "schema_name",
-  "tables": [
-    {{
-      "name": "table_name",
-      "description": "Brief description of the table purpose.",
-      "columns": [
-        {{
-          "name": "column_name",
-          "data_type": "PostgreSQL data type (e.g., SERIAL, TIMESTAMP, NUMERIC(10,2), TEXT, BOOLEAN, etc.)",
-          "constraints": [ "Constraints array (e.g., PRIMARY KEY, NOT NULL, UNIQUE, etc.)" ],
-          "description": "Description of the column."
-        }}
-      ],
-      "relationships": [
-        {{
-          "column": "column_name",
-          "references": {{
-            "table": "referenced_table",
-            "column": "referenced_column"
-          }},
-          "on_delete": "CASCADE | SET NULL | RESTRICT | NO ACTION",
-          "on_update": "CASCADE | SET NULL | RESTRICT | NO ACTION"
-        }}
-      ]
-    }}
-  ]
-}}
-```
-
-Ensure that:
-- Data types are appropriate for the measured values (e.g., NUMERIC for floating-point readings, INTEGER for discrete counts, TIMESTAMP for time series).
-- Primary keys are defined for each table (e.g., a surrogate SERIAL or a composite key).
-- Foreign keys correctly link related tables (e.g., sensor_data references equipment via equipment_id).
-- Constraints like NOT NULL are used where data must always be present.
-- The schema reflects the provided requirements (production type, processes, equipment, sensors, goals, data sources, update frequency, critical parameters, etc.).
-
-The entire response must be a single JSON object (no additional text before or after).
-"""
-    prompt = f"""
-Generate a PostgreSQL database schema in json form for an industrial digital twin based on the following requirements:
-
-{json.dumps(requirements, ensure_ascii=False, indent=2)}
-
-The schema should include tables for:
-- Sensor data (temperature, pressure, vibration, level, etc.)
-- Equipment status
-- Production quality metrics
-- Material composition
-- Maintenance history (optional)
-- Events/alerts (optional)
-
-The response should be a valid JSON object with descriptions of tables, columns, data types, constraints, and relationships."""
-    return prompt
+def init_ui_assistant_answer(*args):
+    return "Привет! Я помогу тебе создать цифровой двойник твоего производства. Пожалуйста, расскажи мне о своем производстве: какой это тип производства, какие процессы там происходят, какое оборудование используется, какие датчики установлены и какие цели ты хочешь достичь с помощью цифрового двойника?"
 
 def make_ui_prompt(conversation_context, user_message, *args):
-    prompt = f"""История разговора:
+    prompt = f"""История разговора:s
 {conversation_context}
 
 Пользователь: {user_message}
@@ -134,7 +65,7 @@ Requirements:
 {json.dumps(requirements, ensure_ascii=False, indent=2)}
 
 Database Schema:
-{json.dumps(db_schema, ensure_ascii=False, indent=2)}
+{db_schema}
 
 The configuration should include:
 1. Components: Data collection modules, analytics engines, ML models, visualization dashboards
@@ -154,7 +85,7 @@ Requirements:
 {json.dumps(requirements, ensure_ascii=False, indent=2)}
 
 Database Schema:
-{json.dumps(db_schema, ensure_ascii=False, indent=2)}
+{db_schema}
 
 The Python script should:
 1. Import necessary PyChrono modules
@@ -173,21 +104,18 @@ The code should be production-ready and executable. Do not include markdown form
 Start directly with import statements."""
     return prompt
 
-def make_gen_db(db_schema, *args):
-    prompt = f"""Generate complete PostgreSQL SQL code to create the database schema.
+def make_db_prompt(dt_requirements, *args):
+    prompt = f"""Generate complete PostgreSQL SQL CREATE TABLE statements to define a database schema for the digital twin based on the following requirements.
 
-Database Schema:
-{json.dumps(db_schema, ensure_ascii=False, indent=2)}
+requirements json:
+{json.dumps(dt_requirements, ensure_ascii=False, indent=2)}
 
-The SQL should include:
-1. CREATE TABLE statements for all tables with proper column types and constraints
-2. PRIMARY KEY and FOREIGN KEY constraints
-3. CREATE INDEX statements for performance optimization
-4. Comments describing each table and important columns
-5. Any necessary sequences or triggers
+Schema should include all necessary tables to store data from requirements json.
 
-The SQL should be production-ready and follow PostgreSQL best practices.
-Do not include markdown formatting. Start directly with SQL statements."""
+The SQL should ONLY include CREATE TABLE statements for all tables with proper column types and constraints and INSERT statements to populate all tables.
+Data in insert statements should come only from requirements. DO NOT add any other data.
+Additionally create table for collecting data from sensors. DO NOT add any demonstration data to this table.
+The SQL should be production-ready and follow PostgreSQL best practices."""
     return prompt
 
 def make_mod_conf(old_config, modification_instructions, *args):
