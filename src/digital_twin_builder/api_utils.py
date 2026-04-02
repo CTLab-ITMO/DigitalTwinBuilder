@@ -7,7 +7,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import time
 import logging
-from .config import API_URL
+from config import API_URL
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +164,7 @@ def poll_task_result(task_id, max_poll=30):
     return {"task_id": task_id}
 
 
-def create_new_conversation(session_id, agent_id, system_prompt):
+def create_new_conversation(session_id, agent_id, system_prompt, conv_idx = 0):
     """Create a new conversation
     
     Args:
@@ -179,7 +179,7 @@ def create_new_conversation(session_id, agent_id, system_prompt):
         session = get_session()
         response = session.post(
             f"{API_URL}/conversations",
-            params={"session_id": session_id, "agent_id": agent_id},
+            params={"session_id": session_id, "agent_id": agent_id, "conv_idx": conv_idx},
         )
         if response.status_code == 200:
             conversation_id = response.json()["conversation_id"]
