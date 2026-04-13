@@ -1,0 +1,15 @@
+# Эмбеддинги (intfloat/multilingual-e5-small, dim=384)
+sentence-transformers>=2.2.0
+# Для машин со старым драйвером NVIDIA без CUDA: ставь CPU-колёса torch, например
+# pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch>=2.0.0
+
+# MMD drift detection
+alibi-detect[torch]>=0.12.0
+
+# PostgreSQL + pgvector (сервер: расширение vector; клиент: пакет pgvector для psycopg2)
+psycopg2-binary>=2.9.0
+pgvector>=0.2.5
+
+numpy>=1.23.0
+ijson>=3.2.0
