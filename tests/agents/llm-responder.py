@@ -160,6 +160,222 @@ def run_db_agent(session_id, json_result, bar):
     bar.text = f"got actual sql"
     return db_result_json
 
+def init_deepseek_chat(json_original: str):
+    system_msg = (
+        "Ты должен отвечать на заданные вопросы, информацию нужно брать из следующего json:\n"
+        f"```json\n{json_original}\n```\n"
+        "Нельзя придумывать новую информацию, если информации нет в json.\n"
+        "НЕ используй markdown форматирование в ответе.\n"
+        "Старайся давать краткие и понятные ответы.\n"
+        "Не повторяй вопросы пользователя, давай только ответы на них."
+    )
+    messages = [{"role": "system", "content": system_msg}]
+    return messages
+
+
+def deepseek_turn(client, messages, ui_message: str):
+    messages.append({"role": "user", "content": ui_message})
+    response = client.chat.completions.create(
+        model=LLM_MODEL,
+        messages=messages,
+        stream=False
+    )
+    answer = response.choices[0].message.content
+    messages.append({"role": "assistant", "content": answer})
+    return answer
+
+
+def run_interview_with_deepseek(client, scenario, max_steps: int = 20):
+    # 1. JSON сценария для системного промпта дипсика
+    req = scenario.get("requirements", scenario)
+    json_original = json.dumps(scenario["requirements"], ensure_ascii=False, indent=2)
+    messages_ds = init_deepseek_chat(json_original)
+
+    # 2. Создать сессию и UI-конверсацию
+    session_id = create_new_session()
+    print(f"DT session created: {session_id}")
+
+    ui_agent_id = 0  # UI_AGENT_INDEX
+    conversation_id = create_new_conversation(session_id, ui_agent_id, UI)
+    print(f"DT UI conversation {conversation_id} created")
+
+    # 3. Стартовый запрос “пользователя” в нашу систему
+    initial_user_message = (
+        "Мне нужно настроить цифровой двойник под описанный процесс. "
+        "Задавайте уточняющие вопросы."
+    )
+    add_message_to_conversation(conversation_id, "user", initial_user_message)
+
+    log_file = get_log_filename(conversation_id, "dt_ui")
+    append_to_log(log_file, "SYSTEM", f"DT Conversation ID: {conversation_id}")
+    append_to_log(log_file, "SYSTEM", f"Session ID: {session_id}")
+    append_to_log(log_file, "USER", initial_user_message)
+
+    final_requirements = None
+    final_message = None
+
+    for step in range(max_steps):
+        # 4. Ход UI-агента
+        task = submit_chat_to_agent(
+            ui_agent_id,
+            conversation_id,
+            params={"max_tokens": 1000},
+            poll_timeout=180,
+        )
+        result = task.get("result", "")
+        if result == "":
+            task_id = task.get("task_id", "")
+            print(f"no result on DT task {task_id}")
+            break
+
+        append_to_log(log_file, "AGENT", result)
+
+        # 4.1. Пытаемся распарсить JSON
+        json_result = get_json(result)
+
+        if json_result is not None and isinstance(json_result, dict):
+            # UI-агент вернул структурированный JSON
+            completed = json_result.get("completed", False)
+            ui_message = json_result.get("message", "")
+
+            if "requirements" in json_result:
+                final_requirements = json_result["requirements"]
+
+            if ui_message:
+                final_message = ui_message
+
+            if completed:
+                print(f"DT interview completed at step {step+1}")
+                # интервью закончено, дипсика больше не спрашиваем
+                break
+
+            if not ui_message:
+                print("DT UI agent returned JSON but without 'message'")
+                break
+
+            # интервью продолжится: JSON с completed=false и message
+            ds_answer = deepseek_turn(client, messages_ds, ui_message)
+            append_to_log(log_file, "DEEPSEEK", ds_answer)
+            add_message_to_conversation(conversation_id, "user", ds_answer)
+
+        else:
+            # UI-агент вернул не-JSON (обычный текст)
+            ui_message = result.strip()
+            if not ui_message:
+                print("DT UI agent returned empty text")
+                break
+
+            ds_answer = deepseek_turn(client, messages_ds, ui_message)
+            append_to_log(log_file, "DEEPSEEK", ds_answer)
+            add_message_to_conversation(conversation_id, "user", ds_answer)
+
+    return {
+        "session_id": session_id,
+        "conversation_id": conversation_id,
+        "requirements": final_requirements,
+        "summary_message": final_message,
+    }
+
+def run_db_agent_for_requirements(requirements: dict, session_id: str) -> dict | str:
+    """
+    Создаёт отдельную DB-конверсацию, добавляет туда requirements и просит сгенерировать SQL/структуру.
+    Возвращает либо распарсенный JSON, либо сырую строку.
+    """
+    db_agent_id = 1  # DB_AGENT_INDEX
+    # создаём новый разговор специально для DB-агента
+    conversation_id = create_new_conversation(session_id, db_agent_id, DB)
+    print(f"DT DB conversation {conversation_id} created")
+
+    log_file = get_log_filename(conversation_id, "dt_db")
+    append_to_log(log_file, "SYSTEM", f"DT DB Conversation ID: {conversation_id}")
+    append_to_log(log_file, "SYSTEM", f"Session ID: {session_id}")
+
+    # Формируем юзер-промпт для DB-агента
+    prompt = (
+        "Вот JSON с требованиями к цифровому двойнику (production_type, processes, equipment, "
+        "sensors, goals, data_sources, update_frequency, critical_parameters, additional_info).\n"
+        "Сгенерируй JSON со структурой базы данных/SQL-конфигурацией для хранения измерений "
+        "и конфигураций сенсоров под этот объект.\n"
+        "Отвечай ТОЛЬКО валидным JSON без комментариев и пояснений."
+    )
+    requirements_str = json.dumps(requirements, ensure_ascii=False, indent=2)
+
+    user_message = f"{prompt}\n\n```json\n{requirements_str}\n```"
+    append_to_log(log_file, "USER", user_message)
+    add_message_to_conversation(conversation_id, "user", user_message)
+
+    # Запрашиваем ход DB-агента
+    task = submit_chat_to_agent(
+        db_agent_id,
+        conversation_id,
+        params={"max_tokens": 5000},
+        poll_timeout=900,
+    )
+    result = task.get("result", "")
+    append_to_log(log_file, "AGENT", result)
+
+    if not result:
+        print(f"DB agent returned empty result for conv {conversation_id}")
+        return ""
+
+    db_json = get_json(result)
+    if db_json is None:
+        print(f"DB agent did not return valid JSON, got: {result}")
+        return result  # сырая строка, если JSON не распарсился
+
+    return db_json
+
+def run_coder_agent(session_id: str, base_conversation_id: str, requirements: dict, db_result: dict | str) -> str:
+    """
+    Запускает Qwen-coder агента в отдельной конверсации.
+    В контекст кладём requirements и результат DB-агента.
+    Возвращаем его текстовый ответ (код/конфиг).
+    """
+    dt_agent_id = 2  # DT_AGENT_INDEX
+    conversation_id = create_new_conversation(session_id, dt_agent_id, DB)  # или отдельный SYSTEM промпт для кода
+    print(f"DT Code conversation {conversation_id} created")
+
+    log_file = get_log_filename(conversation_id, "dt_code")
+    append_to_log(log_file, "SYSTEM", f"DT Code Conversation ID: {conversation_id}")
+    append_to_log(log_file, "SYSTEM", f"Session ID: {session_id}")
+
+    # Формируем системное сообщение для Qwen (можно вынести в промпты)
+    system_msg = (
+        "Ты — инженер, который пишет код на Python с использованием библиотеки PyChrono для цифрового двойника"
+        "на основе требований и структуры базы данных.\n"
+        "Сначала внимательно проанализируй входные JSON, затем сгенерируй законченный и исполняемый код на PyChrono.\n"
+        "Не добавляй объяснений, только код на PyChrono."
+    )
+    sys_message = {"role": "system", "content": system_msg}
+    add_message_to_conversation(conversation_id, "assistant", system_msg)  # чтобы попало в контекст
+
+    requirements_str = json.dumps(requirements, ensure_ascii=False, indent=2)
+    db_str = db_result if isinstance(db_result, str) else json.dumps(db_result, ensure_ascii=False, indent=2)
+
+    user_message = (
+        "Вот JSON с требованиями к цифровому двойнику:\n"
+        f"```json\n{requirements_str}\n```\n\n"
+        "Вот JSON/текст с проектируемой структурой базы данных:\n"
+        f"```json\n{db_str}\n```"
+    )
+    append_to_log(log_file, "USER", user_message)
+    add_message_to_conversation(conversation_id, "user", user_message)
+
+    # Запускаем задачу на DT-агент
+    task = submit_chat_to_agent(
+        dt_agent_id,
+        conversation_id,
+        params={"max_tokens": 10000},
+        poll_timeout=900,
+    )
+    result = task.get("result", "")
+    append_to_log(log_file, "AGENT", result)
+
+    return result
+
+
+
+
 def write_results(score, result_path): 
     """Write results to output files"""
     with open(result_path, 'a') as f:
@@ -232,7 +448,7 @@ def retries_exceeded(args, i):
 
 def parse_args():
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="Simple LLM Agent")
     parser.add_argument("--db_agent_test", action=argparse.BooleanOptionalAction,
                         help="Runs db agent for testing")
@@ -242,7 +458,19 @@ def parse_args():
                         help="Runs judge llm evaluation for testing")
     parser.add_argument("--deep_eval", action=argparse.BooleanOptionalAction,
                         help="Runs deep evaluation for testing")
-    parser.set_defaults(db_agent_test=False, ui_agent_test=False, jllm_eval=False, deep_eval=False)
+    parser.add_argument("--deepseek_dt", action=argparse.BooleanOptionalAction,
+                        help="Runs DeepSeek-as-user Digital Twin interviews from 30.json")
+    parser.add_argument("--deepseek_dt_single", action=argparse.BooleanOptionalAction,
+                    help="Runs full DT pipeline (UI+DeepSeek+DB+Coder) for one scenario from 30.json")
+
+    parser.set_defaults(
+        db_agent_test=False,
+        ui_agent_test=False,
+        jllm_eval=False,
+        deep_eval=False,
+        deepseek_dt=False,
+        deepseek_dt_single=False
+    )
     return parser.parse_args()
 
 def main():
@@ -258,6 +486,61 @@ def main():
     
     client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
     
+
+    if args.deepseek_dt_single:
+        # читаем только первый сценарий из 30.json
+        with open("tests/agents/jsons/requirements.json", "r", encoding="utf-8") as f:
+            scenarios = json.load(f)
+        scenario = scenarios[0]  # берём первый элемент списка
+
+        print("\n=== DT interview for single scenario ===")
+        info = run_interview_with_deepseek(client, scenario)
+        reqs = info["requirements"]
+
+        if reqs is None:
+            print("UI agent did not produce requirements, stopping.")
+            return
+
+        print("\n=== DB Agent on requirements ===")
+        db_result = run_db_agent_for_requirements(reqs, info["session_id"])
+
+        print("\n=== Qwen Coder Agent on requirements + DB result ===")
+        code_result = run_coder_agent(info["session_id"], info["conversation_id"], reqs, db_result)
+
+        # Можно сохранить все три артефакта в файл
+        out = {
+            "requirements": reqs,
+            "db_result": db_result,
+            "code_result": code_result,
+        }
+        os.makedirs(LOGS_DIR, exist_ok=True)
+        with open(os.path.join(LOGS_DIR, "dt_single_result.json"), "w", encoding="utf-8") as f:
+            json.dump(out, f, ensure_ascii=False, indent=2)
+
+        print("\nFull DT pipeline for single scenario completed. Results saved to dt_single_result.json.")
+        return
+
+    
+    # --- Новый режим: DeepSeek как пользователь для 30 сценариев ---
+    if args.deepseek_dt:
+        with open("tests/agents/jsons/requirements.json", "r", encoding="utf-8") as f:
+            scenarios = json.load(f)
+
+        all_conversations = []
+        for i, scenario in enumerate(scenarios):
+            print(f"\n=== Running DeepSeek DT interview for scenario {i+1}/{len(scenarios)} ===")
+            info = run_interview_with_deepseek(client, scenario)
+            all_conversations.append({"index": i, **info})
+
+        # карта сценарий -> session_id / conversation_id
+        with open(os.path.join(LOGS_DIR, "dt_conversations_map.json"), "w", encoding="utf-8") as f:
+            json.dump(all_conversations, f, ensure_ascii=False, indent=2)
+
+        print("\nDeepSeek DT interviews completed.")
+        return
+    # --- конец нового режима ---
+
+
     req_json = 'tests/agents/jsons/requirements.json'
     sql_json = 'tests/agents/jsons/sql.json'
     req_schema_json = 'tests/agents/jsons/requirements_schema.json'
@@ -359,3 +642,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
