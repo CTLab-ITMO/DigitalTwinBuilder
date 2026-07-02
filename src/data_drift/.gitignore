@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual env
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Project-specific: data and models (large/binary)
+drift_detection/data/*.pkl
+drift_detection/data/*.pt
+drift_detection/data/model_path.txt
+drift_detection/data/dataset_path.txt
+drift_detection/data/dataset_config.yaml
+drift_detection/data/training_status.txt
+drift_detection/data/training_error.txt
+drift_detection/data/processed_frames/
+drift_detection/data/runs/
+*.pt
+!monitoring/
+
+# SAM / downloaded models (optional: uncomment if you don't want to track)
+# sam_b.pt
+# yolo11*.pt
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+.cursor/
+
+# VLM playground: скачанная демо-картинка
+vlm_playground/demo_image.jpg

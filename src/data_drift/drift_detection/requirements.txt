@@ -1,0 +1,28 @@
+# Основные зависимости
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+pydantic>=2.0.0
+requests>=2.31.0
+
+# Компьютерное зрение
+opencv-python>=4.8.0
+numpy>=1.24.0
+torch>=2.0.0
+torchvision>=0.15.0
+Pillow>=10.0.0
+
+# YOLOv11
+ultralytics>=8.0.0
+
+# SAM (Segment Anything Model)
+segment-anything>=1.0
+
+# Статистика и анализ данных
+scipy>=1.11.0
+
+# Prometheus (опционально)
+prometheus-client>=0.18.0
+
+PyYAML>=6.0
+
