@@ -1,6 +1,7 @@
 services:
   dt-postgres:
     image: postgres:16-alpine
+    profiles: ["full"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-admin}
@@ -74,19 +75,12 @@ services:
       start_period: 15s
 
   frontend:
-    build:
-      context: .
-      args:
-        REQS: requirements-frontend.txt
+    build: ./frontend
     profiles: ["frontend", "full"]
     ports:
-      - "8501:8501"
-    depends_on:
-      dt-api:
-        condition: service_healthy
+      - "8080:80"
     environment:
-      - API_URL=http://dt-api:8000
-    command: streamlit run streamlit-app.py --server.port=8501 --server.address=0.0.0.0
+      - API_UPSTREAM=http://194.87.94.36:8000/
 
 volumes:
   postgres-data:
