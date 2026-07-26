@@ -490,6 +490,8 @@ def init_session_state():
         st.session_state.tasks = []
     if "temperature_history" not in st.session_state:
         st.session_state.temperature_history = []
+    if "sessions" not in st.session_state:
+        st.session_state.sessions = []
     if 'response_queue' not in st.session_state:
         st.session_state.response_queue = queue.Queue()
 

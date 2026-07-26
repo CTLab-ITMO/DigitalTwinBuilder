@@ -36,10 +36,44 @@ async def init_db_pool():
         async with pool.acquire() as conn:
             # TODO: full database structure with conversation
             await conn.execute('''
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id UUID PRIMARY KEY,
+                    user_id VARCHAR(255) NOT NULL DEFAULT 'default',
+                    title VARCHAR(255),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS conversations (
+                    id UUID PRIMARY KEY,
+                    session_id UUID REFERENCES sessions(id),
+                    agent_id INTEGER NOT NULL DEFAULT 1,
+                    conv_idx INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    metadata JSONB DEFAULT '{}'
+                )
+            ''')
+
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS messages (
+                    id UUID PRIMARY KEY,
+                    conversation_id UUID REFERENCES conversations(id),
+                    role VARCHAR(20) NOT NULL,
+                    content TEXT,
+                    content_type VARCHAR(50) DEFAULT 'text',
+                    metadata JSONB DEFAULT '{}',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    tokens INTEGER
+                )
+            ''')
+            await conn.execute('''
                 CREATE TABLE IF NOT EXISTS tasks (
-                    id VARCHAR(36) PRIMARY KEY,
+                    id UUID PRIMARY KEY,
                     agent_id INTEGER NOT NULL,
-                    conversation_id UUID, 
+                    conversation_id UUID REFERENCES conversations(id),
                     params JSONB DEFAULT '{}',
                     status VARCHAR(20) NOT NULL DEFAULT 'pending',
                     result TEXT,
@@ -56,7 +90,7 @@ async def init_db_pool():
                     agent_id INTEGER PRIMARY KEY,
                     status VARCHAR(20) DEFAULT 'idle',
                     last_heartbeat TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    current_task_id VARCHAR(36)
+                    current_task_id UUID
                 )
             ''')
             
@@ -111,6 +145,12 @@ class TaskRequest(BaseModel):
 
 class AgentPollRequest(BaseModel):
     agent_id: int
+
+class MessageRequest(BaseModel):
+    role: str
+    content: str
+    content_type: str = "text"
+    metadata: Dict[str, Any] = {}
 
 class ResultSubmission(BaseModel):
     result: str
@@ -250,7 +290,7 @@ async def get_conversation(conversation_id: str):
 async def get_conversation_last_message(conversation_id: str):
     """Get full conversation with messages"""
     async with pool.acquire() as conn:
-        message = await conn.fetch("""
+        message = await conn.fetchrow("""
             SELECT id, role, content, content_type,
                    metadata, created_at, tokens
             FROM messages
@@ -258,12 +298,19 @@ async def get_conversation_last_message(conversation_id: str):
             ORDER BY created_at DESC
             LIMIT 1
         """, conversation_id)
-    
+
+    if not message:
+        raise HTTPException(status_code=404, detail="No messages found")
+
     return {
-        "last_message": message
+        "last_message": dict(message)
     }
 
 @app.post("/conversations/{conversation_id}/messages")
+async def add_message_endpoint(conversation_id: str, req: MessageRequest):
+    """Add a message to conversation (from JSON body)"""
+    return await add_message(conversation_id, req.role, req.content, req.content_type, req.metadata)
+
 async def add_message(
     conversation_id: str,
     role: str,
@@ -315,47 +362,44 @@ async def process_agent_chain(
     )
     
     # 2. Create task for User Interaction Agent
-    task_id = await create_task({
-        "agent_id": 1,  # UIA
-        "conv_idx": 0,
-        "conversation_id": conversation_id,
-        "params": {
+    result = await _create_task_db(
+        agent_id=1,  # UIA
+        conversation_id=conversation_id,
+        params={
             "user_message_id": user_msg_id["message_id"],
             "context": context
         },
-        "priority": 0,
-    })
+        priority=0,
+    )
+    task_id = result["task_id"]
     
     return {"task_id": task_id, "conversation_id": conversation_id}
 
 # API Endpoints
+async def _create_task_db(agent_id: int, conversation_id: str, params: dict, priority: int = 0) -> dict:
+    """Internal helper to create a task in the database. Returns {"task_id": ..., "position_in_queue": ...}."""
+    task_id = str(uuid.uuid4())
+    async with (await get_db_connection()).acquire() as conn:
+        await conn.execute('''
+            INSERT INTO tasks (id, agent_id, conversation_id, params, status, priority)
+            VALUES ($1, $2, $3, $4, 'pending', $5)
+        ''', task_id, agent_id, conversation_id,
+            json.dumps(params), priority)
+
+        count = await conn.fetchval('''
+            SELECT COUNT(*) FROM tasks
+            WHERE agent_id = $1 AND status = 'pending'
+        ''', agent_id)
+
+    return {"task_id": task_id, "status": "pending", "position_in_queue": count}
+
 @app.post("/tasks")
 async def create_task(task: TaskRequest):
     """Submit a new task from UI"""
-    task_id = str(uuid.uuid4())
-    
     try:
-        async with (await get_db_connection()).acquire() as conn:
-            # Insert task
-            await conn.execute('''
-                INSERT INTO tasks (id, agent_id, conversation_id, params, status, priority)
-                VALUES ($1, $2, $3, $4, 'pending', $5)
-            ''', task_id, task.agent_id, task.conversation_id, 
-                json.dumps(task.params), task.priority)
-            
-            # Get queue position
-            count = await conn.fetchval('''
-                SELECT COUNT(*) FROM tasks 
-                WHERE agent_id = $1 AND status = 'pending'
-            ''', task.agent_id)
+        return await _create_task_db(task.agent_id, task.conversation_id, task.params, task.priority)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-    
-    return {
-        "task_id": task_id,
-        "status": "pending",
-        "position_in_queue": count
-    }
 
 @app.post("/agent/poll")
 async def poll_for_tasks(poll: AgentPollRequest):
@@ -442,7 +486,8 @@ async def get_task_status(task_id: str):
             task = await conn.fetchrow('''
                 SELECT t.id, t.agent_id, c.conv_idx, t.conversation_id, t.status, t.result, t.error,
                        t.created_at, t.started_at, t.completed_at
-                FROM tasks t, conversations c WHERE t.id = $1 AND c.conversation_id = t.conversation_id;
+                FROM tasks t LEFT JOIN conversations c ON c.conversation_id = t.conversation_id
+                WHERE t.id = $1;
             ''', task_id)
             
             if not task:

@@ -88,8 +88,7 @@ def add_message_to_conversation(conversation_id, role, content):
         session = get_session()
         response = session.post(
             f"{API_URL}/conversations/{conversation_id}/messages",
-            params={
-                "conversation_id": conversation_id,
+            json={
                 "role": role,
                 "content": content,
             },
