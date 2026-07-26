@@ -1,9 +1,9 @@
-FROM python:latest
+FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+ARG REQS=requirements-api.txt
+COPY ${REQS} requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
-RUN pip install -e .
+COPY src/digital_twin_builder/ .

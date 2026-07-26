@@ -1,6 +1,6 @@
 services:
   dt-postgres:
-    image: postgres:latest
+    image: postgres:16-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-admin}
@@ -8,7 +8,12 @@ services:
     ports:
       - "12300:5432"
     volumes:
-      - postgres-data:/home/nvasiliev/DigitalTwinBuilder/db
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-dt}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   # dt-grafana:
   #   image: grafana/grafana:latest
@@ -44,30 +49,44 @@ services:
   #     - PYTHONPATH=/digital_twin_builder
 
   dt-api:
-    build: .
+    build:
+      context: .
+      args:
+        REQS: requirements-api.txt
     profiles: ["full"]
     ports:
       - "8000:8000"
     depends_on:
-      - dt-postgres
+      dt-postgres:
+        condition: service_healthy
     environment:
       - DB_HOST=dt-postgres
       - DB_PORT=5432
       - DB_NAME=${POSTGRES_DB:-dt}
       - DB_USER=${POSTGRES_USER:-postgres}
       - DB_PASSWORD=${POSTGRES_PASSWORD:-admin}
-    command: python src/digital_twin_builder/api-server.py
+    command: python api-server.py
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
 
   frontend:
-    build: .
+    build:
+      context: .
+      args:
+        REQS: requirements-frontend.txt
     profiles: ["frontend", "full"]
     ports:
       - "8501:8501"
     depends_on:
-      - dt-api
+      dt-api:
+        condition: service_healthy
     environment:
       - API_URL=http://dt-api:8000
-    command: streamlit run src/digital_twin_builder/streamlit-app.py --server.port=8501 --server.address=0.0.0.0
+    command: streamlit run streamlit-app.py --server.port=8501 --server.address=0.0.0.0
 
 volumes:
   postgres-data:
