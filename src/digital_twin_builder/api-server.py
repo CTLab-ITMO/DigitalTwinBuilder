@@ -25,9 +25,20 @@ async def init_db_pool():
     """Initialize database connection pool"""
     global pool
     try:
+        # Return UUID columns as plain strings so JSON responses are clean
+        async def _init_connection(conn):
+            await conn.set_type_codec(
+                'uuid',
+                encoder=str,
+                decoder=str,
+                schema='pg_catalog',
+                format='text'
+            )
+
         pool = await asyncpg.create_pool(
             min_size=1,
             max_size=10,
+            init=_init_connection,
             **DB_CONFIG
         )
         print("✅ Database pool initialized")
@@ -486,7 +497,7 @@ async def get_task_status(task_id: str):
             task = await conn.fetchrow('''
                 SELECT t.id, t.agent_id, c.conv_idx, t.conversation_id, t.status, t.result, t.error,
                        t.created_at, t.started_at, t.completed_at
-                FROM tasks t LEFT JOIN conversations c ON c.conversation_id = t.conversation_id
+                FROM tasks t LEFT JOIN conversations c ON c.id = t.conversation_id
                 WHERE t.id = $1;
             ''', task_id)
             

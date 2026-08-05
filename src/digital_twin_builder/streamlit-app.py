@@ -588,8 +588,8 @@ def initialize_ui():
 
         # list conversations
         for session in st.session_state.sessions:
-            title = session.get("title", f"chat {session['id'][:8]}")
-            if st.button(title, key=session["id"], use_container_width=True):
+            title = session.get("title") or f"chat {str(session['id'])[:8]}"
+            if st.button(title, key=str(session["id"]), use_container_width=True):
                 load_session(session["id"])
 
         st.header("agent status")
