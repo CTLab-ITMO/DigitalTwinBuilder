@@ -13,10 +13,14 @@ const convIdx = 0
 
 const agentMessages = computed(() => store.messages)
 
+// Active poll running right now — blocks sending to avoid double-submit
+const isProcessing = computed(() =>
+  Object.values(store.pendingTasks).some(v => v)
+)
+
+// Shows "Processing..." indicator: active poll, or old session with unanswered user message
 const isWaiting = computed(() => {
-  // Check pending tasks in memory
-  if (Object.values(store.pendingTasks).some(v => v)) return true
-  // Check if last message is from user (no response yet)
+  if (isProcessing.value) return true
   const msgs = store.messages
   if (msgs.length === 0) return false
   return msgs[msgs.length - 1].role === 'user'
@@ -37,26 +41,36 @@ async function send() {
   // Clear input immediately
   input.value = ''
 
-  // Auto-create session if none selected
-  if (!store.currentSessionId) {
-    const sid = await store.createSession()
-    if (!sid) return
+  try {
+    // Auto-create session if none selected
+    if (!store.currentSessionId) {
+      const sid = await store.createSession()
+      if (!sid) {
+        store.error = 'Не удалось создать сессию — проверьте API'
+        return
+      }
+    }
+
+    const convId = await getOrCreateConv()
+    if (!convId) {
+      store.error = 'Не удалось создать conversation — проверьте API'
+      return
+    }
+
+    // Add user message to local state
+    store.messages.push({
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: msg,
+    })
+
+    await store.sendMessage(agentId, convIdx, convId, msg, {
+      temperature: temperature.value,
+      max_tokens: maxTokens.value,
+    })
+  } catch (e: any) {
+    store.error = e?.message || String(e)
   }
-
-  const convId = await getOrCreateConv()
-  if (!convId) return
-
-  // Add user message to local state
-  store.messages.push({
-    id: crypto.randomUUID(),
-    role: 'user',
-    content: msg,
-  })
-
-  await store.sendMessage(agentId, convIdx, convId, msg, {
-    temperature: temperature.value,
-    max_tokens: maxTokens.value,
-  })
 }
 </script>
 
@@ -105,10 +119,10 @@ async function send() {
           v-model="input"
           type="text"
           placeholder="Введите информацию о вашем производстве..."
-          :disabled="!!store.interviewResult || isWaiting"
+          :disabled="!!store.interviewResult || isProcessing"
           @keydown.enter="send"
         />
-        <button class="btn btn-primary" @click="send" :disabled="!input.trim() || isWaiting">
+        <button class="btn btn-primary" @click="send" :disabled="!input.trim() || isProcessing">
           Send
         </button>
       </div>
