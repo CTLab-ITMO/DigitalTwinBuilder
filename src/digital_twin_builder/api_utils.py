@@ -7,7 +7,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import time
 import logging
-from config import API_URL
+from digital_twin_builder.config import API_URL
 
 logger = logging.getLogger(__name__)
 

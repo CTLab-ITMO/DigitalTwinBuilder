@@ -13,9 +13,9 @@ load_dotenv(dotenv_path=env_path)
 API_URL = os.getenv("API_URL", "http://188.119.67.226:8000")
 
 # LLM Configuration
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
-DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-chat")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
+LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-v3.2")
 
 # Agents configuration
 UI_AGENT_INDEX = int(os.getenv("UI_AGENT_INDEX", "0"))
