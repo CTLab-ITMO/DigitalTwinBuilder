@@ -1,0 +1,362 @@
+{
+  "__inputs": [],
+  "__requires": [],
+  "title": "Image Anomaly Detection",
+  "uid": "image-dashboard",
+  "version": 1,
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "editable": true,
+  "tags": ["images", "anomaly-detection", "mvtec"],
+  "panels": [
+    {
+      "title": "AUROC by Category — Image Level",
+      "type": "bargauge",
+      "id": 1,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": -Infinity, "color": "red"},
+              {"value": 0.6, "color": "orange"},
+              {"value": 0.8, "color": "green"}
+            ]
+          },
+          "color": {"mode": "thresholds"}
+        }
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "postgres"},
+          "format": "table",
+          "rawSql": "SELECT category, detector, AVG(auroc_image) AS avg_auroc FROM image_detection_results WHERE run_id = '$run_id' GROUP BY category, detector ORDER BY category",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "AUROC by Category — Pixel Level",
+      "type": "bargauge",
+      "id": 2,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": -Infinity, "color": "red"},
+              {"value": 0.6, "color": "orange"},
+              {"value": 0.8, "color": "green"}
+            ]
+          },
+          "color": {"mode": "thresholds"}
+        }
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "postgres"},
+          "format": "table",
+          "rawSql": "SELECT category, detector, AVG(auroc_pixel) AS avg_auroc_pixel FROM image_detection_results WHERE run_id = '$run_id' GROUP BY category, detector ORDER BY category",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "PRO Score by Category",
+      "type": "bargauge",
+      "id": 3,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": -Infinity, "color": "red"},
+              {"value": 0.4, "color": "orange"},
+              {"value": 0.6, "color": "green"}
+            ]
+          },
+          "color": {"mode": "thresholds"}
+        }
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "postgres"},
+          "format": "table",
+          "rawSql": "SELECT category, detector, AVG(pro_score) AS avg_pro FROM image_detection_results WHERE run_id = '$run_id' GROUP BY category, detector ORDER BY category",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Detection Rate by Defect Type",
+      "type": "table",
+      "id": 4,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"align": "left"},
+          "color": {
+            "mode": "thresholds",
+            "seriesBy": "last"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": -Infinity, "color": "red"},
+              {"value": 0.5, "color": "orange"},
+              {"value": 0.8, "color": "green"}
+            ]
+          },
+          "mappings": []
+        }
+      },
+      "options": {
+        "sortBy": [{"displayName": "Anomaly Rate", "desc": true}]
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "postgres"},
+          "format": "table",
+          "rawSql": "SELECT category, label, COUNT(*) AS total, SUM(CASE WHEN is_anomaly = true THEN 1 ELSE 0 END) AS anomalies, SUM(CASE WHEN is_anomaly = true THEN 1 ELSE 0 END)::FLOAT / COUNT(*) AS anomaly_rate, AVG(anomaly_score) AS avg_score FROM image_detection_results WHERE run_id = '$run_id' AND detector = '$detector' GROUP BY category, label ORDER BY category, anomaly_rate DESC",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Summary Stats — Current Run",
+      "type": "stat",
+      "id": 5,
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 16},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": -Infinity, "color": "green"},
+              {"value": 0.7, "color": "orange"},
+              {"value": 0.9, "color": "red"}
+            ]
+          },
+          "unit": "percentunit"
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["mean"]
+        },
+        "orientation": "auto",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "postgres"},
+          "format": "table",
+          "rawSql": "SELECT AVG(auroc_image) AS mean_auroc_image FROM image_detection_results WHERE run_id = '$run_id'",
+          "refId": "A"
+        }
+      ],
+      "title": "Mean AUROC Image"
+    },
+    {
+      "title": "Mean AUROC Pixel",
+      "type": "stat",
+      "id": 6,
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 16},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": -Infinity, "color": "red"},
+              {"value": 0.6, "color": "orange"},
+              {"value": 0.8, "color": "green"}
+            ]
+          },
+          "unit": "percentunit"
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["mean"]
+        },
+        "orientation": "auto",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "postgres"},
+          "format": "table",
+          "rawSql": "SELECT AVG(auroc_pixel) AS mean_auroc_pixel FROM image_detection_results WHERE run_id = '$run_id'",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Mean PRO Score",
+      "type": "stat",
+      "id": 7,
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 16},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": -Infinity, "color": "red"},
+              {"value": 0.4, "color": "orange"},
+              {"value": 0.6, "color": "green"}
+            ]
+          },
+          "unit": "percentunit"
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["mean"]
+        },
+        "orientation": "auto",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "postgres"},
+          "format": "table",
+          "rawSql": "SELECT AVG(pro_score) AS mean_pro FROM image_detection_results WHERE run_id = '$run_id'",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Total Images Analyzed",
+      "type": "stat",
+      "id": 8,
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 16},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "none"},
+          "unit": "none"
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["count"]
+        },
+        "orientation": "auto",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": false
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "postgres"},
+          "format": "table",
+          "rawSql": "SELECT COUNT(*) AS total FROM image_detection_results WHERE run_id = '$run_id'",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Anomalies Detected",
+      "type": "stat",
+      "id": 9,
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 16},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": -Infinity, "color": "green"},
+              {"value": 1, "color": "orange"},
+              {"value": 10, "color": "red"}
+            ]
+          },
+          "unit": "none"
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["sum"]
+        },
+        "orientation": "auto",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "postgres"},
+          "format": "table",
+          "rawSql": "SELECT COUNT(*) AS anomalies FROM image_detection_results WHERE run_id = '$run_id' AND is_anomaly = true",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "run_id",
+        "type": "query",
+        "query": "SELECT DISTINCT run_id FROM image_detection_results ORDER BY run_id DESC LIMIT 20",
+        "datasource": {"type": "postgres", "uid": "postgres"},
+        "refresh": 1,
+        "includeAll": false,
+        "current": {"text": "latest", "value": ""}
+      },
+      {
+        "name": "detector",
+        "type": "query",
+        "query": "SELECT DISTINCT detector FROM image_detection_results ORDER BY detector",
+        "datasource": {"type": "postgres", "uid": "postgres"},
+        "refresh": 1,
+        "includeAll": false,
+        "current": {"text": "All", "value": "All"}
+      },
+      {
+        "name": "category",
+        "type": "query",
+        "query": "SELECT DISTINCT category FROM image_detection_results ORDER BY category",
+        "datasource": {"type": "postgres", "uid": "postgres"},
+        "refresh": 1,
+        "includeAll": true,
+        "current": {"text": "All", "value": "$__all"}
+      }
+    ]
+  }
+}

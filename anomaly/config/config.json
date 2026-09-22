@@ -1,0 +1,291 @@
+{
+  "production_line_a": {
+    "description": "Bottle, cable, capsule production line (6 sensors, 3 cameras)",
+    "sensors": [
+      {
+        "id": "temperature_a",
+        "sensor_type": "temperature",
+        "unit": "C"
+      },
+      {
+        "id": "pressure_a",
+        "sensor_type": "pressure",
+        "unit": "kPa"
+      },
+      {
+        "id": "vibration_x_a",
+        "sensor_type": "vibration_x",
+        "unit": "mm/s"
+      },
+      {
+        "id": "vibration_y_a",
+        "sensor_type": "vibration_y",
+        "unit": "mm/s"
+      },
+      {
+        "id": "flow_rate_a",
+        "sensor_type": "flow_rate",
+        "unit": "L/min"
+      },
+      {
+        "id": "power_consumption_a",
+        "sensor_type": "power_consumption",
+        "unit": "W"
+      }
+    ],
+    "cameras": [
+      {
+        "id": "camera_bottle",
+        "category": "bottle"
+      },
+      {
+        "id": "camera_cable",
+        "category": "cable"
+      },
+      {
+        "id": "camera_capsule",
+        "category": "capsule"
+      }
+    ]
+  },
+  "production_line_b": {
+    "description": "Carpet, grid assembly line (4 sensors, 2 cameras)",
+    "sensors": [
+      {
+        "id": "temperature_b",
+        "sensor_type": "temperature",
+        "unit": "C"
+      },
+      {
+        "id": "pressure_b",
+        "sensor_type": "pressure",
+        "unit": "kPa"
+      },
+      {
+        "id": "vibration_x_b",
+        "sensor_type": "vibration_x",
+        "unit": "mm/s"
+      },
+      {
+        "id": "rpm_b",
+        "sensor_type": "rpm",
+        "unit": "rpm"
+      }
+    ],
+    "cameras": [
+      {
+        "id": "camera_carpet",
+        "category": "carpet"
+      },
+      {
+        "id": "camera_grid",
+        "category": "grid"
+      }
+    ]
+  },
+  "production_line_c": {
+    "description": "Metal nut precision line (8 sensors, 1 camera)",
+    "sensors": [
+      {
+        "id": "temperature_c",
+        "sensor_type": "temperature",
+        "unit": "C"
+      },
+      {
+        "id": "pressure_c",
+        "sensor_type": "pressure",
+        "unit": "kPa"
+      },
+      {
+        "id": "vibration_x_c",
+        "sensor_type": "vibration_x",
+        "unit": "mm/s"
+      },
+      {
+        "id": "vibration_y_c",
+        "sensor_type": "vibration_y",
+        "unit": "mm/s"
+      },
+      {
+        "id": "vibration_z_c",
+        "sensor_type": "vibration_z",
+        "unit": "mm/s"
+      },
+      {
+        "id": "flow_rate_c",
+        "sensor_type": "flow_rate",
+        "unit": "L/min"
+      },
+      {
+        "id": "rpm_c",
+        "sensor_type": "rpm",
+        "unit": "rpm"
+      },
+      {
+        "id": "power_consumption_c",
+        "sensor_type": "power_consumption",
+        "unit": "W"
+      }
+    ],
+    "cameras": [
+      {
+        "id": "camera_metal_nut",
+        "category": "metal_nut"
+      }
+    ]
+  },
+  "production_line_d": {
+    "description": "Hazelnut, leather, pill inspection (3 sensors, 3 cameras)",
+    "sensors": [
+      {
+        "id": "temperature_d",
+        "sensor_type": "temperature",
+        "unit": "C"
+      },
+      {
+        "id": "pressure_d",
+        "sensor_type": "pressure",
+        "unit": "kPa"
+      },
+      {
+        "id": "vibration_x_d",
+        "sensor_type": "vibration_x",
+        "unit": "mm/s"
+      }
+    ],
+    "cameras": [
+      {
+        "id": "camera_hazelnut",
+        "category": "hazelnut"
+      },
+      {
+        "id": "camera_leather",
+        "category": "leather"
+      },
+      {
+        "id": "camera_pill",
+        "category": "pill"
+      }
+    ]
+  },
+  "production_line_e": {
+    "description": "Screw, tile finishing line (5 sensors, 2 cameras)",
+    "sensors": [
+      {
+        "id": "temperature_e",
+        "sensor_type": "temperature",
+        "unit": "C"
+      },
+      {
+        "id": "vibration_x_e",
+        "sensor_type": "vibration_x",
+        "unit": "mm/s"
+      },
+      {
+        "id": "vibration_y_e",
+        "sensor_type": "vibration_y",
+        "unit": "mm/s"
+      },
+      {
+        "id": "flow_rate_e",
+        "sensor_type": "flow_rate",
+        "unit": "L/min"
+      },
+      {
+        "id": "rpm_e",
+        "sensor_type": "rpm",
+        "unit": "rpm"
+      }
+    ],
+    "cameras": [
+      {
+        "id": "camera_screw",
+        "category": "screw"
+      },
+      {
+        "id": "camera_tile",
+        "category": "tile"
+      }
+    ]
+  },
+  "production_line_f": {
+    "description": "Toothbrush, transistor packaging (4 sensors, 2 cameras)",
+    "sensors": [
+      {
+        "id": "pressure_f",
+        "sensor_type": "pressure",
+        "unit": "kPa"
+      },
+      {
+        "id": "vibration_z_f",
+        "sensor_type": "vibration_z",
+        "unit": "mm/s"
+      },
+      {
+        "id": "flow_rate_f",
+        "sensor_type": "flow_rate",
+        "unit": "L/min"
+      },
+      {
+        "id": "power_consumption_f",
+        "sensor_type": "power_consumption",
+        "unit": "W"
+      }
+    ],
+    "cameras": [
+      {
+        "id": "camera_toothbrush",
+        "category": "toothbrush"
+      },
+      {
+        "id": "camera_transistor",
+        "category": "transistor"
+      }
+    ]
+  },
+  "production_line_g": {
+    "description": "Wood, zipper quality control (6 sensors, 2 cameras)",
+    "sensors": [
+      {
+        "id": "temperature_g",
+        "sensor_type": "temperature",
+        "unit": "C"
+      },
+      {
+        "id": "pressure_g",
+        "sensor_type": "pressure",
+        "unit": "kPa"
+      },
+      {
+        "id": "vibration_x_g",
+        "sensor_type": "vibration_x",
+        "unit": "mm/s"
+      },
+      {
+        "id": "vibration_y_g",
+        "sensor_type": "vibration_y",
+        "unit": "mm/s"
+      },
+      {
+        "id": "vibration_z_g",
+        "sensor_type": "vibration_z",
+        "unit": "mm/s"
+      },
+      {
+        "id": "rpm_g",
+        "sensor_type": "rpm",
+        "unit": "rpm"
+      }
+    ],
+    "cameras": [
+      {
+        "id": "camera_wood",
+        "category": "wood"
+      },
+      {
+        "id": "camera_zipper",
+        "category": "zipper"
+      }
+    ]
+  }
+}
