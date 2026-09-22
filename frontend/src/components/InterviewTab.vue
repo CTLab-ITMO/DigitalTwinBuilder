@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useAppStore } from '../stores/app'
-import { api } from '../api/client'
 
 const store = useAppStore()
 const input = ref('')
@@ -26,12 +25,11 @@ const isWaiting = computed(() => {
   return msgs[msgs.length - 1].role === 'user'
 })
 
+// Seeded with the interview system prompt on creation: the agent takes its
+// instructions from the conversation, and a conversation without them is what
+// the DB slot used to be handed — a valid `requirements` object never came out.
 async function getOrCreateConv(): Promise<string | null> {
-  const existing = store.conversations.find(c => c.agent_id === agentId && c.conv_idx === convIdx)
-  if (existing) return existing.id
-  if (!store.currentSessionId) return null
-  const data = await api.createConversation(store.currentSessionId, agentId, convIdx)
-  return data.conversation_id
+  return store.ensureConversation(agentId, convIdx)
 }
 
 async function send() {

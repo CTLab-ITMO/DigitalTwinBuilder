@@ -57,6 +57,67 @@ export interface QueueStatus {
   active_task: any | null
 }
 
+// The DB/DES slots run server-side: the broker owns the conversation, builds
+// the engineered prompt, validates each reply and asks for a repair until the
+// artifact passes. The client only starts a job and reads its verdict.
+
+export interface PipelineAttempt {
+  attempt: number
+  ok: boolean
+  report: string
+  chars: number
+  /** DES only: how the generated program ended (`ok`, `timeout`, ...). */
+  status?: string | null
+  /** DES only: the KPIs the program printed on this turn. */
+  kpis?: Record<string, number | null>
+}
+
+export interface DbPipelineResult {
+  slot: 'db'
+  ok: boolean
+  artifact: string | null
+  attempts: number
+  repaired: number
+  report: string
+  summary: Record<string, any>
+}
+
+export interface DesPipelineResult {
+  slot: 'des'
+  ok: boolean
+  artifact: string | null
+  attempts: number
+  repaired: number
+  report: string
+  kpis: {
+    throughput_per_hour?: number | null
+    wip_parts?: number | null
+    energy_per_part_kwh?: number | null
+  }
+  status: string | null
+  elapsed_s: number | null
+}
+
+export interface PipelineJob {
+  id: string
+  slot: 'db' | 'des'
+  agent_id: number
+  conv_idx: number
+  conversation_id: string
+  status: 'running' | 'completed' | 'failed'
+  attempts: PipelineAttempt[]
+  result: DbPipelineResult | DesPipelineResult | null
+  error: string | null
+  created_at: string
+  completed_at: string | null
+}
+
+export interface PipelinePrompts {
+  ui: string
+  db: string
+  gen_des: string
+}
+
 export interface HealthStatus {
   status: string
   database: string

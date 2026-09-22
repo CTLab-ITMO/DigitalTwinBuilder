@@ -3,3 +3,6 @@ uvicorn==0.34.0
 asyncpg==0.30.0
 pydantic==2.10.4
 python-dotenv==1.0.0
+# The DES pipeline runs the generated SimPy program with this interpreter
+# (config.DES_PYTHON defaults to sys.executable, which is the one in the image).
+simpy==4.1.1

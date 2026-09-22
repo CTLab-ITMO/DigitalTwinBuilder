@@ -1,4 +1,4 @@
-import type { Session, Conversation, Message, TaskStatus, AgentStatus, QueueStatus } from '../types'
+import type { Session, Conversation, Message, TaskStatus, AgentStatus, QueueStatus, PipelineJob, PipelinePrompts } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
@@ -67,6 +67,38 @@ export const api = {
 
   getQueueStatus(agentId: number): Promise<QueueStatus> {
     return request(`/queue/${agentId}`)
+  },
+
+  // Pipeline — the DB and DES slots, run with validation and repair server-side
+  startDbPipeline(body: {
+    session_id: string
+    conversation_id?: string
+    requirements: any
+    conv_idx?: number
+    max_tokens?: number
+    attempts?: number
+  }): Promise<{ job_id: string; slot: string; conversation_id: string }> {
+    return request('/pipeline/db', { method: 'POST', body: JSON.stringify(body) })
+  },
+
+  startDesPipeline(body: {
+    session_id: string
+    conversation_id?: string
+    requirements: any
+    db_schema?: string
+    conv_idx?: number
+    max_tokens?: number
+    attempts?: number
+  }): Promise<{ job_id: string; slot: string; conversation_id: string }> {
+    return request('/pipeline/des', { method: 'POST', body: JSON.stringify(body) })
+  },
+
+  getPipelineJob(jobId: string): Promise<PipelineJob> {
+    return request(`/pipeline/jobs/${jobId}`)
+  },
+
+  getPrompts(): Promise<PipelinePrompts> {
+    return request('/pipeline/prompts')
   },
 
   // Health
