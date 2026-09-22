@@ -1,0 +1,16 @@
+apiVersion: 1
+
+datasources:
+  - name: PostgreSQL
+    uid: postgres
+    type: grafana-postgresql-datasource
+    access: proxy
+    url: anomaly-postgres:5432
+    database: anomaly_db
+    user: anomalydb
+    secureJsonData:
+      password: anomalydb
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: false

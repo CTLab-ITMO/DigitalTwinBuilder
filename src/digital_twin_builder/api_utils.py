@@ -163,6 +163,33 @@ def poll_task_result(task_id, max_poll=30):
     return {"task_id": task_id}
 
 
+def submit_and_wait(agent_id, conversation_id, params, conv_idx=0, timeout_s=900):
+    """Submit a task and block until it completes.
+
+    The DES repair loop needs the reply of one turn before it can decide
+    whether to ask another, so it cannot use the fire-and-poll pattern the tabs
+    use. Returns the agent's text, or None if the task failed or the wait timed
+    out — both of which the caller must treat as "no program was returned"
+    rather than as an empty program.
+    """
+    task_info = submit_task(agent_id, conversation_id, params, conv_idx=conv_idx)
+    if not task_info or not task_info.get("task_id"):
+        logger.error("Task submission failed")
+        return None
+    task_id = task_info["task_id"]
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        task = get_task_status(task_id)
+        if task and task.get("status") == "completed":
+            return task.get("result") or ""
+        if task and task.get("status") == "failed":
+            logger.error(f"Task {task_id} failed: {task.get('error')}")
+            return None
+        time.sleep(1)
+    logger.error(f"Task {task_id} timed out after {timeout_s}s")
+    return None
+
+
 def create_new_conversation(session_id, agent_id, system_prompt, conv_idx = 0):
     """Create a new conversation
     

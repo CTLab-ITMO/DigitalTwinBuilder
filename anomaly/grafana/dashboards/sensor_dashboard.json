@@ -1,0 +1,200 @@
+{
+  "__inputs": [],
+  "__requires": [],
+  "title": "Sensor Anomaly Detection",
+  "uid": "sensor-dashboard",
+  "version": 1,
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "editable": true,
+  "tags": ["sensors", "anomaly-detection"],
+  "panels": [
+    {
+      "title": "Sensor Readings with Anomaly Highlights",
+      "type": "timeseries",
+      "id": 1,
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 20,
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "anomaly_score"},
+            "properties": [
+              {"id": "custom.fillOpacity", "value": 60},
+              {"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}},
+              {"id": "custom.lineWidth", "value": 0},
+              {"id": "custom.showPoints", "value": "auto"},
+              {"id": "custom.pointSize", "value": 3}
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {"showLegend": true, "placement": "bottom", "calcs": ["mean", "max"]},
+        "tooltip": {"mode": "multi"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "postgres"},
+          "format": "table",
+          "rawSql": "SELECT sr.timestamp, sr.value, sr.feature_index FROM sensor_readings sr WHERE sr.channel_id = '$channel' ORDER BY sr.id LIMIT 5000",
+          "refId": "A"
+        },
+        {
+          "datasource": {"type": "postgres", "uid": "postgres"},
+          "format": "table",
+          "rawSql": "SELECT sar.timestamp, sar.anomaly_score FROM sensor_anomaly_results sar WHERE sar.channel_id = '$channel' AND sar.is_anomaly = true ORDER BY sar.id",
+          "refId": "B"
+        }
+      ],
+      "transformations": [
+        {"id": "groupBy", "options": {"fields": {"value": {"aggregations": ["mean"], "operation": "mean"}}}}
+      ]
+    },
+    {
+      "title": "Anomaly Score Over Time",
+      "type": "timeseries",
+      "id": 2,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"lineWidth": 1, "fillOpacity": 30, "showPoints": "never"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": -Infinity, "color": "green"},
+              {"value": 0.5, "color": "orange"},
+              {"value": 0.8, "color": "red"}
+            ]
+          }
+        }
+      },
+      "options": {
+        "legend": {"showLegend": true, "placement": "bottom"},
+        "tooltip": {"mode": "multi"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "postgres"},
+          "format": "table",
+          "rawSql": "SELECT timestamp, anomaly_score, detector FROM sensor_anomaly_results WHERE channel_id = '$channel' AND run_id = '$run_id' ORDER BY timestamp LIMIT 5000",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Detector Performance (Precision/Recall/F1)",
+      "type": "stat",
+      "id": 3,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": -Infinity, "color": "red"},
+              {"value": 0.5, "color": "orange"},
+              {"value": 0.8, "color": "green"}
+            ]
+          },
+          "unit": "percentunit"
+        }
+      },
+      "options": {
+        "orientation": "auto",
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["mean"]
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "postgres"},
+          "format": "table",
+          "rawSql": "SELECT detector, COUNT(*) FILTER (WHERE is_anomaly = true)::FLOAT / NULLIF(COUNT(*), 0) AS anomaly_rate, COUNT(*) AS total FROM sensor_anomaly_results WHERE channel_id = '$channel' GROUP BY detector",
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {"id": "convertFieldType", "options": {"conversions": [{"destinationType": "number", "targetField": "anomaly_rate"}]}}
+      ]
+    },
+    {
+      "title": "Recent Alerts",
+      "type": "table",
+      "id": 4,
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16},
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"align": "left"},
+          "color": {
+            "mode": "thresholds",
+            "seriesBy": "last"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": -Infinity, "color": "green"},
+              {"value": 1, "color": "orange"},
+              {"value": 2, "color": "red"}
+            ]
+          },
+          "mappings": [
+            {"type": "value", "options": {"low": {"color": "green", "text": "low"}, "medium": {"color": "orange", "text": "medium"}, "high": {"color": "red", "text": "high"}, "critical": {"color": "purple", "text": "critical"}}}
+          ]
+        }
+      },
+      "options": {
+        "sortBy": [{"displayName": "Time", "desc": true}]
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "postgres"},
+          "format": "table",
+          "rawSql": "SELECT timestamp, source_id, alert_type, severity, message, score FROM alerts ORDER BY timestamp DESC LIMIT 50",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "channel",
+        "type": "query",
+        "query": "SELECT DISTINCT channel_id FROM sensor_readings ORDER BY channel_id",
+        "datasource": {"type": "postgres", "uid": "postgres"},
+        "refresh": 1,
+        "includeAll": false,
+        "current": {"text": "P-1", "value": "P-1"}
+      },
+      {
+        "name": "run_id",
+        "type": "query",
+        "query": "SELECT DISTINCT run_id FROM sensor_anomaly_results ORDER BY run_id DESC LIMIT 20",
+        "datasource": {"type": "postgres", "uid": "postgres"},
+        "refresh": 1,
+        "includeAll": false,
+        "current": {"text": "latest", "value": ""}
+      },
+      {
+        "name": "detector",
+        "type": "query",
+        "query": "SELECT DISTINCT detector FROM sensor_anomaly_results ORDER BY detector",
+        "datasource": {"type": "postgres", "uid": "postgres"},
+        "refresh": 1,
+        "includeAll": true,
+        "current": {"text": "All", "value": "$__all"}
+      }
+    ]
+  }
+}

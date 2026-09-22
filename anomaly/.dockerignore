@@ -1,0 +1,31 @@
+# Virtual environments
+.venv
+**/.venv
+
+# Python cache
+__pycache__
+*.pyc
+*.pyo
+
+# Git
+.git
+**/.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Notebooks (source is .py files via jupytext)
+*.ipynb
+
+# Model checkpoints/results (not needed at build time)
+**/checkpoint/
+**/results/
+**/example.ipynb
+**/README.md
