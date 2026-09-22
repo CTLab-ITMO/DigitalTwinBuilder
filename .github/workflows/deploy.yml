@@ -18,7 +18,8 @@ jobs:
           script: |
             cd /root/DigitalTwinBuilder
             echo "Pulling latest code..."
-            git pull origin main
+            git fetch origin main
+            git reset --hard origin/main
             echo "Restarting Docker containers..."
             docker compose down
             docker compose up -d --build
