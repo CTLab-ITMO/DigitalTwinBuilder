@@ -76,8 +76,14 @@ services:
     profiles: ["frontend", "full"]
     ports:
       - "8080:80"
+    depends_on:
+      dt-api:
+        condition: service_healthy
     environment:
-      - API_UPSTREAM=http://194.87.94.36:8000/
+      # nginx proxies /api/ here. The default is the compose service, so the
+      # stack works on one host out of the box; override it in .env to point the
+      # UI at an API running somewhere else.
+      - API_UPSTREAM=${API_UPSTREAM:-http://dt-api:8000/}
 
   # --- Anomaly detection stack (merged from ITMO/anomaly-detection) ---
   anomaly-postgres:

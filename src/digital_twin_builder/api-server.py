@@ -615,9 +615,12 @@ async def _prepare_pipeline_conversation(session_id, conversation_id, agent_id,
 
     The agent reads the conversation's messages as its chat context, so a
     conversation without the system message is a slot that runs without its
-    instructions — which is what the frontend used to do. The system message is
-    written once: a conversation the client already created and seeded is reused
-    as it is.
+    instructions — which is what the frontend used to do. The seed is written
+    once, including when two starts race on the same conversation: the check and
+    the insert run in one transaction holding an advisory lock on the
+    conversation, so the loser waits, then re-reads and finds the row the winner
+    committed (each statement in READ COMMITTED takes a fresh snapshot). A
+    conversation the client already created and seeded is reused as it is.
 
     A `conversation_id` is used when given (the client's own conversation for the
     tab, so it can render the turns); otherwise one is created in `session_id`.
@@ -626,33 +629,45 @@ async def _prepare_pipeline_conversation(session_id, conversation_id, agent_id,
         raise HTTPException(status_code=400,
                             detail="session_id or conversation_id is required")
 
-    async with (await get_db_connection()).acquire() as conn:
-        if conversation_id:
-            exists = await conn.fetchval(
-                "SELECT 1 FROM conversations WHERE id = $1", conversation_id)
-            if not exists:
-                raise HTTPException(status_code=404,
-                                    detail="Conversation not found")
-        else:
-            conversation_id = str(uuid.uuid4())
-            await conn.execute("""
-                INSERT INTO conversations
-                    (id, session_id, agent_id, conv_idx, metadata)
-                VALUES ($1, $2, $3, $4, $5)
-            """, conversation_id, session_id, agent_id, conv_idx,
-                json.dumps({"conv_idx": conv_idx}))
+    new_conversation = conversation_id is None
+    if new_conversation:
+        conversation_id = str(uuid.uuid4())
 
-        seeded = await conn.fetchval("""
-            SELECT 1 FROM messages
-            WHERE conversation_id = $1 AND role = 'system'
-            LIMIT 1
-        """, conversation_id)
-        if not seeded:
-            await conn.execute("""
-                INSERT INTO messages
-                    (id, conversation_id, role, content, content_type, metadata)
-                VALUES ($1, $2, 'system', $3, 'text', '{}')
-            """, str(uuid.uuid4()), conversation_id, seed_prompt)
+    async with (await get_db_connection()).acquire() as conn:
+        async with conn.transaction():
+            # Transaction-scoped: released when the seed is committed, so the
+            # critical section covers the whole read-then-write, not one
+            # statement. Hash collisions only cost an unrelated pair some
+            # serialisation.
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0::bigint))",
+                conversation_id)
+
+            if new_conversation:
+                await conn.execute("""
+                    INSERT INTO conversations
+                        (id, session_id, agent_id, conv_idx, metadata)
+                    VALUES ($1, $2, $3, $4, $5)
+                """, conversation_id, session_id, agent_id, conv_idx,
+                    json.dumps({"conv_idx": conv_idx}))
+            else:
+                exists = await conn.fetchval(
+                    "SELECT 1 FROM conversations WHERE id = $1", conversation_id)
+                if not exists:
+                    raise HTTPException(status_code=404,
+                                        detail="Conversation not found")
+
+            seeded = await conn.fetchval("""
+                SELECT 1 FROM messages
+                WHERE conversation_id = $1 AND role = 'system'
+                LIMIT 1
+            """, conversation_id)
+            if not seeded:
+                await conn.execute("""
+                    INSERT INTO messages
+                        (id, conversation_id, role, content, content_type, metadata)
+                    VALUES ($1, $2, 'system', $3, 'text', '{}')
+                """, str(uuid.uuid4()), conversation_id, seed_prompt)
 
     return conversation_id
 
