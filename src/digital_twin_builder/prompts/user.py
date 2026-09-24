@@ -137,6 +137,43 @@ def make_ui_backup_prompt(chat_history):
 Верни ТОЛЬКО валидный JSON."""
     return prompt
 
+def make_ui_repair(previous_reply, failure_report, attempt, total_attempts, *args):
+    """Follow-up turn for the interview slot: the previous reply was not readable JSON.
+
+    `failure_report` is what reading the previous reply actually found — no JSON
+    object at all, an object cut off before its closing brace, or a readable
+    object whose `requirements` is incomplete or mistyped. It is fed back
+    verbatim so the model corrects the defect it can see instead of answering
+    the same question again from scratch.
+    """
+    prompt = f"""Твой предыдущий ответ не удалось прочитать как JSON. Вот что именно не так:
+
+{failure_report}
+
+Вот твой предыдущий ответ целиком:
+{previous_reply}
+
+Исправь указанную ошибку и верни ответ заново.
+
+ТРЕБОВАНИЯ К ОТВЕТУ:
+- Верни РОВНО ОДИН JSON-объект: начни с {{ и закончи его парной }}. Никакого
+  текста до или после него, никаких блоков ``` , никаких двух объектов подряд и
+  никаких лишних фигурных скобок.
+- Ничего не потеряй: верни весь объект целиком. Если в нём уже были
+  requirements, верни их со всеми 13 полями. Не удаляй sensors, cameras, line,
+  des_horizon, units и остальные поля из-за одной ошибки разбора.
+- Если информации достаточно — верни
+  {{"completed": true, "requirements": {{...}}, "message": "..."}}.
+  Если нет — верни {{"completed": false, "message": "..."}} с вопросами
+  пользователю.
+- Числа в блоках line и des_horizon — только те, что назвал пользователь.
+  defects.rate — ДОЛЯ, а не процент: 2 % это 0.02, так же как 5 % уровня воды
+  это 0.05.
+- В sensors и cameras у каждой записи должно быть поле "name".
+
+Верни только JSON. Это попытка исправления {attempt} из {total_attempts}."""
+    return prompt
+
 def make_gen_conf(requirements, db_schema, *args):
     prompt = f"""Create a comprehensive digital twin configuration for the industrial facility.
 

@@ -104,6 +104,19 @@ export const api = {
     return request('/pipeline/des', { method: 'POST', body: JSON.stringify(body) })
   },
 
+  // The interview slot: the broker posts the user's turn, reads the agent's
+  // reply and asks for a correction while it is not the schema's JSON.
+  startUiPipeline(body: {
+    session_id: string
+    conversation_id?: string
+    message: string
+    conv_idx?: number
+    max_tokens?: number
+    attempts?: number
+  }): Promise<{ job_id: string; slot: string; conversation_id: string }> {
+    return request('/pipeline/ui', { method: 'POST', body: JSON.stringify(body) })
+  },
+
   getPipelineJob(jobId: string): Promise<PipelineJob> {
     return request(`/pipeline/jobs/${jobId}`)
   },

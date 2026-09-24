@@ -319,6 +319,90 @@ def test_des_survives_a_requirements_result_that_does_not_parse(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# the interview slot
+# --------------------------------------------------------------------------- #
+UI_REQ = {
+    "production_type": "serial line",
+    "processes": ["cut"],
+    "equipment": ["saw"],
+    "sensors": [{"name": "temp", "ip": "10.0.0.1", "port": 1502}],
+    "cameras": [],
+    "goals": "monitor",
+    "data_sources": "Modbus",
+    "update_frequency": "1 s",
+    "critical_parameters": {"temp": 120},
+    "line": {"topology": "serial", "source": {"inter_arrival_time_s": 45.0},
+             "stations": [{"id": "M1", "processing_time_s": 150}],
+             "buffers": [{"id": "B0", "capacity": 10}],
+             "defects": {"rate": 0.02}},
+    "des_horizon": {"warmup_s": 21600.0, "window_s": 432000.0,
+                    "replications": 10},
+    "units": {"time": "s", "power": "kW", "energy": "kWh"},
+    "additional_info": "none",
+}
+
+GOOD_REPLY = json.dumps({"completed": True, "requirements": UI_REQ,
+                         "message": "done"}, ensure_ascii=False)
+# Cut off before its closing brace — the shape a reply has when it runs out of
+# tokens mid-object, which `json.loads` cannot read at all.
+BROKEN_REPLY = GOOD_REPLY[:GOOD_REPLY.rindex("}")]
+QUESTION_REPLY = json.dumps({"completed": False, "message": "what type?"},
+                            ensure_ascii=False)
+
+
+def test_ui_repairs_an_unreadable_reply_and_returns_the_requirements():
+    submit, calls = scripted(BROKEN_REPLY, GOOD_REPLY)
+    seen = []
+
+    outcome = pipeline.generate_interview_result(
+        submit, "Хочу цифровой двойник кофемашины", attempts=2,
+        on_attempt=lambda i, reply, verdict: seen.append((i, verdict["ok"])))
+
+    assert outcome["ok"] is True
+    assert outcome["completed"] is True
+    assert outcome["requirements"] == UI_REQ
+    assert outcome["attempts"] == 2
+    assert outcome["repaired"] == 1
+    assert seen == [(0, False), (1, True)]
+    assert outcome["summary"]["keys_present"] == 13
+    assert len(calls) == 2
+
+
+def test_ui_first_turn_is_the_user_message():
+    submit, calls = scripted(GOOD_REPLY)
+
+    pipeline.generate_interview_result(submit, "кофемашина!", attempts=2)
+
+    assert calls[0]["prompt"] == "кофемашина!"
+    assert calls[0]["attempt"] == 0
+
+
+def test_ui_repair_turn_carries_the_report_and_the_previous_reply():
+    submit, calls = scripted(BROKEN_REPLY, GOOD_REPLY)
+
+    pipeline.generate_interview_result(submit, "кофемашина!", attempts=2)
+
+    repair = calls[1]["prompt"]
+    assert repair.startswith("Твой предыдущий ответ не удалось прочитать как JSON.")
+    assert "never closed" in repair          # the defect, named
+    assert BROKEN_REPLY in repair            # the reply itself is handed back
+    assert "попытка исправления 1 из 2" in repair
+
+
+def test_ui_keeps_a_question_without_repairing_it():
+    submit, calls = scripted(QUESTION_REPLY)
+
+    outcome = pipeline.generate_interview_result(submit, "не знаю", attempts=2)
+
+    assert outcome["ok"] is True
+    assert outcome["completed"] is False
+    assert outcome["requirements"] is None
+    assert "what type?" in outcome["message"]
+    assert outcome["repaired"] == 0
+    assert len(calls) == 1
+
+
+# --------------------------------------------------------------------------- #
 # job_result
 # --------------------------------------------------------------------------- #
 def test_job_result_names_the_db_artifact_and_verdict():
@@ -359,6 +443,48 @@ def test_job_result_calls_a_missing_reply_no_reply():
     assert result["artifact"] is None
     assert result["status"] == "no_reply"
     assert result["kpis"] == {}
+
+
+def test_job_result_names_the_ui_requirements_and_the_question():
+    result = pipeline.job_result("ui", {
+        "reply": GOOD_REPLY, "ok": True, "completed": True,
+        "requirements": UI_REQ, "message": "done", "attempts": 2, "repaired": 1,
+        "report": "", "summary": {"keys_present": 13},
+    })
+
+    assert result["slot"] == "ui"
+    assert result["ok"] is True
+    assert result["completed"] is True
+    assert result["requirements"] == UI_REQ
+    assert result["reply"] == GOOD_REPLY
+    assert result["attempts"] == 2
+    assert result["repaired"] == 1
+    assert result["summary"] == {"keys_present": 13}
+
+
+def test_job_result_keeps_a_question_out_of_completed():
+    result = pipeline.job_result("ui", {
+        "reply": QUESTION_REPLY, "ok": True, "completed": False,
+        "requirements": None, "message": "what type?", "attempts": 1,
+        "repaired": 0, "report": "", "summary": {},
+    })
+
+    assert result["ok"] is True
+    assert result["completed"] is False
+    assert result["requirements"] is None
+    assert result["message"] == "what type?"
+
+
+def test_job_result_calls_an_unreadable_interview_no_reply():
+    result = pipeline.job_result("ui", {
+        "reply": None, "ok": False, "completed": False, "requirements": None,
+        "message": "", "attempts": 0, "repaired": 0,
+        "report": "the agent returned no answer", "summary": {},
+    })
+
+    assert result["ok"] is False
+    assert result["reply"] is None
+    assert result["requirements"] is None
 
 
 def test_job_result_rejects_an_unknown_slot():

@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { api } from '../api/client'
-import type { Session, Conversation, Message, AgentStatus, QueueStatus, PipelineJob, PipelinePrompts, DbPipelineResult, DesPipelineResult } from '../types'
+import type { Session, Conversation, Message, AgentStatus, QueueStatus, PipelineJob, PipelinePrompts, DbPipelineResult, DesPipelineResult, UiPipelineResult } from '../types'
 
 const UI_AGENT = 0
 const DB_AGENT = 1
@@ -19,7 +19,6 @@ export const useAppStore = defineStore('app', () => {
   const messages = ref<Message[]>([])
   const agentStatuses = ref<AgentStatus[]>([])
   const queueStatuses = ref<Record<number, QueueStatus>>({})
-  const pendingTasks = ref<Record<string, boolean>>({})
   const activeTab = ref(0)
   const activeConvIdx = ref(0)
 
@@ -35,6 +34,13 @@ export const useAppStore = defineStore('app', () => {
   const dbVerdict = ref<DbPipelineResult | null>(null)
   const desCode = ref<string | null>(null)
   const desVerdict = ref<DesPipelineResult | null>(null)
+
+  // Interview slot: its own job, verdict and in-flight flag — the DB/DES tab
+  // reads `pipelineJob` for its per-turn log, so the interview must not write
+  // over it (or the DES log would vanish mid-run).
+  const uiJob = ref<PipelineJob | null>(null)
+  const uiVerdict = ref<UiPipelineResult | null>(null)
+  const uiRunning = ref(false)
 
   // Loading states
   const loading = ref(false)
@@ -69,6 +75,8 @@ export const useAppStore = defineStore('app', () => {
       dbVerdict.value = null
       desCode.value = null
       desVerdict.value = null
+      uiJob.value = null
+      uiVerdict.value = null
       await loadSessions()
       // Seed the interview slot now rather than on the first send: the greeting
       // is the conversation's opening assistant turn, so a new chat has to show
@@ -87,6 +95,10 @@ export const useAppStore = defineStore('app', () => {
       const data = await api.getSession(sessionId)
       currentSessionId.value = sessionId
       conversations.value = data.conversations
+      // The interview's job and verdict belong to the conversation that produced
+      // them; another session's report must not be shown over this one.
+      uiJob.value = null
+      uiVerdict.value = null
       // `messages` is the interview transcript, so load that slot specifically
       // instead of whichever conversation comes first. A session that has no
       // interview conversation yet gets one here, greeting and all.
@@ -137,6 +149,8 @@ export const useAppStore = defineStore('app', () => {
         dbVerdict.value = null
         desCode.value = null
         desVerdict.value = null
+        uiJob.value = null
+        uiVerdict.value = null
       }
       return true
     } catch (e: any) {
@@ -161,17 +175,20 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  /**
+   * Post a message to a slot that has no server-side loop — the DT agent's
+   * GenConf and GenSim conversations. The interview slot no longer uses this:
+   * it goes through `sendInterviewMessage`, whose validation and repair run in
+   * the broker.
+   */
   async function sendMessage(agentId: number, convIdx: number, conversationId: string, content: string, params: Record<string, any> = {}) {
     try {
       await api.addMessage(conversationId, 'user', content)
 
       const task = await api.submitTask(agentId, conversationId, params)
-      const taskId = task.task_id
-
-      pendingTasks.value[taskId] = true
 
       // Start polling
-      await pollTask(taskId, agentId, convIdx)
+      await pollTask(task.task_id, agentId, convIdx)
     } catch (e: any) {
       error.value = e.message
     }
@@ -183,7 +200,6 @@ export const useAppStore = defineStore('app', () => {
       try {
         const status = await api.getTaskStatus(taskId)
         if (status.status === 'completed' || status.status === 'failed') {
-          pendingTasks.value[taskId] = false
           if (status.result) {
             processResult(status.result, agentId, convIdx)
           }
@@ -198,35 +214,90 @@ export const useAppStore = defineStore('app', () => {
         // retry
       }
     }
-    pendingTasks.value[taskId] = false
+  }
+
+  /**
+   * The first complete JSON object in a model reply, or null if there is none.
+   *
+   * Braces inside strings do not count, so the object ends at its own matching
+   * brace — not at the last brace in the text. That distinction matters: the
+   * agent answers with `<think>…</think>` plus the object, and a small model
+   * routinely miscounts the closing braces, leaving an extra `}` after the
+   * requirements. Slicing to the *last* brace then hands `JSON.parse` trailing
+   * junk and the whole reply is rejected, discarding requirements that are in
+   * fact complete.
+   */
+  function extractJsonObject(text: string): string | null {
+    const start = text.indexOf('{')
+    if (start === -1) return null
+    let depth = 0
+    let inString = false
+    let escaped = false
+    for (let i = start; i < text.length; i++) {
+      const ch = text[i]
+      if (escaped) { escaped = false; continue }
+      if (inString) {
+        if (ch === '\\') escaped = true
+        else if (ch === '"') inString = false
+        continue
+      }
+      if (ch === '"') inString = true
+      else if (ch === '{') depth++
+      else if (ch === '}' && --depth === 0) return text.slice(start, i + 1)
+    }
+    return null
+  }
+
+  /**
+   * The model's reasoning block, removed. SmolLM3 writes `<think>…</think>`
+   * before its answer, and a brace inside that prose would otherwise be read as
+   * the start of the JSON object. An opening tag with no closing one means the
+   * turn ended inside the reasoning, so everything from it is dropped.
+   */
+  function stripThink(text: string): string {
+    const closed = text.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '')
+    const open = closed.search(/<think(?:ing)?>/i)
+    return open === -1 ? closed : closed.slice(0, open)
+  }
+
+  /** Parse the first JSON object in a reply, or null if it is not readable. */
+  function parseJsonObject(text: string): any | null {
+    const raw = extractJsonObject(stripThink(text))
+    if (raw === null) return null
+    try {
+      return JSON.parse(raw)
+    } catch {
+      return null
+    }
   }
 
   function processResult(result: string, agentId: number, convIdx: number) {
     if (agentId === 0) {
       // UI/Interview agent — extract JSON
-      try {
-        const start = result.indexOf('{')
-        const end = result.lastIndexOf('}')
-        if (start !== -1 && end > start) {
-          const parsed = JSON.parse(result.substring(start, end + 1))
-          if (parsed.completed) {
-            interviewResult.value = parsed.requirements
-          }
+      const parsed = parseJsonObject(result)
+      if (parsed) {
+        if (parsed.completed) {
+          interviewResult.value = parsed.requirements
         }
-      } catch { /* ignore */ }
+      } else if (result.includes('{')) {
+        // A reply that looks like JSON but cannot be read used to be dropped in
+        // silence: the transcript showed a finished interview while the DB tab
+        // kept saying the interview was never completed. Say it out loud, and
+        // leave the input enabled so the user can ask for the answer again.
+        error.value =
+          'Ответ агента не удалось разобрать как JSON — попросите его повторить или исправить ответ.'
+      }
     } else if (agentId === 1) {
       // DB agent
       dbSchema.value = result
     } else if (agentId === 2) {
       if (convIdx === 0) {
         // Config
-        try {
-          const start = result.indexOf('{')
-          const end = result.lastIndexOf('}')
-          if (start !== -1 && end > start) {
-            twinConfig.value = JSON.parse(result.substring(start, end + 1))
-          }
-        } catch { /* ignore */ }
+        const parsed = parseJsonObject(result)
+        if (parsed) twinConfig.value = parsed
+        else if (result.includes('{')) {
+          error.value = 'Ответ агента не удалось разобрать как JSON — попросите его повторить.'
+        }
       } else if (convIdx === 1) {
         // Simulation code
         const start = result.lastIndexOf('</think>')
@@ -290,20 +361,35 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
-  /** Follow a pipeline job until it stops running, publishing each step. */
-  async function pollJob(jobId: string): Promise<PipelineJob | null> {
+  /**
+   * Follow a pipeline job until it stops running.
+   *
+   * `publish` receives every poll, so a slot that renders progress turn by turn
+   * gets it while the loop is still running. A turn can take minutes (the DES
+   * slot runs the generated program), so the budget is the long one, not
+   * `pollTask`'s 60 seconds.
+   */
+  async function waitForJob(
+    jobId: string,
+    publish: (job: PipelineJob) => void,
+  ): Promise<PipelineJob | null> {
     const deadline = Date.now() + POLL_TIMEOUT_MS
     while (Date.now() < deadline) {
       await new Promise(r => setTimeout(r, POLL_INTERVAL_MS))
       try {
         const job = await api.getPipelineJob(jobId)
-        pipelineJob.value = job
+        publish(job)
         if (job.status !== 'running') return job
       } catch {
         // transient — keep polling
       }
     }
     return null
+  }
+
+  /** Follow the DB/DES slot currently running. */
+  async function pollJob(jobId: string): Promise<PipelineJob | null> {
+    return waitForJob(jobId, job => { pipelineJob.value = job })
   }
 
   /** Run the DB slot: the broker prompts, validates and repairs, we show it. */
@@ -359,6 +445,70 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  /**
+   * Answer one interview turn through the broker's validate→repair loop.
+   *
+   * The broker posts the user's message itself (so the stored conversation is
+   * exactly what the agent read), submits the task, reads the reply as the
+   * schema's JSON, and posts a correction while it does not read. The client
+   * shows the transcript and the verdict.
+   *
+   * A reply the agent can read that asks a question (`completed: false`) is a
+   * valid answer: the interview is simply not finished, and the input stays
+   * enabled. Only a reply unreadable even after the repairs is an error.
+   */
+  async function sendInterviewMessage(
+    conversationId: string,
+    content: string,
+    params: Record<string, any> = {},
+  ): Promise<UiPipelineResult | null> {
+    if (!currentSessionId.value) return null
+    error.value = null
+    uiRunning.value = true
+    try {
+      const started = await api.startUiPipeline({
+        session_id: currentSessionId.value,
+        conversation_id: conversationId,
+        message: content,
+        conv_idx: 0,
+        max_tokens: params.max_tokens,
+        attempts: params.attempts,
+      })
+      const job = await waitForJob(started.job_id, j => { uiJob.value = j })
+      if (!job) {
+        error.value = 'Превышено время ожидания ответа агента'
+        return null
+      }
+      if (job.status === 'failed') {
+        error.value = job.error || 'Ошибка обработки ответа агента'
+        return null
+      }
+
+      const result = job.result as UiPipelineResult | null
+      if (!result) return null
+      uiVerdict.value = result
+
+      if (result.completed && result.requirements) {
+        interviewResult.value = result.requirements
+      } else if (!result.ok) {
+        // The reply could not be read as the schema's JSON even after the repair
+        // turns. Say it out loud and leave the input enabled — the alternative
+        // is a chat that looks finished while the DB tab says otherwise.
+        error.value =
+          'Ответ агента не удалось разобрать как JSON после нескольких попыток — попросите его повторить или исправить ответ.'
+      }
+      return result
+    } catch (e: any) {
+      error.value = e.message
+      return null
+    } finally {
+      // The user's turn, the reply and any repair turns were all written
+      // server-side, so the server's copy is the one to show.
+      await loadConversation(conversationId)
+      uiRunning.value = false
+    }
+  }
+
   async function loadAgentStatuses() {
     for (let id = 0; id < 3; id++) {
       try {
@@ -373,10 +523,11 @@ export const useAppStore = defineStore('app', () => {
   return {
     // State
     sessions, currentSessionId, conversations, messages,
-    agentStatuses, queueStatuses, pendingTasks,
+    agentStatuses, queueStatuses,
     activeTab, activeConvIdx,
     interviewResult, dbSchema, twinConfig, simulationCode,
     prompts, pipelineJob, dbVerdict, desCode, desVerdict,
+    uiJob, uiVerdict, uiRunning,
     loading, error,
     // Getters
     currentSession,
@@ -385,5 +536,6 @@ export const useAppStore = defineStore('app', () => {
     renameSession, deleteSession,
     sendMessage, pollTask, loadAgentStatuses,
     loadPrompts, ensureConversation, pollJob, generateDbSchema, generateDesModel,
+    sendInterviewMessage,
   }
 })

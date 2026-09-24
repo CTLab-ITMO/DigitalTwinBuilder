@@ -55,6 +55,18 @@ DES_MAX_TOKENS = int(os.getenv("DES_MAX_TOKENS", "8000"))
 # does not hold together (0 disables the repair turn and keeps the first reply).
 DB_REPAIR_ATTEMPTS = int(os.getenv("DB_REPAIR_ATTEMPTS", "3"))
 
+# Interview (UI) answer validation. The agent replies with the requirements JSON;
+# UI_REPAIR_ATTEMPTS is how many corrected replies it may be asked for after one
+# that cannot be read (0 disables the repair turn and keeps the first reply). It
+# defaults lower than the DB/DES slots because a repair is another slow turn in
+# a dialogue the user is waiting on, and the recorded failures — a stray brace, a
+# truncated object — are settled by the first correction.
+UI_REPAIR_ATTEMPTS = int(os.getenv("UI_REPAIR_ATTEMPTS", "2"))
+# The reply budget for one interview turn. The finished requirements object plus
+# the model's reasoning block runs past 1000 tokens, and a reply cut off
+# mid-object cannot be read at all, so the default matches the DB slot's budget.
+UI_MAX_TOKENS = int(os.getenv("UI_MAX_TOKENS", "3000"))
+
 # Database Configuration
 POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "admin")
@@ -93,6 +105,8 @@ __all__ = [
     "DES_GEN_TIMEOUT_S",
     "DES_MAX_TOKENS",
     "DB_REPAIR_ATTEMPTS",
+    "UI_REPAIR_ATTEMPTS",
+    "UI_MAX_TOKENS",
     "POSTGRES_USER",
     "POSTGRES_PASSWORD",
     "POSTGRES_DB",

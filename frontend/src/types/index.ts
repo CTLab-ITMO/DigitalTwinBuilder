@@ -57,7 +57,7 @@ export interface QueueStatus {
   active_task: any | null
 }
 
-// The DB/DES slots run server-side: the broker owns the conversation, builds
+// The DB/DES/UI slots run server-side: the broker owns the conversation, builds
 // the engineered prompt, validates each reply and asks for a repair until the
 // artifact passes. The client only starts a job and reads its verdict.
 
@@ -70,6 +70,8 @@ export interface PipelineAttempt {
   status?: string | null
   /** DES only: the KPIs the program printed on this turn. */
   kpis?: Record<string, number | null>
+  /** UI only: this turn's reply claimed the interview was finished. */
+  completed?: boolean
 }
 
 export interface DbPipelineResult {
@@ -98,15 +100,34 @@ export interface DesPipelineResult {
   elapsed_s: number | null
 }
 
+/**
+ * The interview slot's verdict. `ok` says the agent's reply could be read as the
+ * schema's JSON; `completed` says whether it was the finished `requirements` or
+ * a question the agent asked instead — the latter is a valid answer, not a
+ * failure, so it comes back with `ok: true` and `requirements: null`.
+ */
+export interface UiPipelineResult {
+  slot: 'ui'
+  ok: boolean
+  completed: boolean
+  requirements: Record<string, any> | null
+  message: string
+  reply: string | null
+  attempts: number
+  repaired: number
+  report: string
+  summary: Record<string, any>
+}
+
 export interface PipelineJob {
   id: string
-  slot: 'db' | 'des'
+  slot: 'db' | 'des' | 'ui'
   agent_id: number
   conv_idx: number
   conversation_id: string
   status: 'running' | 'completed' | 'failed'
   attempts: PipelineAttempt[]
-  result: DbPipelineResult | DesPipelineResult | null
+  result: DbPipelineResult | DesPipelineResult | UiPipelineResult | null
   error: string | null
   created_at: string
   completed_at: string | null

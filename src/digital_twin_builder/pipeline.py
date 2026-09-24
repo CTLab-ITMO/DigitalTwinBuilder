@@ -1,12 +1,13 @@
-"""The DB and DES slots as one generate -> validate -> repair pipeline.
+"""The DB, DES and interview slots as one generate -> validate -> repair pipeline.
 
-The Streamlit app drove these two slots itself: it built the first-turn prompt,
-submitted it to the agent, read the reply back, validated it with `sql_runner`
-or `des_runner`, and re-submitted the reply with the validation report until the
-artifact passed or the attempts ran out. The Vue frontend cannot do any of that
-— it has no access to `prompts/`, no SQL parser and no Python interpreter — so
-the loop moves here, next to the runners it uses, and the frontend calls one
-endpoint per slot.
+The Streamlit app drove these slots itself: it built the first-turn prompt,
+submitted it to the agent, read the reply back, validated it with `sql_runner`,
+`des_runner` or `interview_runner`, and re-submitted the reply with the
+validation report until the artifact passed or the attempts ran out. The Vue
+frontend cannot do any of that — it has no access to `prompts/`, no SQL parser,
+no Python interpreter and no JSON reader for the model's thinking block — so the
+loop moves here, next to the runners it uses, and the frontend calls one endpoint
+per slot.
 
 This module is the whole of that move: prompt construction and the runner call,
 nothing else. It is deliberately free of HTTP, of a database and of the LLM: the
@@ -29,16 +30,18 @@ import json
 
 try:  # the app imports these as top-level modules; tests may import them as a package
     import des_runner
+    import interview_runner
     import sql_runner
     from prompts import user as user_prompts
 except ImportError:  # pragma: no cover - package layout
-    from . import des_runner, sql_runner
+    from . import des_runner, interview_runner, sql_runner
     from .prompts import user as user_prompts
 
 __all__ = [
     "normalize_requirements",
     "generate_db_schema",
     "generate_des_model",
+    "generate_interview_result",
     "job_result",
 ]
 
@@ -143,13 +146,38 @@ def generate_des_model(submit, requirements, schema, *, attempts=None,
     )
 
 
+def generate_interview_result(submit, user_message, *, attempts=None,
+                              on_attempt=None) -> dict:
+    """Read the interview agent's answer to one user turn, repairing it while it does not read.
+
+    Unlike the DB and DES slots there is no engineered first-turn prompt to
+    build: the first turn is the user's own message, which the caller posts, so
+    the conversation holds exactly what the user typed. Every later turn is
+    `make_ui_repair` carrying what reading the previous reply found. Returns
+    `interview_runner.generate_with_repair`'s outcome: the last reply, its
+    verdict, and the `requirements` or clarifying question it carried.
+
+    `attempts` is how many corrections follow the first reply (None takes
+    `config.UI_REPAIR_ATTEMPTS`); `on_attempt(i, reply, verdict)` is called after
+    every turn so a caller can record progress.
+    """
+    return interview_runner.generate_with_repair(
+        _with_first_prompt(submit, user_message),
+        attempts=attempts,
+        repair_prompt=lambda reply, report, attempt, total: (
+            user_prompts.make_ui_repair(reply, report, attempt, total)),
+        on_attempt=on_attempt,
+    )
+
+
 def job_result(slot: str, outcome: dict) -> dict:
     """The runner's outcome as a JSON-serializable job result.
 
     `artifact` is the thing the user is given — the schema or the program —
     and is None exactly when the slot produced nothing at all. The per-stage
     keys differ (a schema has a `summary`, a program has `kpis` and the status
-    of the run), so they are named by slot rather than merged into one bag.
+    of the run, an interview has the requirements or the question it read), so
+    they are named by slot rather than merged into one bag.
     """
     outcome = outcome or {}
     ok = bool(outcome.get("ok"))
@@ -157,6 +185,24 @@ def job_result(slot: str, outcome: dict) -> dict:
     repaired = int(outcome.get("repaired") or 0)
     report = outcome.get("report") or ""
 
+    if slot == "ui":
+        # The interview slot's artifact is the answer itself, not one artifact
+        # string: a readable reply is either the finished `requirements` object
+        # or the question the agent asked. `ok` says the read succeeded — a
+        # `completed: false` question is `ok` — and `completed` says which of
+        # the two it is.
+        return {
+            "slot": "ui",
+            "ok": ok,
+            "completed": bool(outcome.get("completed")),
+            "requirements": outcome.get("requirements"),
+            "message": outcome.get("message") or "",
+            "reply": outcome.get("reply"),
+            "attempts": attempts,
+            "repaired": repaired,
+            "report": report,
+            "summary": outcome.get("summary") or {},
+        }
     if slot == "db":
         artifact = outcome.get("sql")
         return {

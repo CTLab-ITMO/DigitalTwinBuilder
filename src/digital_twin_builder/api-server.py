@@ -234,6 +234,17 @@ class PipelineDesRequest(BaseModel):
     max_tokens: int = config.DES_MAX_TOKENS
     attempts: Optional[int] = None
 
+class PipelineUiRequest(BaseModel):
+    """Answer one interview turn. `message` is the user's turn: the broker posts
+    it, submits the task, reads the reply as the schema's JSON, and asks for a
+    repair while it does not read."""
+    session_id: Optional[str] = None
+    conversation_id: Optional[str] = None
+    message: str = ""
+    conv_idx: int = 0
+    max_tokens: int = config.UI_MAX_TOKENS
+    attempts: Optional[int] = None
+
 
 @app.post("/sessions")
 async def create_session(
@@ -652,7 +663,7 @@ async def get_task_status(task_id: str):
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 # --------------------------------------------------------------------------- #
-# DB / DES pipeline slots
+# DB / DES / interview pipeline slots
 #
 # `pipeline.py` holds the generate -> validate -> repair loop; what it needs from
 # the broker is a synchronous `submit(prompt, attempt)` that posts a user message
@@ -660,6 +671,10 @@ async def get_task_status(task_id: str):
 # block on subprocess and HTTP waits), so this section is the bridge between that
 # thread and the event loop, plus the job rows that make a multi-minute run
 # observable from a client that polls instead of holding one request open.
+#
+# The interview slot is the same machinery with a different first turn: it has no
+# engineered prompt to build — the user's own message is the turn — so the broker
+# posts that, and every later turn is a repair it authors.
 # --------------------------------------------------------------------------- #
 
 # Same queue priority api_utils submits the interactive tasks with, so a pipeline
@@ -678,12 +693,16 @@ _pipeline_tasks: set = set()
 
 
 def _resolve_agent_id(slot: str) -> int:
-    """The agent a slot talks to: agent 1 for SQL, agent 2 for the DES model."""
+    """The agent a slot talks to: agent 0 for the interview, 1 for SQL, 2 for DES."""
+    if slot == "ui":
+        return config.UI_AGENT_INDEX
     return config.DB_AGENT_INDEX if slot == "db" else config.DT_AGENT_INDEX
 
 
 def _resolve_seed_prompt(slot: str) -> str:
     """The system prompt the conversation must open with for the slot's agent."""
+    if slot == "ui":
+        return system_prompts.UI
     return system_prompts.DB if slot == "db" else system_prompts.GenDES
 
 
@@ -864,6 +883,8 @@ def _attempt_entry(slot, i, artifact, verdict) -> dict:
         entry["status"] = ((verdict.get("execution") or {}).get("status")
                            or ("no_reply" if artifact is None else None))
         entry["kpis"] = verdict.get("kpis") or {}
+    if slot == "ui":
+        entry["completed"] = bool(verdict.get("completed"))
     return entry
 
 
@@ -952,6 +973,22 @@ async def start_des_pipeline(req: PipelineDesRequest):
         submit, req.requirements, req.db_schema, attempts=req.attempts,
         on_attempt=on_attempt))
     return await _safe_start(slot="des", req=req, work=work)
+
+
+@app.post("/pipeline/ui")
+async def start_ui_pipeline(req: PipelineUiRequest):
+    """Answer one interview turn, reading and repairing the agent's reply.
+
+    Same job/poll contract as the DB and DES slots. A `completed: false` reply is
+    a legitimate answer — the agent asking the user a question — and is returned
+    as it is; only a reply that cannot be read as the schema's JSON, or that
+    claims to be finished with an incomplete `requirements`, is repaired.
+    """
+    if not req.message.strip():
+        raise HTTPException(status_code=400, detail="message must not be empty")
+    work = (lambda submit, on_attempt: pipeline.generate_interview_result(
+        submit, req.message, attempts=req.attempts, on_attempt=on_attempt))
+    return await _safe_start(slot="ui", req=req, work=work)
 
 
 async def _safe_start(*, slot, req, work) -> dict:
@@ -1094,6 +1131,7 @@ async def root():
             "get_queue": "GET /queue/{agent_id}",
             "start_db_pipeline": "POST /pipeline/db",
             "start_des_pipeline": "POST /pipeline/des",
+            "start_ui_pipeline": "POST /pipeline/ui",
             "get_pipeline_job": "GET /pipeline/jobs/{job_id}",
             "get_pipeline_prompts": "GET /pipeline/prompts",
             "health": "GET /health"

@@ -5,17 +5,25 @@ import { useAppStore } from '../stores/app'
 const store = useAppStore()
 const input = ref('')
 const temperature = ref(0.7)
-const maxTokens = ref(1000)
+// The finished requirements object plus its `<think>` block runs past 1000
+// tokens, and a reply cut off mid-JSON is one the client cannot read at all —
+// so the default matches the DB slot's budget rather than the smallest value
+// that fits a chat answer.
+const maxTokens = ref(3000)
 
 const agentId = 0
 const convIdx = 0
 
 const agentMessages = computed(() => store.messages)
 
-// Active poll running right now — blocks sending to avoid double-submit
-const isProcessing = computed(() =>
-  Object.values(store.pendingTasks).some(v => v)
-)
+// The broker is answering: it posted the turn, waits for the agent, and may be
+// sending the reply back for a correction. Nothing else may be submitted while
+// it does, or two jobs would write to the same conversation at once.
+const isProcessing = computed(() => store.uiRunning)
+
+// How many correction turns the broker has already asked for. Shown only from
+// the second turn on: a repair is why the wait is longer than a single answer.
+const repairs = computed(() => Math.max((store.uiJob?.attempts.length ?? 1) - 1, 0))
 
 // Shows "Processing..." indicator: active poll, or old session with unanswered user message
 const isWaiting = computed(() => {
@@ -55,14 +63,18 @@ async function send() {
       return
     }
 
-    // Add user message to local state
+    // Show the turn at once; the broker posts the authoritative copy, and the
+    // transcript is reloaded from it when the job finishes.
     store.messages.push({
       id: crypto.randomUUID(),
       role: 'user',
       content: msg,
     })
 
-    await store.sendMessage(agentId, convIdx, convId, msg, {
+    // The broker posts the message, reads the reply as the schema's JSON, and
+    // sends a correction back while it cannot be read — so an unparseable answer
+    // never reaches the transcript-and-DB-tab disagreement this used to cause.
+    await store.sendInterviewMessage(convId, msg, {
       temperature: temperature.value,
       max_tokens: maxTokens.value,
     })
@@ -82,6 +94,15 @@ async function send() {
         <p class="hint">Перейдите на вкладку «База данных»</p>
       </div>
 
+      <div v-if="store.uiVerdict && !store.uiVerdict.ok && !isProcessing" class="card failed">
+        <strong>Ответ агента не удалось разобрать</strong>
+        <p class="hint">
+          Попыток: {{ store.uiVerdict.attempts }}. Ниже — что именно не так;
+          отправьте сообщение ещё раз, чтобы агент ответил заново.
+        </p>
+        <pre class="report">{{ store.uiVerdict.report }}</pre>
+      </div>
+
       <div class="messages">
         <div
           v-for="msg in agentMessages"
@@ -94,6 +115,9 @@ async function send() {
           <div class="msg-content">
             <span class="spinner" style="display:inline-block;vertical-align:middle" />
             Processing...
+            <span v-if="repairs" class="repairs">
+              ответ не разобран, исправление {{ repairs }}
+            </span>
           </div>
         </div>
       </div>
@@ -147,7 +171,22 @@ async function send() {
 
 .completed { border-color: var(--green); }
 .completed strong { color: var(--green); }
+.failed { border-color: var(--red); }
+.failed strong { color: var(--red); }
 .hint { margin-top: 8px; color: var(--text-muted); font-size: 13px; }
+
+.report {
+  background: var(--bg);
+  border-radius: var(--radius);
+  padding: 12px;
+  margin-top: 8px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.repairs { color: var(--text-muted); font-size: 12px; margin-left: 8px; }
 
 .messages {
   display: flex;
