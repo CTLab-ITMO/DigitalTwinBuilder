@@ -16,7 +16,12 @@ def make_ui_prompt(conversation_context, user_message, *args):
         "production_type": "описание типа производства",
         "processes": ["список процессов"],
         "equipment": ["список оборудования"],
-        "sensors": ["список датчиков и параметров"],
+        "sensors": [
+            {{"name": "датчик и его параметр", "ip": null, "port": null}}
+        ],
+        "cameras": [
+            {{"name": "название камеры", "ip": null, "port": null}}
+        ],
         "goals": "цели создания цифрового двойника",
         "data_sources": "описание источников данных",
         "update_frequency": "частота обновления данных",
@@ -65,6 +70,15 @@ def make_ui_prompt(conversation_context, user_message, *args):
   станка или "sink". "capacity" — целое число, null если не названо.
 - "topology": "serial" если станки соединены в одну цепочку.
 
+ПРАВИЛА ДЛЯ "sensors" И "cameras":
+- "sensors" — по одной записи на датчик (Modbus), "cameras" — по одной записи
+  на камеру (RTSP). Если камер нет — "cameras": [].
+- "name" — название устройства так, как оно звучало в разговоре.
+- "ip" и "port" заполняй ТОЛЬКО теми значениями, которые пользователь назвал
+  явно. Если адрес или порт не названы — null. НЕ подставляй "типовой" адрес
+  и НЕ подставляй порт протокола по умолчанию (502 для Modbus, 554 для RTSP).
+- "port" — целое число, "ip" — строка с адресом без порта ("192.168.1.10").
+
 ВАЖНО: Верни ТОЛЬКО валидный JSON без markdown форматирования, без блоков кода (```), без пояснений. Начни сразу с открывающей фигурной скобки {{."""
     return prompt
 
@@ -80,7 +94,12 @@ def make_ui_backup_prompt(chat_history):
     "production_type": "тип производства",
     "processes": ["список процессов"],
     "equipment": ["список оборудования"],
-    "sensors": ["список датчиков и параметров"],
+    "sensors": [
+        {{"name": "датчик и его параметр", "ip": null, "port": null}}
+    ],
+    "cameras": [
+        {{"name": "название камеры", "ip": null, "port": null}}
+    ],
     "goals": "цели создания цифрового двойника",
     "data_sources": "источники данных",
     "update_frequency": "частота обновления",
@@ -110,6 +129,10 @@ def make_ui_backup_prompt(chat_history):
 
 Числа в "line" и "des_horizon" бери только из разговора. Если число не названо,
 ставь null — не выдумывай и не оценивай. Время в секундах, мощность в кВт.
+
+"sensors" (Modbus) и "cameras" (RTSP): по одной записи на устройство, "ip" и
+"port" — только если названы явно, иначе null. Не подставляй типовой адрес и
+порт протокола по умолчанию. Если камер нет — "cameras": [].
 
 Верни ТОЛЬКО валидный JSON."""
     return prompt
@@ -289,10 +312,16 @@ Design rules:
    samples(ts timestamptz, machine_id text, tag text, value double precision).
 2. Sensors are addressed by tag/register identifier, which is not a machine name.
    Create tag_map(tag_id text primary key, machine_id text, signal text,
-   unit text, register text, scale double precision) so an incoming register
-   value can be resolved to a machine and a physical quantity. Populate tag_map
-   only from identifiers named in the requirements; leave it empty (no INSERT)
-   if the requirements name none.
+   unit text, register text, scale double precision, ip text, port integer) so
+   an incoming register value can be resolved to a machine and a physical
+   quantity. "ip" and "port" are the Modbus endpoint of the sensor named in
+   requirements.sensors; leave them NULL when the requirements name none.
+   Create cameras(camera_id text primary key, name text, rtsp_ip text,
+   rtsp_port integer) for requirements.cameras, with NULL where an address or
+   port was not named. Never invent an address and never substitute the protocol
+   default port (502 for Modbus, 554 for RTSP).
+   Populate tag_map and cameras only from identifiers named in the requirements;
+   leave a table empty (no INSERT) if the requirements name none.
 3. Land raw payloads first: create
    raw_ingest(ingested_at timestamptz, source text, payload jsonb)
    and expose the typed fact tables as views over it, so an incorrect schema
