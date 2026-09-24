@@ -10,10 +10,9 @@ const editingId = ref<string | null>(null)
 const draftTitle = ref('')
 
 function onNewChat() {
-  store.createSession().then(sid => {
-    if (!sid) return
-    store.createSession() // triggers UI to create a conversation
-  })
+  // One call: `createSession` already seeds the interview slot, greeting and
+  // all. Calling it twice made two sessions.
+  store.createSession()
 }
 
 function selectSession(id: string) {

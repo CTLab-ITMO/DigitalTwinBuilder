@@ -70,6 +70,10 @@ export const useAppStore = defineStore('app', () => {
       desCode.value = null
       desVerdict.value = null
       await loadSessions()
+      // Seed the interview slot now rather than on the first send: the greeting
+      // is the conversation's opening assistant turn, so a new chat has to show
+      // it before the user types anything.
+      await ensureConversation(UI_AGENT, 0)
       return data.session_id
     } catch (e: any) {
       error.value = e.message
@@ -83,9 +87,14 @@ export const useAppStore = defineStore('app', () => {
       const data = await api.getSession(sessionId)
       currentSessionId.value = sessionId
       conversations.value = data.conversations
-      // Load messages for the first conversation
-      if (data.conversations.length > 0) {
-        await loadConversation(data.conversations[0].id)
+      // `messages` is the interview transcript, so load that slot specifically
+      // instead of whichever conversation comes first. A session that has no
+      // interview conversation yet gets one here, greeting and all.
+      const interview = data.conversations.find(c => c.agent_id === UI_AGENT && c.conv_idx === 0)
+      if (interview) {
+        await loadConversation(interview.id)
+      } else {
+        await ensureConversation(UI_AGENT, 0)
       }
     } catch (e: any) {
       error.value = e.message
@@ -265,12 +274,15 @@ export const useAppStore = defineStore('app', () => {
           await api.addMessage(data.conversation_id, 'system', p.ui)
           await api.addMessage(data.conversation_id, 'assistant', p.ui_greeting)
         }
+        // Pull back what was just seeded — otherwise the greeting exists on the
+        // server but the transcript stays blank until the first task finishes.
+        // Only the interview slot does this: `messages` is that slot's
+        // transcript, so reloading a DB/DES conversation into it would blank
+        // the interview the user is looking at.
+        await loadConversation(data.conversation_id)
       }
       const fresh = await api.getSession(currentSessionId.value)
       conversations.value = fresh.conversations
-      // Pull back what was just seeded — otherwise the greeting exists on the
-      // server but the transcript stays blank until the first task finishes.
-      await loadConversation(data.conversation_id)
       return data.conversation_id
     } catch (e: any) {
       error.value = e.message
