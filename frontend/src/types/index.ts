@@ -114,6 +114,9 @@ export interface PipelineJob {
 
 export interface PipelinePrompts {
   ui: string
+  /** The fixed opening assistant turn, posted right after the system prompt so
+   *  the interview starts with a greeting the user can answer. */
+  ui_greeting: string
   db: string
   gen_des: string
 }

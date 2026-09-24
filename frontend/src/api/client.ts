@@ -30,6 +30,17 @@ export const api = {
     return request(`/sessions/${sessionId}`)
   },
 
+  renameSession(sessionId: string, title: string): Promise<{ session_id: string; title: string }> {
+    return request(`/sessions/${sessionId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ title }),
+    })
+  },
+
+  deleteSession(sessionId: string): Promise<{ session_id: string; deleted: boolean }> {
+    return request(`/sessions/${sessionId}`, { method: 'DELETE' })
+  },
+
   // Conversations
   createConversation(sessionId: string, agentId = 1, convIdx = 0): Promise<{ conversation_id: string; conv_idx: number }> {
     const params = new URLSearchParams({ session_id: sessionId, agent_id: String(agentId), conv_idx: String(convIdx) })

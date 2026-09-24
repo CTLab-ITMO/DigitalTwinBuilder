@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 import config
 import pipeline
 from prompts import system as system_prompts
+from prompts import user as user_prompts
 
 # Configuration
 DB_CONFIG = {
@@ -207,6 +208,9 @@ class MessageRequest(BaseModel):
     content_type: str = "text"
     metadata: Dict[str, Any] = {}
 
+class SessionRenameRequest(BaseModel):
+    title: str
+
 class ResultSubmission(BaseModel):
     result: str
     error: Optional[str] = None
@@ -291,6 +295,80 @@ async def get_session(session_id: str):
             for c in conversations
         ]
     }
+
+def _session_id_or_404(session_id: str) -> str:
+    """UUID columns reject malformed text with a DataError, which would reach the
+    caller as a 500 for what is really just a session that does not exist."""
+    try:
+        return str(uuid.UUID(session_id))
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+@app.patch("/sessions/{session_id}")
+async def rename_session(session_id: str, req: SessionRenameRequest):
+    """Rename a session. The title is required — an empty one would leave the
+    sidebar with nothing to label the row with."""
+    session_id = _session_id_or_404(session_id)
+    title = req.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Title must not be empty")
+    if len(title) > 255:
+        raise HTTPException(status_code=400, detail="Title must be at most 255 characters")
+
+    async with pool.acquire() as conn:
+        updated = await conn.fetchval("""
+            UPDATE sessions
+            SET title = $2, updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
+            RETURNING id
+        """, session_id, title)
+
+    if not updated:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    return {"session_id": updated, "title": title}
+
+@app.delete("/sessions/{session_id}")
+async def delete_session(session_id: str):
+    """Delete a session and everything hanging off it.
+
+    The foreign keys are plain REFERENCES with no ON DELETE CASCADE, so the
+    children have to go first: messages and tasks point at conversations,
+    pipeline_jobs points at both, and nothing may outlive the session row.
+    """
+    session_id = _session_id_or_404(session_id)
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            exists = await conn.fetchval(
+                "SELECT 1 FROM sessions WHERE id = $1", session_id
+            )
+            if not exists:
+                raise HTTPException(status_code=404, detail="Session not found")
+
+            conversation_ids = [
+                c["id"] for c in await conn.fetch(
+                    "SELECT id FROM conversations WHERE session_id = $1", session_id
+                )
+            ]
+
+            await conn.execute("""
+                DELETE FROM pipeline_jobs
+                WHERE session_id = $1 OR conversation_id = ANY($2::uuid[])
+            """, session_id, conversation_ids)
+            await conn.execute(
+                "DELETE FROM tasks WHERE conversation_id = ANY($1::uuid[])",
+                conversation_ids
+            )
+            await conn.execute(
+                "DELETE FROM messages WHERE conversation_id = ANY($1::uuid[])",
+                conversation_ids
+            )
+            await conn.execute(
+                "DELETE FROM conversations WHERE session_id = $1", session_id
+            )
+            await conn.execute("DELETE FROM sessions WHERE id = $1", session_id)
+
+    return {"session_id": session_id, "deleted": True}
 
 # API endpoints for chat history
 @app.post("/conversations")
@@ -915,13 +993,15 @@ async def get_pipeline_job(job_id: str):
 
 @app.get("/pipeline/prompts")
 async def get_pipeline_prompts():
-    """The system prompts, so the client seeds a conversation without retyping them.
+    """The prompts the client seeds a conversation with, so it never retypes them.
 
-    `ui` is the one the client needs for the interview slot; `db` and `gen_des`
+    `ui` is the system prompt the interview slot starts with and `ui_greeting`
+    the fixed opening assistant turn that goes right after it; `db` and `gen_des`
     are used by the pipeline itself and are returned for transparency.
     """
     return {
         "ui": system_prompts.UI,
+        "ui_greeting": user_prompts.init_ui_assistant_answer(),
         "db": system_prompts.DB,
         "gen_des": system_prompts.GenDES,
     }

@@ -92,6 +92,50 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  async function renameSession(sessionId: string, title: string) {
+    error.value = null
+    try {
+      const data = await api.renameSession(sessionId, title)
+      const session = sessions.value.find(s => s.id === sessionId)
+      if (session) session.title = data.title
+      return true
+    } catch (e: any) {
+      error.value = e.message
+      return false
+    }
+  }
+
+  /**
+   * Delete a session server-side — it takes its conversations and messages with
+   * it — then drop the local copy. If it was the open one, everything derived
+   * from it has to go too, or the tabs stay pointed at conversations that no
+   * longer exist and the next click is a 404.
+   */
+  async function deleteSession(sessionId: string) {
+    error.value = null
+    try {
+      await api.deleteSession(sessionId)
+      sessions.value = sessions.value.filter(s => s.id !== sessionId)
+      if (currentSessionId.value === sessionId) {
+        currentSessionId.value = null
+        conversations.value = []
+        messages.value = []
+        interviewResult.value = null
+        dbSchema.value = null
+        twinConfig.value = null
+        simulationCode.value = null
+        pipelineJob.value = null
+        dbVerdict.value = null
+        desCode.value = null
+        desVerdict.value = null
+      }
+      return true
+    } catch (e: any) {
+      error.value = e.message
+      return false
+    }
+  }
+
   async function loadConversation(conversationId: string) {
     try {
       const data = await api.getConversation(conversationId)
@@ -202,9 +246,11 @@ export const useAppStore = defineStore('app', () => {
    * The conversation for a slot, created on first use.
    *
    * The interview agent takes its instructions from the conversation's own
-   * first message, so the client seeds the system prompt here. The DB and DES
-   * slots are seeded by the pipeline endpoints instead, which is why only the
-   * interview slot needs it from this side.
+   * first message, so the client seeds the system prompt here, then posts the
+   * fixed opening assistant turn — the user should see a greeting before they
+   * type, not an empty transcript. The DB and DES slots are seeded by the
+   * pipeline endpoints instead, which is why only the interview slot needs it
+   * from this side.
    */
   async function ensureConversation(agentId: number, convIdx: number): Promise<string | null> {
     const existing = conversations.value.find(c => c.agent_id === agentId && c.conv_idx === convIdx)
@@ -215,10 +261,16 @@ export const useAppStore = defineStore('app', () => {
       const data = await api.createConversation(currentSessionId.value, agentId, convIdx)
       if (agentId === UI_AGENT) {
         const p = await loadPrompts()
-        if (p) await api.addMessage(data.conversation_id, 'system', p.ui)
+        if (p) {
+          await api.addMessage(data.conversation_id, 'system', p.ui)
+          await api.addMessage(data.conversation_id, 'assistant', p.ui_greeting)
+        }
       }
       const fresh = await api.getSession(currentSessionId.value)
       conversations.value = fresh.conversations
+      // Pull back what was just seeded — otherwise the greeting exists on the
+      // server but the transcript stays blank until the first task finishes.
+      await loadConversation(data.conversation_id)
       return data.conversation_id
     } catch (e: any) {
       error.value = e.message
@@ -318,6 +370,7 @@ export const useAppStore = defineStore('app', () => {
     currentSession,
     // Actions
     loadSessions, createSession, loadSession, loadConversation,
+    renameSession, deleteSession,
     sendMessage, pollTask, loadAgentStatuses,
     loadPrompts, ensureConversation, pollJob, generateDbSchema, generateDesModel,
   }
