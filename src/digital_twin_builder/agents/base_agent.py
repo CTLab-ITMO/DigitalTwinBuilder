@@ -36,12 +36,12 @@ class BaseAgent(ABC):
         """Add message to conversation"""
         requests.post(
             f"{self.api_url}/conversations/{conversation_id}/messages",
-            params={
-                "conversation_id": conversation_id,
+            json={
                 "role": role,
                 "content": content,
                 "metadata": metadata or {}
-            }
+            },
+            timeout=10
         )
 
     def run(self, interval: float = 2.0):

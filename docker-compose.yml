@@ -76,13 +76,19 @@ services:
     profiles: ["frontend", "full"]
     ports:
       - "8080:80"
+    # dt-api lives in the `full` profile only. `required: false` keeps
+    # `--profile frontend` a valid project on its own, while under `full` it
+    # still gates on the healthcheck — without the gate nginx resolves the
+    # `dt-api` hostname at startup, before anything answers, and the container
+    # exits with `[emerg] host not found in upstream "dt-api"`.
     depends_on:
       dt-api:
         condition: service_healthy
+        required: false
     environment:
-      # nginx proxies /api/ here. The default is the compose service, so the
-      # stack works on one host out of the box; override it in .env to point the
-      # UI at an API running somewhere else.
+      # nginx proxies /api/ here. The default is the compose service, which only
+      # resolves under `--profile full`; when running `--profile frontend` alone
+      # against an API on another host, set API_UPSTREAM in .env.
       - API_UPSTREAM=${API_UPSTREAM:-http://dt-api:8000/}
 
   # --- Anomaly detection stack (merged from ITMO/anomaly-detection) ---
