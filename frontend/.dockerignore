@@ -1,0 +1,9 @@
+# Without this, `COPY . .` in frontend/Dockerfile copies the host's
+# node_modules over the one `npm ci` just installed, which defeats the layer
+# cache and can drop host-arch native binaries (esbuild/rollup) into the image.
+node_modules
+dist
+.vite
+*.log
+.env
+.env.*

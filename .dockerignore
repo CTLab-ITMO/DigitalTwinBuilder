@@ -1,11 +1,38 @@
+# Python virtualenvs / caches. `**/` matters: DTLibrary/.venv is a full CUDA
+# torch install (~5.7 GB) sitting under the COPY source of the root Dockerfile,
+# and a bare `.venv` pattern only matches the repo-root one.
 .venv
+**/.venv
 **/__pycache__
+**/*.pyc
+**/*.pyo
 **/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/*.egg-info
+
+# Node. The frontend is built from ./frontend, never from this context.
+**/node_modules
+frontend/dist
+
+# VCS / CI
 .git
 .gitignore
+.github
+
+# Secrets — compose passes these in as environment variables instead.
 .env
+
+# Docs and data no image reads. Keeping these out shrinks the context transfer;
+# `demo/` alone is 151 MB.
 *.md
 docs/
+readme_en/
 tests/
 benchmarks/
+conversation_logs/
 conversation_logs.zip
+demo/
+images/
+logs/
+pychrono_results/
