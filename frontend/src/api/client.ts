@@ -104,6 +104,31 @@ export const api = {
     return request('/pipeline/des', { method: 'POST', body: JSON.stringify(body) })
   },
 
+  // The twin's two slots. Neither artifact has a validator, so these are one
+  // turn each — but the broker still builds the engineered prompt and waits for
+  // it, which is what the client used to get wrong.
+  startGenConfPipeline(body: {
+    session_id: string
+    conversation_id?: string
+    requirements: any
+    db_schema?: string
+    conv_idx?: number
+    max_tokens?: number
+  }): Promise<{ job_id: string; slot: string; conversation_id: string }> {
+    return request('/pipeline/gen_conf', { method: 'POST', body: JSON.stringify(body) })
+  },
+
+  startGenSimPipeline(body: {
+    session_id: string
+    conversation_id?: string
+    requirements: any
+    db_schema?: string
+    conv_idx?: number
+    max_tokens?: number
+  }): Promise<{ job_id: string; slot: string; conversation_id: string }> {
+    return request('/pipeline/gen_sim', { method: 'POST', body: JSON.stringify(body) })
+  },
+
   // The interview slot: the broker posts the user's turn, reads the agent's
   // reply and asks for a correction while it is not the schema's JSON.
   startUiPipeline(body: {

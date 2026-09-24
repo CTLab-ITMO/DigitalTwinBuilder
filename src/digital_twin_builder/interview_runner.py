@@ -55,6 +55,12 @@ REQUIRED_KEYS = (
 # `des_horizon`. A field of the wrong kind is a defect, not a deviation.
 LIST_KEYS = ("processes", "sensors", "cameras")
 MAPPING_KEYS = ("line", "des_horizon", "units", "critical_parameters")
+# `equipment` is deliberately unconstrained. The schema shows it as a list, but
+# the recorded runs answer with a nested object, and no consumer reads it: every
+# prompt renders the whole requirements object as JSON and the agent is told to
+# treat the equipment as context only. Its kind is therefore not something a
+# reply can get wrong, and rejecting one spelling would only send a readable
+# reply back for a correction it does not need.
 
 
 def strip_think(text: str) -> str:
@@ -246,11 +252,6 @@ def check(reply: str) -> str | None:
         if not isinstance(requirements.get(key), dict):
             return (f"`requirements.{key}` is not an object, but the schema "
                     f"defines it as an object")
-    if requirements.get("equipment") is None:
-        return ("`requirements.equipment` is null. The equipment the interview "
-                "covered has to be listed (an empty list is allowed only if the "
-                "user named no equipment)")
-
     problem = _device_problem(requirements.get("sensors"), "sensors")
     if problem:
         return problem

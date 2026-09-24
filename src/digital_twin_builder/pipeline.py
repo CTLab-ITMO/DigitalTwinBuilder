@@ -1,4 +1,4 @@
-"""The DB, DES and interview slots as one generate -> validate -> repair pipeline.
+"""The DB, DES, interview and twin slots, driven from one place.
 
 The Streamlit app drove these slots itself: it built the first-turn prompt,
 submitted it to the agent, read the reply back, validated it with `sql_runner`,
@@ -17,6 +17,12 @@ or by the benchmark harness with its own client. Nothing here reads `config`
 either — the runners already default their attempts, timeouts and interpreter
 from it, and `submit` is the only thing that has to know how long a turn may
 take.
+
+The twin's two slots — the configuration and the PyChrono program — have no
+runner, because nothing in this repo validates either artifact. They still come
+through here: the engineered prompt is `prompts/`'s, and the turn is the
+broker's to wait on, which is what the client got wrong when it held the turn
+itself.
 
 The contract `submit(prompt, attempt) -> str | None` is the runners' own: it
 returns the agent's reply for one turn, or None when the turn produced no reply
@@ -42,6 +48,8 @@ __all__ = [
     "generate_db_schema",
     "generate_des_model",
     "generate_interview_result",
+    "generate_twin_config",
+    "generate_twin_simulation",
     "job_result",
 ]
 
@@ -170,14 +178,65 @@ def generate_interview_result(submit, user_message, *, attempts=None,
     )
 
 
+def _ask_once(submit, prompt, on_attempt=None) -> dict:
+    """Ask one turn's prompt and return the agent's reply, unread.
+
+    The twin configuration and the PyChrono simulation are the two slots with no
+    validator in this repo: nothing checks a configuration's shape and nothing
+    runs a simulation program, so there is no report to repair against and the
+    loop is a single turn. What the broker still has to own is the prompt — the
+    engineered `make_gen_conf` / `make_gen_sim` text lives in `prompts/` and the
+    client cannot build it — and the wait, which is the part the client got
+    wrong: a reply that runs to a whole document outlasts the client's own poll
+    budget, so the finished turn was dropped without a word.
+    """
+    turn = _with_first_prompt(submit, prompt)
+    reply = turn(None, 0)
+    outcome = {
+        "ok": reply is not None,
+        "reply": reply,
+        "replies": [reply] if reply is not None else [],
+        "repaired": 0,
+        "attempts": 0 if reply is None else 1,
+        "report": ("" if reply is not None else
+                   "The agent returned no answer for this turn (the task failed "
+                   "or did not complete in time), so there was nothing to read"),
+    }
+    if callable(on_attempt):
+        on_attempt(0, reply, outcome)
+    return outcome
+
+
+def generate_twin_config(submit, requirements, schema, *, on_attempt=None) -> dict:
+    """Produce the digital twin's configuration for a finished interview.
+
+    The first turn — the only turn — asks `make_gen_conf(requirements, schema)`.
+    Returns the agent's reply in the runners' outcome shape: the reply itself,
+    its attempt count, and a report when the turn produced no answer at all.
+    """
+    req = _prompt_requirements(requirements)
+    return _ask_once(submit, user_prompts.make_gen_conf(req, schema),
+                     on_attempt=on_attempt)
+
+
+def generate_twin_simulation(submit, requirements, schema, *, on_attempt=None) -> dict:
+    """Produce the PyChrono simulation program for the twin's configuration.
+
+    Same one-turn contract as `generate_twin_config`, asking `make_gen_sim`.
+    """
+    req = _prompt_requirements(requirements)
+    return _ask_once(submit, user_prompts.make_gen_sim(req, schema),
+                     on_attempt=on_attempt)
+
+
 def job_result(slot: str, outcome: dict) -> dict:
     """The runner's outcome as a JSON-serializable job result.
 
-    `artifact` is the thing the user is given — the schema or the program —
-    and is None exactly when the slot produced nothing at all. The per-stage
-    keys differ (a schema has a `summary`, a program has `kpis` and the status
-    of the run, an interview has the requirements or the question it read), so
-    they are named by slot rather than merged into one bag.
+    `artifact` is the thing the user is given — the schema, the program or the
+    configuration — and is None exactly when the slot produced nothing at all.
+    The per-stage keys differ (a schema has a `summary`, a program has `kpis`
+    and the status of the run, an interview has the requirements or the question
+    it read), so they are named by slot rather than merged into one bag.
     """
     outcome = outcome or {}
     ok = bool(outcome.get("ok"))
@@ -230,5 +289,18 @@ def job_result(slot: str, outcome: dict) -> dict:
             "kpis": outcome.get("kpis") or {},
             "status": status,
             "elapsed_s": execution.get("elapsed_s"),
+        }
+    if slot in ("gen_conf", "gen_sim"):
+        # Nothing validates either artifact, so the reply is handed back as it
+        # is: the client parses the configuration's JSON and strips the thinking
+        # block off the program, which is exactly what it did when it drove these
+        # two slots itself — the one thing it could not do was wait long enough.
+        return {
+            "slot": slot,
+            "ok": ok,
+            "artifact": outcome.get("reply"),
+            "attempts": attempts,
+            "repaired": repaired,
+            "report": report,
         }
     raise ValueError(f"unknown pipeline slot: {slot!r}")

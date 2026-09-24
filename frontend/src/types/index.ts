@@ -101,6 +101,22 @@ export interface DesPipelineResult {
 }
 
 /**
+ * The twin's two slots — the configuration and the PyChrono program. Neither
+ * artifact has a validator in the backend, so these slots are one turn and
+ * `artifact` is the agent's reply as it was written: the client reads the
+ * configuration's JSON and strips the thinking block off the program, as it
+ * always did. `report` is set only when the turn produced no reply at all.
+ */
+export interface TwinPipelineResult {
+  slot: 'gen_conf' | 'gen_sim'
+  ok: boolean
+  artifact: string | null
+  attempts: number
+  repaired: number
+  report: string
+}
+
+/**
  * The interview slot's verdict. `ok` says the agent's reply could be read as the
  * schema's JSON; `completed` says whether it was the finished `requirements` or
  * a question the agent asked instead — the latter is a valid answer, not a
@@ -121,13 +137,13 @@ export interface UiPipelineResult {
 
 export interface PipelineJob {
   id: string
-  slot: 'db' | 'des' | 'ui'
+  slot: 'db' | 'des' | 'ui' | 'gen_conf' | 'gen_sim'
   agent_id: number
   conv_idx: number
   conversation_id: string
   status: 'running' | 'completed' | 'failed'
   attempts: PipelineAttempt[]
-  result: DbPipelineResult | DesPipelineResult | UiPipelineResult | null
+  result: DbPipelineResult | DesPipelineResult | UiPipelineResult | TwinPipelineResult | null
   error: string | null
   created_at: string
   completed_at: string | null

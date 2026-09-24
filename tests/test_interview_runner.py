@@ -239,6 +239,21 @@ def test_check_accepts_a_null_defect_rate():
     assert interview_runner.check(reply) is None
 
 
+def test_check_accepts_a_null_equipment_field():
+    # `equipment` is the one field with no shape rule — no consumer reads it, so
+    # the schema's "nothing to report is null" applies to it like any other
+    # field. Rejecting it would send a readable reply back for a pointless
+    # correction.
+    assert interview_runner.check(mutated("equipment", None)) is None
+
+
+def test_check_accepts_equipment_as_a_nested_object():
+    # The shape the recorded runs actually returned, where the schema showed a
+    # list. Nothing downstream reads it, so it is not a defect.
+    equipment = {"кофемашина": {"boiler": {"power_working_kw": 1.4}}}
+    assert interview_runner.check(mutated("equipment", equipment)) is None
+
+
 # --------------------------------------------------------------------------- #
 # verify
 # --------------------------------------------------------------------------- #

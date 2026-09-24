@@ -403,6 +403,81 @@ def test_ui_keeps_a_question_without_repairing_it():
 
 
 # --------------------------------------------------------------------------- #
+# the twin's two slots
+# --------------------------------------------------------------------------- #
+CONF = '{"components": [{"id": "collector"}]}'
+CHRONO_PROGRAM = "import pychrono\nprint('ok')\n"
+
+
+def test_twin_conf_first_turn_is_make_gen_conf():
+    submit, calls = scripted(CONF)
+
+    outcome = pipeline.generate_twin_config(submit, REQ, SCHEMA)
+
+    assert calls[0]["prompt"] == user_prompts.make_gen_conf(REQ, SCHEMA)
+    assert calls[0]["attempt"] == 0
+    assert outcome["reply"] == CONF
+    assert outcome["ok"] is True
+    assert outcome["attempts"] == 1
+    assert outcome["repaired"] == 0
+    assert outcome["report"] == ""
+
+
+def test_twin_conf_asks_once():
+    # No validator exists for a configuration, so there is no report to repair
+    # against: the slot is one turn, however unreadable the reply looks.
+    submit, calls = scripted("не JSON вовсе")
+
+    outcome = pipeline.generate_twin_config(submit, REQ, SCHEMA)
+
+    assert len(calls) == 1
+    assert outcome["reply"] == "не JSON вовсе"
+    assert outcome["ok"] is True
+
+
+def test_twin_conf_decodes_a_requirements_string_for_the_prompt():
+    submit, calls = scripted(CONF)
+
+    pipeline.generate_twin_config(submit, json.dumps(REQ), SCHEMA)
+
+    assert calls[0]["prompt"] == user_prompts.make_gen_conf(REQ, SCHEMA)
+
+
+def test_twin_conf_reports_a_turn_that_produced_nothing():
+    submit, calls = scripted(None)
+
+    outcome = pipeline.generate_twin_config(submit, REQ, SCHEMA)
+
+    assert outcome["ok"] is False
+    assert outcome["reply"] is None
+    assert outcome["attempts"] == 0
+    assert "no answer" in outcome["report"]
+    assert len(calls) == 1
+
+
+def test_twin_conf_records_its_one_turn_for_the_progress_log():
+    submit, calls = scripted(CONF)
+    seen = []
+
+    pipeline.generate_twin_config(
+        submit, REQ, SCHEMA,
+        on_attempt=lambda i, artifact, verdict: seen.append(
+            (i, artifact, verdict["ok"])))
+
+    assert seen == [(0, CONF, True)]
+
+
+def test_twin_sim_first_turn_is_make_gen_sim():
+    submit, calls = scripted(CHRONO_PROGRAM)
+
+    outcome = pipeline.generate_twin_simulation(submit, REQ, SCHEMA)
+
+    assert calls[0]["prompt"] == user_prompts.make_gen_sim(REQ, SCHEMA)
+    assert outcome["reply"] == CHRONO_PROGRAM
+    assert outcome["ok"] is True
+
+
+# --------------------------------------------------------------------------- #
 # job_result
 # --------------------------------------------------------------------------- #
 def test_job_result_names_the_db_artifact_and_verdict():
@@ -485,6 +560,39 @@ def test_job_result_calls_an_unreadable_interview_no_reply():
     assert result["ok"] is False
     assert result["reply"] is None
     assert result["requirements"] is None
+
+
+def test_job_result_names_the_twin_configuration_artifact():
+    result = pipeline.job_result("gen_conf", {
+        "reply": CONF, "ok": True, "attempts": 1, "repaired": 0, "report": "",
+    })
+
+    assert result["slot"] == "gen_conf"
+    assert result["ok"] is True
+    assert result["artifact"] == CONF
+    assert result["attempts"] == 1
+    assert result["report"] == ""
+
+
+def test_job_result_names_the_twin_simulation_artifact():
+    result = pipeline.job_result("gen_sim", {
+        "reply": CHRONO_PROGRAM, "ok": True, "attempts": 1, "repaired": 0,
+        "report": "",
+    })
+
+    assert result["slot"] == "gen_sim"
+    assert result["artifact"] == CHRONO_PROGRAM
+
+
+def test_job_result_calls_a_twin_turn_with_no_reply_no_artifact():
+    result = pipeline.job_result("gen_conf", {
+        "reply": None, "ok": False, "attempts": 0, "repaired": 0,
+        "report": "The agent returned no answer for this turn",
+    })
+
+    assert result["ok"] is False
+    assert result["artifact"] is None
+    assert "no answer" in result["report"]
 
 
 def test_job_result_rejects_an_unknown_slot():

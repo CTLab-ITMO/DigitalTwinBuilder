@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useAppStore } from '../stores/app'
-import { api } from '../api/client'
 
 const store = useAppStore()
 const generatingConfig = ref(false)
@@ -11,19 +10,20 @@ const generatingDes = ref(false)
 const agentId = 2
 const desConvIdx = 2
 
+// Both twin slots go through the broker now: it seeds the conversation with the
+// agent's system prompt and builds the engineered `make_gen_conf` /
+// `make_gen_sim` text, then waits for the turn on this side's long poll. The
+// client's own ad-hoc prompt and 60-second give-up are gone.
 async function generateConfig() {
   if (!store.currentSessionId || !store.interviewResult) return
   generatingConfig.value = true
   try {
-    const existing = store.conversations.find(c => c.agent_id === agentId && c.conv_idx === 0)
-    let convId = existing?.id
+    const convId = await store.ensureConversation(agentId, 0)
     if (!convId) {
-      const data = await api.createConversation(store.currentSessionId, agentId, 0)
-      convId = data.conversation_id
+      store.error = 'Не удалось создать conversation — проверьте API'
+      return
     }
-
-    const prompt = `На основе этих требований и схемы БД создай конфигурацию цифрового двойника:\nТребования: ${JSON.stringify(store.interviewResult)}\nСхема БД: ${store.dbSchema}`
-    await store.sendMessage(agentId, 0, convId, prompt, { max_tokens: 3000 })
+    await store.generateTwinConfig(convId)
   } finally {
     generatingConfig.value = false
   }
@@ -33,15 +33,12 @@ async function generateSim() {
   if (!store.currentSessionId || !store.interviewResult) return
   generatingSim.value = true
   try {
-    const existing = store.conversations.find(c => c.agent_id === agentId && c.conv_idx === 1)
-    let convId = existing?.id
+    const convId = await store.ensureConversation(agentId, 1)
     if (!convId) {
-      const data = await api.createConversation(store.currentSessionId, agentId, 1)
-      convId = data.conversation_id
+      store.error = 'Не удалось создать conversation — проверьте API'
+      return
     }
-
-    const prompt = `На основе требований и конфигурации создай код симуляции PyChrono:\nТребования: ${JSON.stringify(store.interviewResult)}\nСхема БД: ${store.dbSchema}`
-    await store.sendMessage(agentId, 1, convId, prompt, { max_tokens: 4000 })
+    await store.generateTwinSim(convId)
   } finally {
     generatingSim.value = false
   }
@@ -107,6 +104,9 @@ function regenSim() {
         <button class="btn btn-primary" :disabled="generatingConfig" @click="generateConfig">
           {{ generatingConfig ? 'Generating...' : 'Сгенерировать конфигурацию' }}
         </button>
+        <p v-if="!generatingConfig && store.twinVerdict?.slot === 'gen_conf' && !store.twinVerdict.ok" class="verdict bad">
+          {{ store.twinVerdict.report || 'Агент не вернул ответ' }}
+        </p>
       </div>
 
       <div v-if="store.twinConfig" class="card">
@@ -123,6 +123,9 @@ function regenSim() {
           <button class="btn btn-primary" :disabled="generatingSim" @click="generateSim">
             {{ generatingSim ? 'Generating...' : 'Сгенерировать код' }}
           </button>
+          <p v-if="!generatingSim && store.twinVerdict?.slot === 'gen_sim' && !store.twinVerdict.ok" class="verdict bad">
+            {{ store.twinVerdict.report || 'Агент не вернул ответ' }}
+          </p>
         </div>
         <div v-if="store.simulationCode">
           <details open>

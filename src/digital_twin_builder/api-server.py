@@ -234,6 +234,26 @@ class PipelineDesRequest(BaseModel):
     max_tokens: int = config.DES_MAX_TOKENS
     attempts: Optional[int] = None
 
+class PipelineGenConfRequest(BaseModel):
+    """Start the twin-configuration slot. `db_schema` is the schema the DB slot
+    produced; the broker builds the engineered prompt from both it and the
+    interview result, so the client never types the prompt out."""
+    session_id: Optional[str] = None
+    conversation_id: Optional[str] = None
+    requirements: Any = None
+    db_schema: str = ""
+    conv_idx: int = 0
+    max_tokens: int = 3000
+
+class PipelineGenSimRequest(BaseModel):
+    """Start the PyChrono-simulation slot, the configuration slot's next step."""
+    session_id: Optional[str] = None
+    conversation_id: Optional[str] = None
+    requirements: Any = None
+    db_schema: str = ""
+    conv_idx: int = 1
+    max_tokens: int = 3000
+
 class PipelineUiRequest(BaseModel):
     """Answer one interview turn. `message` is the user's turn: the broker posts
     it, submits the task, reads the reply as the schema's JSON, and asks for a
@@ -693,17 +713,29 @@ _pipeline_tasks: set = set()
 
 
 def _resolve_agent_id(slot: str) -> int:
-    """The agent a slot talks to: agent 0 for the interview, 1 for SQL, 2 for DES."""
+    """The agent a slot talks to.
+
+    The interview is agent 0 and SQL is agent 1; the DES model and the twin's
+    configuration and simulation all come from the digital-twin agent.
+    """
     if slot == "ui":
         return config.UI_AGENT_INDEX
-    return config.DB_AGENT_INDEX if slot == "db" else config.DT_AGENT_INDEX
+    if slot == "db":
+        return config.DB_AGENT_INDEX
+    return config.DT_AGENT_INDEX
 
 
 def _resolve_seed_prompt(slot: str) -> str:
     """The system prompt the conversation must open with for the slot's agent."""
     if slot == "ui":
         return system_prompts.UI
-    return system_prompts.DB if slot == "db" else system_prompts.GenDES
+    if slot == "db":
+        return system_prompts.DB
+    if slot == "gen_conf":
+        return system_prompts.GenConf
+    if slot == "gen_sim":
+        return system_prompts.GenSim
+    return system_prompts.GenDES
 
 
 async def _prepare_pipeline_conversation(session_id, conversation_id, agent_id,
@@ -975,6 +1007,32 @@ async def start_des_pipeline(req: PipelineDesRequest):
     return await _safe_start(slot="des", req=req, work=work)
 
 
+@app.post("/pipeline/gen_conf")
+async def start_gen_conf_pipeline(req: PipelineGenConfRequest):
+    """Generate the digital twin's configuration for a finished interview.
+
+    Same job/poll contract as the other slots, and one turn: nothing in this
+    repo validates a configuration, so there is no report to repair against.
+    The broker owns the turn all the same, for two reasons — the engineered
+    `make_gen_conf` prompt lives in `prompts/`, and a reply this long outlasts a
+    client's own poll budget, which is how the finished turn used to be lost.
+    """
+    work = (lambda submit, on_attempt: pipeline.generate_twin_config(
+        submit, req.requirements, req.db_schema, on_attempt=on_attempt))
+    return await _safe_start(slot="gen_conf", req=req, work=work)
+
+
+@app.post("/pipeline/gen_sim")
+async def start_gen_sim_pipeline(req: PipelineGenSimRequest):
+    """Generate the PyChrono simulation program for the twin's configuration.
+
+    Same one-turn contract as the configuration slot.
+    """
+    work = (lambda submit, on_attempt: pipeline.generate_twin_simulation(
+        submit, req.requirements, req.db_schema, on_attempt=on_attempt))
+    return await _safe_start(slot="gen_sim", req=req, work=work)
+
+
 @app.post("/pipeline/ui")
 async def start_ui_pipeline(req: PipelineUiRequest):
     """Answer one interview turn, reading and repairing the agent's reply.
@@ -1131,6 +1189,8 @@ async def root():
             "get_queue": "GET /queue/{agent_id}",
             "start_db_pipeline": "POST /pipeline/db",
             "start_des_pipeline": "POST /pipeline/des",
+            "start_gen_conf_pipeline": "POST /pipeline/gen_conf",
+            "start_gen_sim_pipeline": "POST /pipeline/gen_sim",
             "start_ui_pipeline": "POST /pipeline/ui",
             "get_pipeline_job": "GET /pipeline/jobs/{job_id}",
             "get_pipeline_prompts": "GET /pipeline/prompts",

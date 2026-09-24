@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { api } from '../api/client'
-import type { Session, Conversation, Message, AgentStatus, QueueStatus, PipelineJob, PipelinePrompts, DbPipelineResult, DesPipelineResult, UiPipelineResult } from '../types'
+import type { Session, Conversation, Message, AgentStatus, QueueStatus, PipelineJob, PipelinePrompts, DbPipelineResult, DesPipelineResult, UiPipelineResult, TwinPipelineResult } from '../types'
 
 const UI_AGENT = 0
 const DB_AGENT = 1
@@ -42,6 +42,13 @@ export const useAppStore = defineStore('app', () => {
   const uiVerdict = ref<UiPipelineResult | null>(null)
   const uiRunning = ref(false)
 
+  // The twin's two slots report their verdict here rather than in `uiVerdict` or
+  // `desVerdict`, so the DES card's KPI panel is not overwritten by a
+  // configuration turn. There is no per-attempt log to keep: neither slot has a
+  // validator, so a run is one turn and the only thing worth showing is whether
+  // that turn produced a reply.
+  const twinVerdict = ref<TwinPipelineResult | null>(null)
+
   // Loading states
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -77,6 +84,7 @@ export const useAppStore = defineStore('app', () => {
       desVerdict.value = null
       uiJob.value = null
       uiVerdict.value = null
+      twinVerdict.value = null
       await loadSessions()
       // Seed the interview slot now rather than on the first send: the greeting
       // is the conversation's opening assistant turn, so a new chat has to show
@@ -99,13 +107,31 @@ export const useAppStore = defineStore('app', () => {
       // them; another session's report must not be shown over this one.
       uiJob.value = null
       uiVerdict.value = null
-      // `messages` is the interview transcript, so load that slot specifically
-      // instead of whichever conversation comes first. A session that has no
-      // interview conversation yet gets one here, greeting and all.
-      const interview = data.conversations.find(c => c.agent_id === UI_AGENT && c.conv_idx === 0)
-      if (interview) {
-        await loadConversation(interview.id)
-      } else {
+      twinVerdict.value = null
+      // Every artifact is re-read from the conversations below, so drop them
+      // first: a session that has no DB or twin conversation yet must not keep
+      // showing the previous session's schema, configuration and models.
+      interviewResult.value = null
+      dbSchema.value = null
+      twinConfig.value = null
+      simulationCode.value = null
+      dbVerdict.value = null
+      desCode.value = null
+      desVerdict.value = null
+      messages.value = []
+      // Replay every slot's conversation. The agents post their own replies
+      // there (`BaseAgent.add_to_conversation`), so the last assistant turn of a
+      // slot's conversation *is* that slot's artifact — which is what makes a
+      // reload able to bring back the DB schema and the twin, not just the
+      // interview. `messages` is the interview transcript alone, so it is the
+      // one slot that is also loaded into the chat pane.
+      for (const conv of data.conversations) {
+        const loaded = await fetchConversation(conv.id, conv.agent_id, conv.conv_idx)
+        if (conv.agent_id === UI_AGENT && conv.conv_idx === 0) messages.value = loaded
+      }
+      // A session that has no interview conversation yet gets one here,
+      // greeting and all.
+      if (!data.conversations.some(c => c.agent_id === UI_AGENT && c.conv_idx === 0)) {
         await ensureConversation(UI_AGENT, 0)
       }
     } catch (e: any) {
@@ -151,6 +177,7 @@ export const useAppStore = defineStore('app', () => {
         desVerdict.value = null
         uiJob.value = null
         uiVerdict.value = null
+        twinVerdict.value = null
       }
       return true
     } catch (e: any) {
@@ -159,60 +186,30 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  /**
+   * Fetch a conversation and hand each assistant turn to the processor for the
+   * slot it belongs to.
+   *
+   * A conversation's `agent_id`/`conv_idx` is what says which artifact a reply
+   * is: the interview transcript, the DB schema, the twin configuration, the
+   * PyChrono code or the DES model. Passing that pair through — instead of the
+   * interview's `0, 0` for every conversation, as this used to — is what lets a
+   * reload restore the DB tab and the twin, not just the chat.
+   */
+  async function fetchConversation(conversationId: string, agentId: number, convIdx: number): Promise<Message[]> {
+    const data = await api.getConversation(conversationId)
+    for (const msg of data.messages) {
+      if (msg.role === 'assistant') processResult(msg.content, agentId, convIdx)
+    }
+    return data.messages
+  }
+
+  /** Reload the interview slot: its transcript, and the requirements in it. */
   async function loadConversation(conversationId: string) {
     try {
-      const data = await api.getConversation(conversationId)
-      messages.value = data.messages
-
-      // Process assistant messages for structured data
-      for (const msg of data.messages) {
-        if (msg.role === 'assistant') {
-          processResult(msg.content, 0, 0) // simplified
-        }
-      }
+      messages.value = await fetchConversation(conversationId, UI_AGENT, 0)
     } catch (e: any) {
       error.value = e.message
-    }
-  }
-
-  /**
-   * Post a message to a slot that has no server-side loop — the DT agent's
-   * GenConf and GenSim conversations. The interview slot no longer uses this:
-   * it goes through `sendInterviewMessage`, whose validation and repair run in
-   * the broker.
-   */
-  async function sendMessage(agentId: number, convIdx: number, conversationId: string, content: string, params: Record<string, any> = {}) {
-    try {
-      await api.addMessage(conversationId, 'user', content)
-
-      const task = await api.submitTask(agentId, conversationId, params)
-
-      // Start polling
-      await pollTask(task.task_id, agentId, convIdx)
-    } catch (e: any) {
-      error.value = e.message
-    }
-  }
-
-  async function pollTask(taskId: string, agentId: number, convIdx: number) {
-    for (let i = 0; i < 60; i++) {
-      await new Promise(r => setTimeout(r, 1000))
-      try {
-        const status = await api.getTaskStatus(taskId)
-        if (status.status === 'completed' || status.status === 'failed') {
-          if (status.result) {
-            processResult(status.result, agentId, convIdx)
-          }
-          // Reload messages
-          if (status.conversation_id) {
-            const data = await api.getConversation(status.conversation_id)
-            messages.value = data.messages
-          }
-          return
-        }
-      } catch {
-        // retry
-      }
     }
   }
 
@@ -271,6 +268,21 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  /**
+   * Drop a markdown fence the agent added despite being asked not to — the
+   * mirror of `sql_runner.strip_code_fence` / `des_runner.strip_code_fence`.
+   *
+   * The broker hands the schema and the DES program over already unwrapped, but
+   * the *stored* reply the agents post is raw, so a reload would otherwise bring
+   * the schema back wearing ```sql fences and the DES code back wearing
+   * ```python ones. Unwraps only when a fenced block is present, so text that
+   * legitimately has no fence is untouched.
+   */
+  function stripCodeFence(text: string): string {
+    const m = /```[A-Za-z0-9_+-]*[ \t]*\r?\n([\s\S]*?)```/.exec(text || '')
+    return m ? m[1].replace(/^\n+|\n+$/g, '') : (text || '')
+  }
+
   function processResult(result: string, agentId: number, convIdx: number) {
     if (agentId === 0) {
       // UI/Interview agent — extract JSON
@@ -288,8 +300,10 @@ export const useAppStore = defineStore('app', () => {
           'Ответ агента не удалось разобрать как JSON — попросите его повторить или исправить ответ.'
       }
     } else if (agentId === 1) {
-      // DB agent
-      dbSchema.value = result
+      // DB agent — the broker unwraps the fence before handing the schema over,
+      // so the stored reply has to be unwrapped here too or a reload would show
+      // the schema fenced.
+      dbSchema.value = stripCodeFence(result)
     } else if (agentId === 2) {
       if (convIdx === 0) {
         // Config
@@ -304,8 +318,9 @@ export const useAppStore = defineStore('app', () => {
         simulationCode.value = start !== -1 ? result.substring(start + 8) : result
       } else if (convIdx === DES_CONV_IDX) {
         // SimPy model — the client only sees this when replaying a conversation
-        // it did not run itself; a live run takes the artifact from the job.
-        desCode.value = result
+        // it did not run itself; a live run takes the artifact from the job,
+        // which `des_runner` already unfenced.
+        desCode.value = stripCodeFence(result)
       }
     }
   }
@@ -446,6 +461,82 @@ export const useAppStore = defineStore('app', () => {
   }
 
   /**
+   * Run one of the twin's two slots through the broker.
+   *
+   * Neither artifact has a validator, so the broker asks once and hands the
+   * reply back unread — what it owns is the engineered prompt (which the client
+   * cannot build) and the wait. That wait is the bug this replaces: the client
+   * used to submit the task itself and give up after 60 seconds, so a
+   * configuration turn, which routinely outlasts that, came back to nothing —
+   * the button reset and the reply was left unread in the task row.
+   */
+  async function generateTwin(
+    slot: 'gen_conf' | 'gen_sim',
+    conversationId: string,
+  ): Promise<TwinPipelineResult | null> {
+    if (!currentSessionId.value) return null
+    error.value = null
+    // Drop the previous run's verdict: a retry must not show the old failure.
+    twinVerdict.value = null
+    try {
+      const body = {
+        session_id: currentSessionId.value,
+        conversation_id: conversationId,
+        requirements: interviewResult.value,
+        db_schema: dbSchema.value || '',
+      }
+      const started = slot === 'gen_conf'
+        ? await api.startGenConfPipeline({ ...body, conv_idx: 0 })
+        : await api.startGenSimPipeline({ ...body, conv_idx: 1 })
+      // Nothing to publish while a one-turn ask runs — the whole turn lands at
+      // once — so only the finished job is read.
+      const job = await waitForJob(started.job_id, () => {})
+      if (!job) {
+        error.value = 'Превышено время ожидания ответа агента'
+        return null
+      }
+      if (job.status === 'failed') {
+        error.value = job.error || 'Ошибка генерации'
+        return null
+      }
+
+      const result = job.result as TwinPipelineResult | null
+      if (!result) return null
+      twinVerdict.value = result
+      if (!result.ok || !result.artifact) {
+        // The turn produced no reply at all — say so rather than leaving the
+        // button silently reset with nothing on screen.
+        error.value = result.report || 'Агент не вернул ответ'
+        return result
+      }
+      // The broker hands the reply back as it was written; reading it is still
+      // this side's job, exactly as it was before.
+      if (slot === 'gen_conf') {
+        const parsed = parseJsonObject(result.artifact)
+        if (parsed) twinConfig.value = parsed
+        else error.value = 'Ответ агента не удалось разобрать как JSON — попросите его повторить.'
+      } else {
+        const start = result.artifact.lastIndexOf('</think>')
+        simulationCode.value = start !== -1 ? result.artifact.substring(start + 8) : result.artifact
+      }
+      return result
+    } catch (e: any) {
+      error.value = e.message
+      return null
+    }
+  }
+
+  /** Run the twin-configuration slot. */
+  async function generateTwinConfig(conversationId: string): Promise<TwinPipelineResult | null> {
+    return generateTwin('gen_conf', conversationId)
+  }
+
+  /** Run the twin's PyChrono-program slot. */
+  async function generateTwinSim(conversationId: string): Promise<TwinPipelineResult | null> {
+    return generateTwin('gen_sim', conversationId)
+  }
+
+  /**
    * Answer one interview turn through the broker's validate→repair loop.
    *
    * The broker posts the user's message itself (so the stored conversation is
@@ -528,14 +619,16 @@ export const useAppStore = defineStore('app', () => {
     interviewResult, dbSchema, twinConfig, simulationCode,
     prompts, pipelineJob, dbVerdict, desCode, desVerdict,
     uiJob, uiVerdict, uiRunning,
+    twinVerdict,
     loading, error,
     // Getters
     currentSession,
     // Actions
     loadSessions, createSession, loadSession, loadConversation,
     renameSession, deleteSession,
-    sendMessage, pollTask, loadAgentStatuses,
+    loadAgentStatuses,
     loadPrompts, ensureConversation, pollJob, generateDbSchema, generateDesModel,
+    generateTwinConfig, generateTwinSim,
     sendInterviewMessage,
   }
 })
