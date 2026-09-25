@@ -166,7 +166,10 @@ function regenSim() {
           <button class="btn btn-primary" :disabled="store.anomalyBusy" @click="prepareAnomaly">
             {{ store.anomalyBusy ? t('common.generating') : t('twin.anomalyPrepare') }}
           </button>
-          <p v-if="store.anomalyError" class="verdict bad">{{ t('error.anomalyConfig') }}</p>
+          <p v-if="store.anomalyError" class="verdict bad">
+            {{ t('error.anomalyConfig') }}
+            <span class="error-detail">{{ store.anomalyError }}</span>
+          </p>
         </div>
 
         <template v-if="store.anomalyConfig">
@@ -354,6 +357,17 @@ details summary {
 .verdict { font-size: 13px; margin-top: 8px; }
 .verdict.ok { color: var(--green); }
 .verdict.bad { color: var(--red); }
+
+/* The store keeps the API's own `"<status>: <detail>"`, and the sentence above
+   cannot tell a 404 (wrong API) from a 400 (an interview with no devices) —
+   showing it is what makes the failure actionable instead of a dead end. */
+.error-detail {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
 
 .kpis {
   display: flex;
