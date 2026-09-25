@@ -10,6 +10,7 @@ import asyncpg
 import os
 from contextlib import asynccontextmanager
 
+import anomaly_config
 import config
 import pipeline
 from prompts import system as system_prompts
@@ -129,6 +130,20 @@ async def init_db_pool():
                     error TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     completed_at TIMESTAMP
+                )
+            ''')
+
+            # The anomaly stack's config.json, one row per session. The user's
+            # machine pulls it when it starts the stack, so it has to outlive
+            # the request that built it. Unlike the tables above this one
+            # cascades: a config is meaningless without its session, and the
+            # delete is a plain "the session is gone" rather than a cleanup the
+            # delete endpoint has to remember.
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS anomaly_configs (
+                    session_id UUID PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+                    config JSONB NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
 
@@ -264,6 +279,16 @@ class PipelineUiRequest(BaseModel):
     conv_idx: int = 0
     max_tokens: int = config.UI_MAX_TOKENS
     attempts: Optional[int] = None
+
+class AnomalyConfigRequest(BaseModel):
+    """Build the anomaly stack's config for a session.
+
+    `requirements` is the interview result, the same object (or JSON text) the
+    pipeline slots take. There is no `zone_name`: the session's own title is the
+    zone, so the Grafana dashboard is named after the row the user picked.
+    """
+    session_id: str
+    requirements: Any = None
 
 
 @app.post("/sessions")
@@ -1102,6 +1127,80 @@ async def get_pipeline_prompts():
     }
 
 
+@app.post("/anomaly/config")
+async def save_anomaly_config(req: AnomalyConfigRequest):
+    """Turn the interview result into the anomaly stack's config and store it.
+
+    The stack runs on the user's own hardware, next to their sensors and
+    cameras, and pulls this back by itself — so the config has to be here rather
+    than only in the browser that built it. It is stored under the session id
+    the command carries, and the session's title becomes the zone name so the
+    dashboard reads as the session it belongs to.
+
+    A requirements document that names no device is a 400, not an empty config:
+    the detector exits on a config with no zones, and the user would read that
+    as the stack being broken rather than the interview being incomplete.
+    """
+    session_id = _session_id_or_404(req.session_id)
+    try:
+        async with (await get_db_connection()).acquire() as conn:
+            title = await conn.fetchval(
+                "SELECT title FROM sessions WHERE id = $1", session_id
+            )
+            if title is None:
+                raise HTTPException(status_code=404, detail="Session not found")
+
+            config_json = anomaly_config.build_anomaly_config(
+                req.requirements, zone_name=title
+            )
+            if not config_json:
+                raise HTTPException(
+                    status_code=400,
+                    detail="The requirements name no sensors or cameras to detect on",
+                )
+
+            await conn.execute("""
+                INSERT INTO anomaly_configs (session_id, config)
+                VALUES ($1, $2::jsonb)
+                ON CONFLICT (session_id) DO UPDATE
+                SET config = EXCLUDED.config, updated_at = CURRENT_TIMESTAMP
+            """, session_id, json.dumps(config_json, ensure_ascii=False))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+    return {"session_id": session_id, "config": config_json}
+
+
+@app.get("/anomaly/config/{session_id}")
+async def get_anomaly_config(session_id: str):
+    """The stored config, exactly as the user's stack downloads it.
+
+    This is the URL the `config-sync` sidecar curls before the detector starts;
+    the response is the file, so a JSON object with no envelope around it.
+    """
+    session_id = _session_id_or_404(session_id)
+    try:
+        async with (await get_db_connection()).acquire() as conn:
+            raw = await conn.fetchval(
+                "SELECT config FROM anomaly_configs WHERE session_id = $1", session_id
+            )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+    if raw is None:
+        raise HTTPException(status_code=404, detail="No anomaly config for this session")
+
+    # asyncpg hands jsonb back as text; the client wants the object.
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            raise HTTPException(status_code=500, detail="Stored config is not JSON")
+    return raw
+
+
 @app.get("/agents/{agent_id}/status")
 async def get_agent_status(agent_id: int):
     """Get current agent status"""
@@ -1194,6 +1293,8 @@ async def root():
             "start_ui_pipeline": "POST /pipeline/ui",
             "get_pipeline_job": "GET /pipeline/jobs/{job_id}",
             "get_pipeline_prompts": "GET /pipeline/prompts",
+            "save_anomaly_config": "POST /anomaly/config",
+            "get_anomaly_config": "GET /anomaly/config/{session_id}",
             "health": "GET /health"
         }
     }

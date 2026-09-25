@@ -164,3 +164,42 @@ export interface HealthStatus {
   pool: string
   timestamp: string
 }
+
+/**
+ * The anomaly stack's `config.json`, as `anomaly_config.build_anomaly_config`
+ * builds it: one zone per session — keyed by a slug of the session title —
+ * holding the interview's sensors and cameras. The addressing is exactly what
+ * the interview collected, and stays absent when the user never named it; the
+ * builder never invents a value, so the detector simply skips what is not there.
+ */
+export interface AnomalySensor {
+  id: string
+  protocol: 'modbus'
+  sensor_type?: string
+  unit?: string
+  ip?: string
+  port?: number
+  unit_id?: number
+  register?: number
+  data_type?: string
+}
+
+export interface AnomalyCamera {
+  id: string
+  protocol: 'rtsp'
+  category?: string
+  ip?: string
+  port?: number
+  stream_path?: string
+  /** Assembled by the builder, and only when an ip was named. */
+  rtsp_url?: string
+}
+
+export interface AnomalyZone {
+  description: string
+  sensors: AnomalySensor[]
+  cameras: AnomalyCamera[]
+}
+
+/** The file the stack downloads is a bare zone-keyed object — no envelope. */
+export type AnomalyConfig = Record<string, AnomalyZone>

@@ -106,6 +106,59 @@ services:
       - API_UPSTREAM=${API_UPSTREAM:-http://dt-api:8000/}
 
   # --- Anomaly detection stack (merged from ITMO/anomaly-detection) ---
+  #
+  # This stack runs on the user's machine, not on the server: the Modbus
+  # sensors and RTSP cameras it reads are on their network, and the config it
+  # needs is the session they generated here. The Digital Twin tab prints the
+  # command, which carries DTB_API_URL and DTB_SESSION_ID; config-sync downloads
+  # that session's config.json before anything reads it, so the user never edits
+  # a config file.
+  #
+  # Both variables are required, but the check lives in the container's shell
+  # rather than in a `${VAR:?}` here: compose interpolates the whole file before
+  # it applies a profile, so a required variable in this service aborts every
+  # other command too — `docker compose up -d` for the main app stopped working
+  # without the two exports. The `:?` below still fails loudly, at startup,
+  # before the detector can poll devices nobody configured.
+  config-sync:
+    image: curlimages/curl:8.11.1
+    profiles: ["anomaly"]
+    logging: *default-logging
+    # The curl image runs as an unprivileged `curl_user`, and a fresh named
+    # volume is root-owned, so without this curl fails to write the file it
+    # just downloaded (curl error 23).
+    user: "0:0"
+    environment:
+      DTB_API_URL: ${DTB_API_URL:-}
+      DTB_SESSION_ID: ${DTB_SESSION_ID:-}
+    volumes:
+      - anomaly_config:/app/config
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        : "$${DTB_API_URL:?run the command from the Digital Twin tab, or export DTB_API_URL}"
+        : "$${DTB_SESSION_ID:?run the command from the Digital Twin tab, or export DTB_SESSION_ID}"
+        url="$${DTB_API_URL%/}/anomaly/config/$$DTB_SESSION_ID"
+        echo "Fetching $${url}"
+        # The API is remote, so a stack brought up before the network (or the
+        # broker itself) is reachable must wait rather than fail the whole
+        # profile. Five minutes, then give up loudly.
+        i=1
+        while [ "$$i" -le 150 ]; do
+          if curl -fsS "$${url}" -o /app/config/config.json; then
+            echo "Wrote /app/config/config.json"
+            exit 0
+          fi
+          if [ "$$((i % 15))" -eq 1 ]; then
+            echo "Not ready yet (attempt $${i}/150)"
+          fi
+          i=$$((i + 1))
+          sleep 2
+        done
+        echo "Could not fetch the session config from $${url} after 150 attempts" >&2
+        exit 1
+
   anomaly-postgres:
     image: postgres:16
     profiles: ["anomaly"]
@@ -137,13 +190,25 @@ services:
       DATABASE_URL: postgresql+asyncpg://anomalydb:anomalydb@anomaly-postgres:5432/anomaly_db
       PYTHONUNBUFFERED: "1"
       GRAFANA_URL: http://grafana:3000
-      GRAFANA_USER: admin
-      GRAFANA_PASSWORD: admin
+      GRAFANA_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GRAFANA_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      # Where the *browser* running Grafana reaches this API. The dashboard's
+      # Train/toggle/status buttons are plain fetch calls from the page, so they
+      # need the published port (8001) rather than the in-network 8000 that this
+      # container itself listens on.
+      ANOMALY_API_PUBLIC_URL: ${ANOMALY_API_PUBLIC_URL:-http://localhost:8001}
     depends_on:
       anomaly-postgres:
         condition: service_healthy
+      config-sync:
+        condition: service_completed_successfully
+      # The startup config load creates the session's zone and provisions its
+      # Grafana dashboard, so Grafana has to be answering before this starts;
+      # otherwise the dashboard call fails and the load is abandoned.
+      grafana:
+        condition: service_healthy
     volumes:
-      - ./anomaly/config:/app/config
+      - anomaly_config:/app/config
       - anomaly_frames:/anomaly_frames
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
@@ -160,10 +225,9 @@ services:
     ports:
       - "3000:3000"
     environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
       GF_INSTALL_PLUGINS: ""
-      GF_ALERTING_ENABLED: "true"
       GF_SMTP_ENABLED: "false"
     volumes:
       - grafana_data:/var/lib/grafana
@@ -172,7 +236,20 @@ services:
       - ./anomaly/grafana/grafana.ini:/etc/grafana/grafana.ini
     depends_on:
       - anomaly-postgres
+    # anomaly-api gates on this being healthy (its startup config load talks to
+    # Grafana), so `/api/health` answering means provisioning has run too.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:3000/api/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
+  # The detector reads the user's devices, so it runs wherever they are. There
+  # is no GPU reservation here: the base file is the CPU path (the camera model
+  # already falls back to cpu), and `docker-compose.gpu.yml` adds the nvidia
+  # reservation for a machine that has one. The Modbus/RTSP capture loops write
+  # camera frames into the camera volume themselves, so it is read-write.
   anomaly-detector:
     build:
       context: ./anomaly
@@ -180,33 +257,50 @@ services:
     profiles: ["anomaly"]
     restart: unless-stopped
     logging: *default-logging
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ["all"]
-              capabilities: [gpu]
     environment:
       DATABASE_URL: postgresql://anomalydb:anomalydb@anomaly-postgres:5432/anomaly_db
       GRAFANA_URL: http://grafana:3000
-      GRAFANA_USER: admin
-      GRAFANA_PASSWORD: admin
-      FRAME_DIR: /tmp/mvtec_frames
+      GRAFANA_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GRAFANA_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      # Where the RTSP capture loop writes the user's camera frames and CKAAD
+      # reads them. `camera_frames` is raw capture; `anomaly_frames` holds the
+      # snapshots and heatmaps the alert panels link to.
+      FRAME_DIR: /tmp/anomaly_frames
+      # The alert rows the detector writes link to anomaly frames by absolute
+      # URL, and the panel that renders them is a browser on the user's machine
+      # — so the link has to name the published port, not this network's.
+      ANOMALY_API_PUBLIC_URL: ${ANOMALY_API_PUBLIC_URL:-http://localhost:8001}
       SENSOR_DETECT_INTERVAL: "30"
       CAMERA_DETECT_INTERVAL: "15"
       FUSION_INTERVAL: "30"
+      # How often the RTSP loop grabs a frame, and how old a frame may be before
+      # it is treated as a dead stream and scored no more (default: 3 captures).
+      CAMERA_CAPTURE_INTERVAL_S: "15"
+      # One alert per episode, not one per detection interval: a score that
+      # stays over the threshold does not re-alert until the cooldown elapses,
+      # and a cleared condition alerts at once next time.
+      SENSOR_ALERT_COOLDOWN_S: "300"
+      CAMERA_ALERT_COOLDOWN_S: "300"
+      FUSION_ALERT_COOLDOWN_S: "300"
+      # A camera's fused score decays by this factor each pass, so one spike
+      # does not keep the camera "anomalous" forever.
+      CAMERA_ROLLING_MAX_DECAY: "0.5"
+      MODBUS_POLL_INTERVAL_S: "5"
+      MODBUS_BACKOFF_BASE_S: "5"
+      MODBUS_BACKOFF_MAX_S: "300"
       PYTHONUNBUFFERED: "1"
       PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
     volumes:
-      - ./anomaly/config:/app/config
-      - camera_frames:/tmp/mvtec_frames:ro
+      - anomaly_config:/app/config
+      - camera_frames:/tmp/anomaly_frames
       - anomaly_frames:/anomaly_frames
     depends_on:
       anomaly-postgres:
         condition: service_healthy
       anomaly-api:
         condition: service_started
+      config-sync:
+        condition: service_completed_successfully
 
 volumes:
   postgres-data:
@@ -214,4 +308,5 @@ volumes:
   grafana_data:
   camera_frames:
   anomaly_frames:
+  anomaly_config:
   # python-bindings:

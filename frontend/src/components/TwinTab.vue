@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useAppStore } from '../stores/app'
+import { apiBaseUrl } from '../api/client'
 import { t } from '../i18n'
 
 const store = useAppStore()
@@ -10,6 +11,45 @@ const generatingDes = ref(false)
 
 const agentId = 2
 const desConvIdx = 2
+
+// Anomaly detection: the stack is started by hand on the user's machine, so
+// this card's job is to hand over one runnable command. The GPU overlay is a
+// second compose file, which means the `up` *and* the `down` have to carry the
+// same `-f` flags — a `down` that names only the base file would not tear down
+// what the overlay started.
+const anomalyMode = ref<'cpu' | 'gpu'>('cpu')
+const anomalyCopied = ref(false)
+
+const composeFiles = computed(() =>
+  anomalyMode.value === 'gpu' ? ' -f docker-compose.yml -f docker-compose.gpu.yml' : ''
+)
+
+const anomalyCommand = computed(() =>
+  `DTB_API_URL=${apiBaseUrl()} DTB_SESSION_ID=${store.currentSessionId} ` +
+  `docker compose${composeFiles.value} --profile anomaly up -d --build`
+)
+
+const anomalyStopCommand = computed(
+  () => `docker compose${composeFiles.value} --profile anomaly down`
+)
+
+async function prepareAnomaly() {
+  await store.prepareAnomaly()
+}
+
+async function copyCommand() {
+  try {
+    await navigator.clipboard.writeText(anomalyCommand.value)
+    anomalyCopied.value = true
+    // Transient: the button goes back to its label on its own, so a second copy
+    // reads as an action rather than as a state that never changes.
+    window.setTimeout(() => { anomalyCopied.value = false }, 2000)
+  } catch {
+    // The clipboard API needs a secure context; say so rather than let the
+    // button look like it worked.
+    store.error = t('error.anomalyCopy')
+  }
+}
 
 // Both twin slots go through the broker now: it seeds the conversation with the
 // agent's system prompt and builds the engineered `make_gen_conf` /
@@ -116,6 +156,61 @@ function regenSim() {
           <summary>{{ t('twin.viewConfig') }}</summary>
           <pre class="code-block"><code>{{ JSON.stringify(store.twinConfig, null, 2) }}</code></pre>
         </details>
+      </div>
+
+      <div v-if="store.twinConfig" class="card">
+        <h3>{{ t('twin.anomalyHeading') }}</h3>
+        <p class="hint">{{ t('twin.anomalyHint') }}</p>
+
+        <div v-if="!store.anomalyConfig" style="margin-top:8px">
+          <button class="btn btn-primary" :disabled="store.anomalyBusy" @click="prepareAnomaly">
+            {{ store.anomalyBusy ? t('common.generating') : t('twin.anomalyPrepare') }}
+          </button>
+          <p v-if="store.anomalyError" class="verdict bad">{{ t('error.anomalyConfig') }}</p>
+        </div>
+
+        <template v-if="store.anomalyConfig">
+          <details>
+            <summary>{{ t('twin.anomalyViewConfig') }}</summary>
+            <pre class="code-block"><code>{{ JSON.stringify(store.anomalyConfig, null, 2) }}</code></pre>
+          </details>
+
+          <div class="anomaly-mode">
+            <label>
+              <input v-model="anomalyMode" type="radio" value="cpu" />
+              {{ t('twin.anomalyCpu') }}
+            </label>
+            <label>
+              <input v-model="anomalyMode" type="radio" value="gpu" />
+              {{ t('twin.anomalyGpu') }}
+            </label>
+          </div>
+
+          <p class="hint">{{ t('twin.anomalyCommand') }}</p>
+          <div class="command">
+            <pre class="code-block"><code>{{ anomalyCommand }}</code></pre>
+            <button class="btn btn-secondary" @click="copyCommand">
+              {{ anomalyCopied ? t('twin.anomalyCopied') : t('twin.anomalyCopy') }}
+            </button>
+          </div>
+
+          <h4 class="endpoints-heading">{{ t('twin.anomalyAccess') }}</h4>
+          <ul class="endpoints">
+            <li>
+              {{ t('twin.anomalyGrafana') }}: <code>http://localhost:3000</code>
+              <span class="hint">({{ t('twin.anomalyGrafanaAuth') }})</span>
+            </li>
+            <li>
+              {{ t('twin.anomalyDetector') }}: <code>http://localhost:9100/status</code>
+            </li>
+            <li>
+              {{ t('twin.anomalyApi') }}: <code>http://localhost:8001</code>
+            </li>
+          </ul>
+
+          <p class="hint">{{ t('twin.anomalyStop', { cmd: anomalyStopCommand }) }}</p>
+          <p class="hint">{{ t('twin.anomalyTrainHint') }}</p>
+        </template>
       </div>
 
       <div v-if="store.twinConfig" class="card">
@@ -274,5 +369,46 @@ details summary {
   white-space: pre-wrap;
   max-height: 240px;
   font-size: 12px;
+}
+
+.anomaly-mode {
+  display: flex;
+  gap: 16px;
+  margin-top: 12px;
+  font-size: 13px;
+}
+.anomaly-mode label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+
+.command {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.command .code-block {
+  flex: 1;
+  min-width: 0;
+  margin-top: 0;
+  max-height: none;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.command .btn { flex-shrink: 0; }
+
+.endpoints-heading {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 16px 0 4px;
+}
+.endpoints {
+  list-style: none;
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.endpoints code {
+  background: var(--bg);
+  padding: 1px 4px;
+  border-radius: 4px;
 }
 </style>

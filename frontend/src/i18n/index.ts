@@ -85,6 +85,25 @@ const en = {
   'twin.attemptsRepairs': 'attempts {attempts}, repairs {repaired}.',
   'twin.viewSimpy': 'View SimPy code',
   'twin.noReply': 'The agent returned no reply',
+  'twin.anomalyHeading': 'Anomaly detection',
+  'twin.anomalyPrepare': 'Prepare anomaly detection',
+  'twin.anomalyHint':
+    'The stack runs on your own hardware, next to your sensors and cameras, and downloads this session\'s configuration by itself — there is no config file to edit. Run the command from a checkout of this repository.',
+  'twin.anomalyViewConfig': 'View configuration',
+  'twin.anomalyCpu': 'CPU',
+  'twin.anomalyGpu': 'GPU (NVIDIA)',
+  'twin.anomalyCommand': 'Command',
+  'twin.anomalyCopy': 'Copy command',
+  'twin.anomalyCopied': 'Copied',
+  'twin.anomalyAccess': 'Endpoints',
+  'twin.anomalyGrafana': 'Grafana',
+  'twin.anomalyGrafanaAuth':
+    'sign in with GRAFANA_ADMIN_USER / GRAFANA_ADMIN_PASSWORD (admin / admin by default)',
+  'twin.anomalyDetector': 'Detector status',
+  'twin.anomalyApi': 'Anomaly API',
+  'twin.anomalyStop': 'Stop with {cmd} — add -v to erase the collected data.',
+  'twin.anomalyTrainHint':
+    'The detector trains itself as soon as it has collected enough readings and frames; press Train in the Grafana panel only to re-train it.',
   'kpi.throughput': 'Throughput',
   'kpi.wip': 'WIP',
   'kpi.energy': 'Energy / part',
@@ -119,6 +138,8 @@ const en = {
   'error.agentError': "Agent reply processing error",
   'error.generationError': 'Generation error',
   'error.noReply': 'The agent returned no reply',
+  'error.anomalyConfig': 'Could not prepare the anomaly configuration — check the API',
+  'error.anomalyCopy': 'Could not copy to the clipboard — select the command and copy it by hand.',
 }
 
 export type MessageKey = keyof typeof en
@@ -198,6 +219,25 @@ const ru: Record<MessageKey, string> = {
   'twin.attemptsRepairs': 'попыток {attempts}, исправлений {repaired}.',
   'twin.viewSimpy': 'Просмотр кода SimPy',
   'twin.noReply': 'Агент не вернул ответ',
+  'twin.anomalyHeading': 'Обнаружение аномалий',
+  'twin.anomalyPrepare': 'Подготовить обнаружение аномалий',
+  'twin.anomalyHint':
+    'Стек запускается на вашем оборудовании, рядом с датчиками и камерами, и сам скачивает конфигурацию этой сессии — править файл конфигурации не нужно. Выполните команду из клона этого репозитория.',
+  'twin.anomalyViewConfig': 'Посмотреть конфигурацию',
+  'twin.anomalyCpu': 'CPU',
+  'twin.anomalyGpu': 'GPU (NVIDIA)',
+  'twin.anomalyCommand': 'Команда',
+  'twin.anomalyCopy': 'Скопировать команду',
+  'twin.anomalyCopied': 'Скопировано',
+  'twin.anomalyAccess': 'Адреса',
+  'twin.anomalyGrafana': 'Grafana',
+  'twin.anomalyGrafanaAuth':
+    'вход по GRAFANA_ADMIN_USER / GRAFANA_ADMIN_PASSWORD (по умолчанию admin / admin)',
+  'twin.anomalyDetector': 'Статус детектора',
+  'twin.anomalyApi': 'API аномалий',
+  'twin.anomalyStop': 'Остановить: {cmd} — добавьте -v, чтобы стереть собранные данные.',
+  'twin.anomalyTrainHint':
+    'Детектор обучается сам, как только наберёт достаточно показаний и кадров; нажимайте Train на панели Grafana только для повторного обучения.',
   'kpi.throughput': 'Пропускная способность',
   'kpi.wip': 'WIP',
   'kpi.energy': 'Энергия / деталь',
@@ -233,6 +273,8 @@ const ru: Record<MessageKey, string> = {
   'error.agentError': 'Ошибка обработки ответа агента',
   'error.generationError': 'Ошибка генерации',
   'error.noReply': 'Агент не вернул ответ',
+  'error.anomalyConfig': 'Не удалось подготовить конфигурацию аномалий — проверьте API',
+  'error.anomalyCopy': 'Не удалось скопировать в буфер обмена — выделите команду и скопируйте вручную.',
 }
 
 export type Locale = 'ru' | 'en'

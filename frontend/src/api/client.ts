@@ -1,6 +1,23 @@
-import type { Session, Conversation, Message, TaskStatus, AgentStatus, QueueStatus, PipelineJob, PipelinePrompts } from '../types'
+import type { Session, Conversation, Message, TaskStatus, AgentStatus, QueueStatus, PipelineJob, PipelinePrompts, AnomalyConfig } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api'
+
+/**
+ * `API_BASE` as an absolute URL.
+ *
+ * Every other call here is a `fetch` from this page, so a relative `/api` is
+ * fine. The anomaly-detection command is different: the user pastes it into a
+ * terminal on their own machine, where the container's `DTB_API_URL` has to
+ * name a host — a bare `/api` would resolve to nothing. A `VITE_API_URL` that
+ * already carries a scheme passes through unchanged (apart from its trailing
+ * slash, which would double up on the paths below).
+ */
+export function apiBaseUrl(): string {
+  const base = API_BASE.replace(/\/+$/, '')
+  if (/^https?:\/\//i.test(base)) return base
+  const path = base.startsWith('/') ? base : `/${base}`
+  return `${window.location.origin}${path}`
+}
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -148,6 +165,16 @@ export const api = {
 
   getPrompts(): Promise<PipelinePrompts> {
     return request('/pipeline/prompts')
+  },
+
+  // Anomaly detection — the interview's requirements become the config the
+  // user's own stack downloads. The zone name comes from the session title
+  // server-side, so the response is the built config, not the input echoed back.
+  saveAnomalyConfig(body: {
+    session_id: string
+    requirements: any
+  }): Promise<{ session_id: string; config: AnomalyConfig }> {
+    return request('/anomaly/config', { method: 'POST', body: JSON.stringify(body) })
   },
 
   // Health

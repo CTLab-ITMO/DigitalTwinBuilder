@@ -1,0 +1,18 @@
+# An overlay, not a standalone file: the anomaly detector's camera model uses
+# CUDA when it is there and CPU when it is not, and the base compose file has no
+# nvidia reservation so the stack starts on a machine without a GPU (the VPS,
+# a laptop). Add this file when the machine running the stack has one:
+#
+#   DTB_API_URL=… DTB_SESSION_ID=… docker compose \
+#       -f docker-compose.yml -f docker-compose.gpu.yml --profile anomaly up -d --build
+#
+# The Digital Twin tab prints both commands.
+services:
+  anomaly-detector:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["all"]
+              capabilities: [gpu]

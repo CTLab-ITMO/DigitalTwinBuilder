@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { api } from '../api/client'
 import { t } from '../i18n'
-import type { Session, Conversation, Message, AgentStatus, QueueStatus, PipelineJob, PipelinePrompts, DbPipelineResult, DesPipelineResult, UiPipelineResult, TwinPipelineResult } from '../types'
+import type { Session, Conversation, Message, AgentStatus, QueueStatus, PipelineJob, PipelinePrompts, DbPipelineResult, DesPipelineResult, UiPipelineResult, TwinPipelineResult, AnomalyConfig } from '../types'
 
 const UI_AGENT = 0
 const DB_AGENT = 1
@@ -50,6 +50,13 @@ export const useAppStore = defineStore('app', () => {
   // that turn produced a reply.
   const twinVerdict = ref<TwinPipelineResult | null>(null)
 
+  // Anomaly detection. The config is derived from the interview result, so it
+  // is replaced rather than merged when it is prepared again, and it is dropped
+  // with the rest of a session's artifacts when the session changes.
+  const anomalyConfig = ref<AnomalyConfig | null>(null)
+  const anomalyBusy = ref(false)
+  const anomalyError = ref<string | null>(null)
+
   // Loading states
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -86,6 +93,8 @@ export const useAppStore = defineStore('app', () => {
       uiJob.value = null
       uiVerdict.value = null
       twinVerdict.value = null
+      anomalyConfig.value = null
+      anomalyError.value = null
       await loadSessions()
       // Seed the interview slot now rather than on the first send: the greeting
       // is the conversation's opening assistant turn, so a new chat has to show
@@ -109,6 +118,8 @@ export const useAppStore = defineStore('app', () => {
       uiJob.value = null
       uiVerdict.value = null
       twinVerdict.value = null
+      anomalyConfig.value = null
+      anomalyError.value = null
       // Every artifact is re-read from the conversations below, so drop them
       // first: a session that has no DB or twin conversation yet must not keep
       // showing the previous session's schema, configuration and models.
@@ -179,6 +190,8 @@ export const useAppStore = defineStore('app', () => {
         uiJob.value = null
         uiVerdict.value = null
         twinVerdict.value = null
+        anomalyConfig.value = null
+        anomalyError.value = null
       }
       return true
     } catch (e: any) {
@@ -537,6 +550,35 @@ export const useAppStore = defineStore('app', () => {
   }
 
   /**
+   * Store this session's anomaly config so the user's own stack can pull it.
+   *
+   * The stack runs on the user's hardware, next to their sensors and cameras,
+   * and downloads the config from the API — so it has to exist server-side, and
+   * the browser is what holds the requirements it is built from. Nothing is
+   * prepared without both a session and a finished interview: the config is
+   * keyed by the session id the command carries, and a stack built from an
+   * empty requirements document finds no zone and exits.
+   */
+  async function prepareAnomaly(): Promise<AnomalyConfig | null> {
+    if (!currentSessionId.value || !interviewResult.value) return null
+    anomalyBusy.value = true
+    anomalyError.value = null
+    try {
+      const data = await api.saveAnomalyConfig({
+        session_id: currentSessionId.value,
+        requirements: interviewResult.value,
+      })
+      anomalyConfig.value = data.config
+      return data.config
+    } catch (e: any) {
+      anomalyError.value = e.message
+      return null
+    } finally {
+      anomalyBusy.value = false
+    }
+  }
+
+  /**
    * Answer one interview turn through the broker's validate→repair loop.
    *
    * The broker posts the user's message itself (so the stored conversation is
@@ -619,6 +661,7 @@ export const useAppStore = defineStore('app', () => {
     prompts, pipelineJob, dbVerdict, desCode, desVerdict,
     uiJob, uiVerdict, uiRunning,
     twinVerdict,
+    anomalyConfig, anomalyBusy, anomalyError,
     loading, error,
     // Getters
     currentSession,
@@ -628,6 +671,7 @@ export const useAppStore = defineStore('app', () => {
     loadAgentStatuses,
     loadPrompts, ensureConversation, pollJob, generateDbSchema, generateDesModel,
     generateTwinConfig, generateTwinSim,
+    prepareAnomaly,
     sendInterviewMessage,
   }
 })
