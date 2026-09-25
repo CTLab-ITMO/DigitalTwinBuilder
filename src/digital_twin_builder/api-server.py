@@ -1144,14 +1144,19 @@ async def save_anomaly_config(req: AnomalyConfigRequest):
     session_id = _session_id_or_404(req.session_id)
     try:
         async with (await get_db_connection()).acquire() as conn:
-            title = await conn.fetchval(
+            # The row's existence, not its title: `title` is nullable and the UI
+            # creates sessions without one ("+ New Chat"), so reading a null
+            # title as "no session" told every such user their own session did
+            # not exist. `build_anomaly_config` already falls back to
+            # `production_line` when the zone name is empty.
+            row = await conn.fetchrow(
                 "SELECT title FROM sessions WHERE id = $1", session_id
             )
-            if title is None:
+            if row is None:
                 raise HTTPException(status_code=404, detail="Session not found")
 
             config_json = anomaly_config.build_anomaly_config(
-                req.requirements, zone_name=title
+                req.requirements, zone_name=row["title"]
             )
             if not config_json:
                 raise HTTPException(
