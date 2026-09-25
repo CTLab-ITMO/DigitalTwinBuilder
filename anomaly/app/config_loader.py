@@ -98,12 +98,22 @@ async def _upsert_source(
     )
     source = result.scalar_one_or_none()
 
+    # The addressing the detector needs to reach the device: Modbus unit id /
+    # register / data type for a sensor, the stream path and assembled URL for a
+    # camera. Kept alongside ip/port/protocol so `/admin/sources` shows how a
+    # source is reached, not just where it is.
     connection_info = {}
-    for key in ("ip", "port", "protocol"):
+    for key in ("ip", "port", "protocol", "unit_id", "register",
+                "data_type", "stream_path", "rtsp_url"):
         if key in src_info:
             connection_info[key] = src_info[key]
 
-    metadata = {k: v for k, v in src_info.items() if k not in ("ip", "port", "protocol", "display_name", "detector")}
+    # Everything descriptive stays in metadata; the addressing keys above are
+    # in connection_info only, so a field is never stored twice.
+    metadata = {k: v for k, v in src_info.items()
+                if k not in ("ip", "port", "protocol", "unit_id", "register",
+                             "data_type", "stream_path", "rtsp_url",
+                             "display_name", "detector")}
 
     if source:
         source.source_type = source_type

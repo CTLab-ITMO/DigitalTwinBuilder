@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-import random
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -10,14 +9,19 @@ import numpy as np
 from PIL import Image
 
 from detector.shared import (
+    ANOMALY_API_PUBLIC_URL,
     FRAME_DIR,
-    check_and_clear_train,
+    alert_due,
+    clear_alert,
+    clear_train,
     compute_severity,
     fusion_lock,
     fusion_state,
     get_db_connection,
     is_detector_enabled,
     shutdown_event,
+    signal_train,
+    train_requested,
     update_train_state,
     write_alerts,
 )
@@ -26,6 +30,27 @@ logger = logging.getLogger("detector.camera")
 
 CAMERA_INTERVAL = float(os.environ.get("CAMERA_DETECT_INTERVAL", "15"))
 RETRAIN_EVERY = int(os.environ.get("CAMERA_RETRAIN_EVERY", "50"))
+# CKAAD needs a handful of normal frames to fit a backbone on. They used to be
+# the Kaggle MVTec stills; now the capture loop fills the directory in real
+# time, so this is also how long the loop waits before it has anything to train.
+MIN_TRAINING_FRAMES = 10
+
+# The capture loop writes one frame per camera per `CAMERA_CAPTURE_INTERVAL_S`,
+# so a newest frame older than a few intervals means that stream stopped — the
+# directory only advances on a successful grab. Scoring the last frame a dead
+# camera ever sent would report on a camera that is no longer there.
+CAPTURE_INTERVAL = float(os.environ.get("CAMERA_CAPTURE_INTERVAL_S", "15"))
+FRAME_MAX_AGE = float(os.environ.get("CAMERA_FRAME_MAX_AGE_S", str(3 * CAPTURE_INTERVAL)))
+
+# One alert per sustained episode: CKAAD above the threshold for an hour is one
+# anomaly, not 240 rows in `alerts`.
+CAMERA_ALERT_COOLDOWN = float(os.environ.get("CAMERA_ALERT_COOLDOWN_S", "300"))
+
+# A rolling max that only ever rises never forgets a single bad frame: one
+# spike keeps the fused camera score high for the rest of the run. Each interval
+# the previous value decays, so a spike fades over a handful of intervals while
+# a genuinely sustained anomaly stays above the threshold.
+ROLLING_MAX_DECAY = float(os.environ.get("CAMERA_ROLLING_MAX_DECAY", "0.5"))
 
 def _load_collected_training_images(
     all_cameras: List[Dict[str, Any]]
@@ -61,7 +86,20 @@ def _load_collected_training_images(
     return all_images
 
 
-def _load_live_frame(camera_id: str, camera_category: str) -> Optional[np.ndarray]:
+def _load_live_frame(camera_id: str) -> Optional[np.ndarray]:
+    """The newest frame the capture loop wrote for this camera, if it is fresh.
+
+    Newest, not a random one: the files are named with a millisecond timestamp
+    in capture order, and scoring a random frame from up to fifty minutes of
+    history would report on the past rather than on what the camera sees now.
+
+    Newest *and* recent: the capture loop only writes on a successful grab, so
+    when a stream dies the newest file stops advancing. Without an age check the
+    loop would keep scoring that last frame, and the fused score would keep
+    saying "camera anomaly" for a camera that has been offline for hours. A
+    frame older than `FRAME_MAX_AGE` is treated as no frame at all; the caller
+    skips the camera and the dead stream is logged.
+    """
     frame_dir = os.path.join(FRAME_DIR, camera_id)
     if not os.path.isdir(frame_dir):
         logger.debug(f"[{camera_id}] Frame dir not found: {frame_dir}")
@@ -72,8 +110,16 @@ def _load_live_frame(camera_id: str, camera_category: str) -> Optional[np.ndarra
         logger.debug(f"[{camera_id}] No PNGs in {frame_dir}")
         return None
 
+    p = max(png_files, key=lambda path: path.name)
+    age = _frame_age_seconds(p)
+    if age is not None and age > FRAME_MAX_AGE:
+        logger.warning(
+            f"[{camera_id}] newest frame is {age:.0f}s old (> {FRAME_MAX_AGE:.0f}s); "
+            f"the stream looks dead, skipping this camera"
+        )
+        return None
+
     try:
-        p = random.choice(png_files)
         img = Image.open(p).convert("RGB")
         img_resized = img.resize((256, 256), Image.LANCZOS)
         return np.array(img_resized)
@@ -82,7 +128,24 @@ def _load_live_frame(camera_id: str, camera_category: str) -> Optional[np.ndarra
         return None
 
 
-def _init_ckaad_model(training_images: List[np.ndarray]):
+def _frame_age_seconds(path: Path) -> Optional[float]:
+    """How long ago the frame was captured, from its name, then its mtime.
+
+    The name is a millisecond epoch stamp written by the capture loop, which is
+    the capture time itself rather than whatever the filesystem last touched.
+    A file that is not named that way falls back to mtime; if neither reads,
+    None leaves the caller's check to the frame's own contents.
+    """
+    try:
+        return max(0.0, time.time() - int(path.stem) / 1000.0)
+    except (ValueError, OSError):
+        try:
+            return max(0.0, time.time() - path.stat().st_mtime)
+        except OSError:
+            return None
+
+
+def _init_ckaad_model(training_images: List[np.ndarray], progress_callback=None):
     from detection.camera.anomaly import CKAADAnomalyDetector
 
     logger.info(
@@ -101,21 +164,36 @@ def _init_ckaad_model(training_images: List[np.ndarray]):
     )
 
     logger.info("Training CKAAD model (this may take several minutes)...")
-    update_train_state("shared", "ckaad", "training", progress="0%", message="Starting CKAAD training...")
-    t0 = time.time()
-
-    def _ckaad_progress(epoch, total):
-        pct = int(epoch / total * 100)
-        elapsed = time.time() - t0
-        update_train_state("shared", "ckaad", "training", progress=f"{pct}%",
-                           message=f"CKAAD epoch {epoch}/{total} ({elapsed:.0f}s)")
-
-    detector.fit(list(training_images), progress_callback=_ckaad_progress)
-    elapsed = time.time() - t0
-    update_train_state("shared", "ckaad", "complete", progress="100%", message=f"CKAAD ready ({elapsed:.1f}s)")
-    logger.info(f"CKAAD training complete in {elapsed:.1f}s")
-
+    if not detector.fit(list(training_images), progress_callback=progress_callback):
+        logger.error("CKAAD initial training failed")
+        return None
     return detector
+
+
+def _wait_for_training_frames(all_cameras: List[Dict[str, Any]]) -> bool:
+    """Block until the capture loop has produced enough frames, or shut down.
+
+    Frames arrive from the cameras themselves, one per camera per capture
+    interval, so a stack started against a live stream has none at startup —
+    roughly ten capture intervals before there is enough to train on. Exiting
+    instead, which is what the Kaggle-seeded frames allowed, would disable
+    camera detection for the whole run before anyone could press Train. The
+    sensor loop already waits for its readings this way.
+
+    The images themselves are not returned: `_ensure_ckaad_trained` reloads the
+    directory at fit time, so a retrain trains on the frames that exist then
+    rather than on the startup snapshot.
+    """
+    while not shutdown_event.is_set():
+        images = _load_collected_training_images(all_cameras)
+        if len(images) >= MIN_TRAINING_FRAMES:
+            return True
+        logger.info(
+            f"Collected {len(images)} frames so far ({MIN_TRAINING_FRAMES} needed "
+            f"for CKAAD); waiting for the capture loop"
+        )
+        shutdown_event.wait(timeout=CAMERA_INTERVAL)
+    return False
 
 
 def camera_detection_loop(all_cameras: List[Dict[str, Any]]):
@@ -124,9 +202,8 @@ def camera_detection_loop(all_cameras: List[Dict[str, Any]]):
         f"shared CKAAD model)"
     )
 
-    training_images = _load_collected_training_images(all_cameras)
-    if len(training_images) < 10:
-        logger.error(f"Too few collected frames ({len(training_images)}) for CKAAD. Camera detection disabled.")
+    if not _wait_for_training_frames(all_cameras):
+        logger.info("Camera detection loop stopping; no frames to train on")
         return
 
     ckaad = None
@@ -143,24 +220,22 @@ def camera_detection_loop(all_cameras: List[Dict[str, Any]]):
                 shutdown_event.wait(timeout=CAMERA_INTERVAL)
                 continue
 
-            ckaad = _check_ckaad_train_or_wait(conn, ckaad, training_images)
-            if ckaad is None:
-                continue
+            # A Train press and the periodic re-train are the same operation;
+            # the periodic one is just a press nobody made. Both go through
+            # `_ensure_ckaad_trained`, which reloads the frames and owns the
+            # fit/state bookkeeping — there is no second copy of it to drift.
+            periodic_retrain = run_count > 0 and run_count % RETRAIN_EVERY == 0
+            ckaad = _ensure_ckaad_trained(conn, ckaad, all_cameras, periodic_retrain)
+            if ckaad is not None:
+                _run_camera_inferences(conn, all_cameras, ckaad, detection_counters, rolling_max_scores)
+                _update_camera_fusion_state(all_cameras, rolling_max_scores)
 
-            ckaad = _retrain_ckaad_if_needed(conn, ckaad, training_images, run_count)
-            if ckaad is None:
-                continue
-
-            _run_camera_inferences(conn, all_cameras, ckaad, detection_counters, rolling_max_scores)
-
-            _update_camera_fusion_state(all_cameras, rolling_max_scores)
-
-            run_count += 1
-            if run_count % 10 == 0:
-                logger.info(
-                    f"Camera detection: {run_count} runs, "
-                    f"scores: {', '.join(f'{k}={v:.2f}' for k, v in rolling_max_scores.items())}"
-                )
+                run_count += 1
+                if run_count % 10 == 0:
+                    logger.info(
+                        f"Camera detection: {run_count} runs, "
+                        f"scores: {', '.join(f'{k}={v:.2f}' for k, v in rolling_max_scores.items())}"
+                    )
 
             elapsed = time.time() - loop_start
             sleep_time = max(1, CAMERA_INTERVAL - elapsed)
@@ -177,70 +252,72 @@ def _any_zone_ckaad_enabled(all_cameras):
     return any(is_detector_enabled(z, "ckaad") for z in zones_for_cameras)
 
 
-def _check_ckaad_train_or_wait(conn, ckaad, training_images):
+def _adopt_pending_ckaad_train(conn) -> bool:
+    """Whether CKAAD has an outstanding Train press.
+
+    Any `detector_control` row the control thread has not picked up is adopted
+    here so a queued press is honoured even if that thread is behind. The row is
+    marked executed on delivery, but the request it carried lives on in the
+    durable flag until a fit succeeds — that is what makes one press enough.
+    """
     from psycopg2.extras import RealDictCursor
-    force_retrain = check_and_clear_train("shared", "ckaad")
-
-    if ckaad is None and not force_retrain:
-        update_train_state("shared", "ckaad", "idle", message="Awaiting Train button")
-        shutdown_event.wait(timeout=5)
-        try:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """SELECT id FROM detector_control
+                   WHERE zone_name = 'shared' AND detector_type = 'ckaad'
+                   AND command = 'train' AND executed_at IS NULL
+                   ORDER BY issued_at ASC"""
+            )
+            pending = cur.fetchall()
+            for row in pending:
                 cur.execute(
-                    """SELECT id FROM detector_control
-                       WHERE zone_name = 'shared' AND detector_type = 'ckaad'
-                       AND command = 'train' AND executed_at IS NULL
-                       ORDER BY issued_at ASC LIMIT 1"""
+                    "UPDATE detector_control SET executed_at = NOW() WHERE id = %s",
+                    (row["id"],)
                 )
-                pending = cur.fetchone()
-                if pending:
-                    logger.info("Found pending train in DB for CKAAD")
-                    cur.execute(
-                        "UPDATE detector_control SET executed_at = NOW() WHERE id = %s",
-                        (pending["id"],)
-                    )
-                    force_retrain = True
-            conn.commit()
-        except Exception:
-            conn.rollback()
-        if not force_retrain:
-            force_retrain = check_and_clear_train("shared", "ckaad")
-        if not force_retrain:
-            return None
-
-    if force_retrain or ckaad is None:
-        logger.info("Training/re-training CKAAD model...")
-        update_train_state("shared", "ckaad", "training", progress="0%", message="Starting CKAAD training...")
-        train_t0 = time.time()
-
-        def _progress(epoch, total):
-            pct = int(epoch / total * 100)
-            elapsed = time.time() - train_t0
-            update_train_state("shared", "ckaad", "training", progress=f"{pct}%",
-                               message=f"CKAAD epoch {epoch}/{total} ({elapsed:.0f}s)")
-
-        try:
-            if ckaad is None:
-                ckaad = _init_ckaad_model(training_images)
-            ckaad.fit(list(training_images), progress_callback=_progress)
-            elapsed = time.time() - train_t0
-            update_train_state("shared", "ckaad", "complete", progress="100%",
-                               message=f"CKAAD ready ({elapsed:.1f}s)")
-            logger.info(f"CKAAD training complete in {elapsed:.1f}s")
-        except Exception as e:
-            logger.error(f"CKAAD training failed: {e}")
-            update_train_state("shared", "ckaad", "error", message=str(e))
-            return None
-
-    return ckaad
+            if pending:
+                conn.commit()
+                signal_train("shared", "ckaad")
+                logger.info(f"Adopted {len(pending)} pending CKAAD train command(s)")
+    except Exception:
+        conn.rollback()
+    return train_requested("shared", "ckaad")
 
 
-def _retrain_ckaad_if_needed(conn, ckaad, training_images, run_count):
-    if not (run_count > 0 and run_count % RETRAIN_EVERY == 0):
+def _ensure_ckaad_trained(conn, ckaad, all_cameras, force=False):
+    """The CKAAD model, trained when there is none, a Train is outstanding, or
+    the periodic re-train is due (`force`).
+
+    The frames arrive from the capture loop, so the first fit happens on its own
+    once `_wait_for_training_frames` has enough — a press is a re-train trigger
+    rather than a prerequisite. It is also durable: read, not consumed, and
+    cleared only once a fit actually succeeds, so a press that lands before the
+    frames are in is honoured later instead of lost.
+
+    The frames are re-read from disk here, at fit time. Training every re-train
+    on the snapshot taken at startup would teach CKAAD the plant as it looked
+    when the stack came up and never let it follow a slow drift.
+
+    Returns None only when there is no usable model yet (the first fit failed);
+    the caller waits an interval and the next iteration retries. A failed
+    re-train keeps the previous model scoring.
+    """
+    retrain_requested = _adopt_pending_ckaad_train(conn)
+    if ckaad is not None and not retrain_requested and not force:
         return ckaad
 
-    logger.info("Periodic CKAAD retraining...")
-    update_train_state("shared", "ckaad", "training", progress="0%", message="Retraining CKAAD...")
+    training_images = _load_collected_training_images(all_cameras)
+    if len(training_images) < MIN_TRAINING_FRAMES:
+        logger.warning(
+            f"Only {len(training_images)} frames available ({MIN_TRAINING_FRAMES} "
+            f"needed); keeping the current CKAAD model and retrying later"
+        )
+        return ckaad
+
+    logger.info("Training/re-training CKAAD model...")
+    update_train_state("shared", "ckaad", "training", progress="0%",
+                       message="Retraining CKAAD..." if ckaad is not None
+                       else "Starting CKAAD training...")
     train_t0 = time.time()
 
     def _progress(epoch, total):
@@ -250,15 +327,28 @@ def _retrain_ckaad_if_needed(conn, ckaad, training_images, run_count):
                            message=f"CKAAD epoch {epoch}/{total} ({elapsed:.0f}s)")
 
     try:
-        ckaad.fit(list(training_images), progress_callback=_progress)
-        elapsed = time.time() - train_t0
-        update_train_state("shared", "ckaad", "complete", progress="100%",
-                           message=f"CKAAD ready ({elapsed:.1f}s)")
-        logger.info(f"CKAAD retraining complete in {elapsed:.1f}s")
+        if ckaad is None:
+            trained = _init_ckaad_model(training_images, progress_callback=_progress)
+        else:
+            # `CKAAD.fit` swallows its own exception and returns False; a failed
+            # re-train keeps the previous model scoring and the press pending.
+            trained = ckaad if ckaad.fit(list(training_images), progress_callback=_progress) else None
     except Exception as e:
-        logger.error(f"CKAAD retraining failed: {e}")
-        update_train_state("shared", "ckaad", "error", message=str(e))
-    return ckaad
+        logger.error(f"CKAAD training failed: {e}")
+        trained = None
+
+    if trained is None:
+        logger.error("CKAAD training failed; will retry")
+        update_train_state("shared", "ckaad", "error", progress="",
+                           message="CKAAD training failed; retrying")
+        return ckaad
+
+    clear_train("shared", "ckaad")
+    elapsed = time.time() - train_t0
+    update_train_state("shared", "ckaad", "complete", progress="100%",
+                       message=f"CKAAD ready ({elapsed:.1f}s)")
+    logger.info(f"CKAAD training complete in {elapsed:.1f}s")
+    return trained
 
 
 def _run_camera_inferences(conn, all_cameras, ckaad, detection_counters, rolling_max_scores):
@@ -274,14 +364,20 @@ def _run_camera_inferences(conn, all_cameras, ckaad, detection_counters, rolling
             continue
 
         try:
-            frame = _load_live_frame(cam_id, cam_category)
+            frame = _load_live_frame(cam_id)
             if frame is None:
                 continue
 
             result = ckaad.detect(frame)
             score = result.anomaly_score if result else 0.0
 
-            rolling_max_scores[cam_id] = max(rolling_max_scores[cam_id], score)
+            # Decay first, then fold in this frame: the value the fusion loop
+            # reads falls back to zero over a few intervals after a spike
+            # instead of pinning the zone at "camera anomaly" for the rest of
+            # the run.
+            rolling_max_scores[cam_id] = max(
+                rolling_max_scores[cam_id] * ROLLING_MAX_DECAY, score
+            )
             detection_counters[cam_id] += 1
 
             image_url, heatmap_url = _save_ckaad_anomaly_frame(score, ckaad, result, frame, zone_name, cam_id)
@@ -290,21 +386,25 @@ def _run_camera_inferences(conn, all_cameras, ckaad, detection_counters, rolling
             _store_ckaad_result(conn, cam_id, cam_category, ckaad, score, run_id,
                                 detection_counters[cam_id], image_url, heatmap_url, rolling_max_scores[cam_id])
 
+            alert_key = f"camera:{cam_id}"
             if score > ckaad.threshold * 0.8:
-                severity = compute_severity(score)
-                alerts = [
-                    {
-                        "source_id": cam_id,
-                        "alert_type": "camera_anomaly",
-                        "severity": severity,
-                        "message": (
-                            f"[{cam_id}] CKAAD anomaly: score={score:.3f} "
-                            f"(threshold={ckaad.threshold:.3f})"),
-                        "score": float(score),
-                        "run_id": run_id,
-                    }
-                ]
-                write_alerts(conn, alerts)
+                if alert_due(alert_key, CAMERA_ALERT_COOLDOWN):
+                    severity = compute_severity(score)
+                    alerts = [
+                        {
+                            "source_id": cam_id,
+                            "alert_type": "camera_anomaly",
+                            "severity": severity,
+                            "message": (
+                                f"[{cam_id}] CKAAD anomaly: score={score:.3f} "
+                                f"(threshold={ckaad.threshold:.3f})"),
+                            "score": float(score),
+                            "run_id": run_id,
+                        }
+                    ]
+                    write_alerts(conn, alerts)
+            else:
+                clear_alert(alert_key)
 
         except Exception as e:
             logger.error(f"[{cam_id}] Detection error: {e}", exc_info=True)
@@ -312,6 +412,15 @@ def _run_camera_inferences(conn, all_cameras, ckaad, detection_counters, rolling
 
 
 def _save_ckaad_anomaly_frame(score, ckaad, result, frame, zone_name, cam_id):
+    """The frame's snapshot URL, and the overlay URL when a heatmap was drawn.
+
+    The snapshot is always the camera's own frame; the heatmap is the coloured
+    composite the API builds from the sidecar PNG. They are separate fields
+    because they are separate pictures — the old code folded the overlay into
+    `image_url` and returned `heatmap_url` as a constant `""`, so a consumer
+    that asked for the heatmap got nothing and one that asked for the snapshot
+    got an overlay.
+    """
     from PIL import Image
     image_url = ""
     heatmap_url = ""
@@ -324,7 +433,7 @@ def _save_ckaad_anomaly_frame(score, ckaad, result, frame, zone_name, cam_id):
     try:
         frame_path = anomaly_frames_dir / f"{ts}.png"
         Image.fromarray(frame).save(str(frame_path))
-        image_url = f"http://localhost:8000/images/anomaly/{zone_name}/{cam_id}/{ts}"
+        image_url = f"{ANOMALY_API_PUBLIC_URL}/images/anomaly/{zone_name}/{cam_id}/{ts}"
         amap = (result.details or {}).get("anomaly_map")
         if amap is not None:
             heatmap_raw = (amap * 255).clip(0, 255).astype(np.uint8)
@@ -332,7 +441,7 @@ def _save_ckaad_anomaly_frame(score, ckaad, result, frame, zone_name, cam_id):
                 (frame.shape[1], frame.shape[0]), Image.BILINEAR
             )
             heatmap_img.save(str(anomaly_frames_dir / f"{ts}_heatmap.png"))
-            image_url = f"http://localhost:8000/images/anomaly/{zone_name}/{cam_id}/{ts}/overlay"
+            heatmap_url = f"{ANOMALY_API_PUBLIC_URL}/images/anomaly/{zone_name}/{cam_id}/{ts}/overlay"
     except Exception:
         logger.exception("Failed to save anomaly frame")
     return image_url, heatmap_url

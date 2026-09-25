@@ -21,6 +21,36 @@ train_events_lock = threading.Lock()
 train_state: Dict[str, Dict[str, Any]] = {}
 train_state_lock = threading.Lock()
 
+# The last time each alert key was written. A sustained anomaly is one episode,
+# not one alert per detection interval: without this, a score that stays above
+# the threshold for an hour writes 120 alerts. `clear_alert` drops the key when
+# the condition goes away, so the cooldown is per episode rather than a window
+# that would swallow the next, unrelated anomaly.
+alert_cooldowns: Dict[str, float] = {}
+alert_cooldowns_lock = threading.Lock()
+
+
+def alert_due(key: str, cooldown_s: float) -> bool:
+    """Whether an alert for `key` may be written now, and if so, claim it.
+
+    `cooldown_s` of 0 means no cooldown at all: every call is due.
+    """
+    if cooldown_s <= 0:
+        return True
+    now = time.time()
+    with alert_cooldowns_lock:
+        last = alert_cooldowns.get(key)
+        if last is not None and now - last < cooldown_s:
+            return False
+        alert_cooldowns[key] = now
+        return True
+
+
+def clear_alert(key: str) -> None:
+    """Forget `key`'s cooldown so a later anomaly alerts immediately again."""
+    with alert_cooldowns_lock:
+        alert_cooldowns.pop(key, None)
+
 
 def update_train_state(zone: str, detector_type: str, status: str,
                        progress: str = "", message: str = ""):
@@ -60,14 +90,24 @@ def signal_train(zone: str, detector_type: str):
         train_events[key].set()
 
 
-def check_and_clear_train(zone: str, detector_type: str) -> bool:
-    key = f"{zone}:{detector_type}"
+def train_requested(zone: str, detector_type: str) -> bool:
+    """Whether a Train press is outstanding for this detector.
+
+    A request is durable: `signal_train` sets it and only `clear_train`, which a
+    loop calls after a fit actually succeeds, takes it back. A press that lands
+    before there is enough collected data therefore stays outstanding until the
+    loop can honour it, instead of being spent on an empty read and lost.
+    """
     with train_events_lock:
-        ev = train_events.get(key)
-        if ev and ev.is_set():
+        ev = train_events.get(f"{zone}:{detector_type}")
+        return bool(ev and ev.is_set())
+
+
+def clear_train(zone: str, detector_type: str) -> None:
+    with train_events_lock:
+        ev = train_events.get(f"{zone}:{detector_type}")
+        if ev:
             ev.clear()
-            return True
-        return False
 
 
 def poll_control_commands(conn):
@@ -192,7 +232,17 @@ DATABASE_URL = os.environ.get(
 )
 GRAFANA_URL = os.environ.get("GRAFANA_URL", "http://grafana:3000")
 GRAFANA_API_KEY = os.environ.get("GRAFANA_API_KEY", "")
-FRAME_DIR = os.environ.get("FRAME_DIR", "/tmp/mvtec_frames")
+# Where the RTSP capture loop writes frames and CKAAD reads them. The old name
+# was `/tmp/mvtec_frames`, from the Kaggle MVTec stills that used to be the
+# demo's "live" feed; the frames are the user's cameras now.
+FRAME_DIR = os.environ.get("FRAME_DIR", "/tmp/anomaly_frames")
+# The anomaly API as a *browser* reaches it: the alert panels link to the
+# frame routes stored under this base. Inside the compose network the API is
+# on port 8000, but the browser is on the user's machine, where the stack
+# publishes it on 8001.
+ANOMALY_API_PUBLIC_URL = os.environ.get(
+    "ANOMALY_API_PUBLIC_URL", "http://localhost:8001"
+).rstrip("/")
 
 
 def get_db_connection():
@@ -238,7 +288,10 @@ def fire_grafana_annotation(
         headers = {"Content-Type": "application/json"}
         if GRAFANA_API_KEY:
             headers["Authorization"] = f"Bearer {GRAFANA_API_KEY}"
-        auth = HTTPBasicAuth("admin", "admin")
+        auth = HTTPBasicAuth(
+            os.environ.get("GRAFANA_USER", "admin"),
+            os.environ.get("GRAFANA_PASSWORD", "admin"),
+        )
         resp = requests.post(
             f"{GRAFANA_URL}/api/annotations",
             json=payload,

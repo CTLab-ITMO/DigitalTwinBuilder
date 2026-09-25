@@ -74,8 +74,19 @@ class LSTM:
 
     def fit(self, X, y, validation_split=0.2, epochs=35, tolerance=5, min_delta=10, checkpoint=50, path='checkpoint', progress_callback=None):
         validation_size = int(len(X) * validation_split)
-        train, train_y = torch.Tensor(X[:-validation_size]), torch.Tensor(y[:-validation_size])
-        valid, valid_y = torch.Tensor(X[-validation_size:]), torch.Tensor(y[-validation_size:])
+        if validation_size <= 0 or validation_size >= len(X):
+            # Too few windows to hold any back, or so few that a split would
+            # leave nothing to train on. Below `int(len(X) * validation_split)
+            # == 0` the old code sliced `X[:-0]`, which is an *empty* training
+            # set, validated on an empty set, so `np.mean([])` was NaN and
+            # early stopping compared NaN and never triggered. Validating on
+            # the training windows keeps every loss a real number.
+            validation_size = 0
+            train, train_y = torch.Tensor(X), torch.Tensor(y)
+            valid, valid_y = train, train_y
+        else:
+            train, train_y = torch.Tensor(X[:-validation_size]), torch.Tensor(y[:-validation_size])
+            valid, valid_y = torch.Tensor(X[-validation_size:]), torch.Tensor(y[-validation_size:])
 
         _, self.seq_len, self.n_channels = X.shape
         if self.out_channels is None:

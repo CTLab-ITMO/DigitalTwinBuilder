@@ -25,9 +25,11 @@ from detector.shared import (
     set_detector_enabled,
 )
 
-from detector.sensor_loop import sensor_detection_loop
+from detector.camera_capture import capture_loop
 from detector.camera_loop import camera_detection_loop
 from detector.fusion_loop import fusion_loop
+from detector.modbus_loop import modbus_poll_loop
+from detector.sensor_loop import sensor_detection_loop
 
 logging.basicConfig(
     level=logging.INFO,
@@ -41,6 +43,17 @@ CONFIG_PATH = os.environ.get("CONFIG_PATH", "/app/config/config.json")
 def load_config() -> dict:
     with open(CONFIG_PATH) as f:
         return json.load(f)
+
+
+def _iter_sources(raw: Any) -> List[tuple]:
+    """`(id, config)` pairs for a zone's sensors or cameras.
+
+    The generated config writes them as a list of objects; the mapping form is
+    accepted too, since the sample config and `config_loader` both allow it.
+    """
+    if isinstance(raw, dict):
+        return list(raw.items())
+    return [(item["id"], item) for item in raw]
 
 
 def main():
@@ -59,6 +72,11 @@ def main():
 
     zone_sensors: Dict[str, List[str]] = {}
     zone_cameras: Dict[str, List[Dict]] = {}
+    # The same entries again, this time as the addressing the ingestion loops
+    # need: the detection loops above work off ids alone, but polling a device
+    # takes its ip, register, unit id and type, and opening a stream takes its
+    # rtsp_url. Both are carried in the session config the user generated.
+    modbus_specs: List[Dict[str, Any]] = []
     for zone_name, zone_data in zones.items():
         sensors_raw = zone_data.get("sensors", [])
         if isinstance(sensors_raw, list):
@@ -66,27 +84,35 @@ def main():
         else:
             zone_sensors[zone_name] = list(sensors_raw.keys())
 
+        for sensor_id, sensor_info in _iter_sources(sensors_raw):
+            modbus_specs.append({**sensor_info, "id": sensor_id, "zone": zone_name})
+
         cameras_raw = zone_data.get("cameras", [])
         zone_cameras[zone_name] = []
-        if isinstance(cameras_raw, list):
-            for c in cameras_raw:
-                camera_data = {
-                    "id": c["id"],
-                    "category": c.get("category", c["id"]),
-                }
-                zone_cameras[zone_name].append(camera_data)
-        elif isinstance(cameras_raw, dict):
-            for cam_id, cam_info in cameras_raw.items():
-                camera_data = {
-                    "id": cam_id,
-                    "category": cam_info.get("category", cam_id),
-                }
-                zone_cameras[zone_name].append(camera_data)
+        for cam_id, cam_info in _iter_sources(cameras_raw):
+            zone_cameras[zone_name].append({
+                "id": cam_id,
+                "category": cam_info.get("category", cam_id),
+                "rtsp_url": cam_info.get("rtsp_url"),
+            })
 
     for z, sensors in zone_sensors.items():
         logger.info(f"  Zone '{z}': {len(sensors)} sensors, {len(zone_cameras[z])} cameras")
         logger.info(f"    Sensors: {', '.join(sensors)}")
         logger.info(f"    Cameras: {', '.join(c['id'] for c in zone_cameras[z])}")
+
+    pollable = 0
+    for sensor in modbus_specs:
+        if sensor.get("ip") and sensor.get("register") is not None:
+            pollable += 1
+        else:
+            logger.warning(
+                f"  Sensor '{sensor['id']}' has no ip/register in the config "
+                f"(the interview recorded none), so it is not polled"
+            )
+    logger.info(
+        f"Modbus: {pollable}/{len(modbus_specs)} sensors have an address to poll"
+    )
 
     for zone_name in zones:
         for dtype in ("m2ad", "fusion"):
@@ -147,6 +173,33 @@ def main():
     threads.append(t)
     logger.info("Started status HTTP server on port 9100")
 
+    # The two ingestion loops go first: everything the detection loops score
+    # comes out of the tables and directories these fill.
+    t = threading.Thread(
+        target=modbus_poll_loop,
+        args=(modbus_specs,),
+        daemon=True,
+        name="modbus-poll",
+    )
+    t.start()
+    threads.append(t)
+    logger.info(f"Started Modbus polling thread ({len(modbus_specs)} sensors)")
+
+    all_cameras = []
+    for zone_name, cams in zone_cameras.items():
+        for cam in cams:
+            cam["zone"] = zone_name
+            all_cameras.append(cam)
+    t = threading.Thread(
+        target=capture_loop,
+        args=(all_cameras,),
+        daemon=True,
+        name="camera-capture",
+    )
+    t.start()
+    threads.append(t)
+    logger.info(f"Started RTSP capture thread ({len(all_cameras)} cameras)")
+
     for zone_name in zones:
         t = threading.Thread(
             target=sensor_detection_loop,
@@ -158,11 +211,6 @@ def main():
         threads.append(t)
         logger.info(f"Started sensor detection thread for '{zone_name}'")
 
-    all_cameras = []
-    for zone_name, cams in zone_cameras.items():
-        for cam in cams:
-            cam["zone"] = zone_name
-            all_cameras.append(cam)
     if all_cameras:
         t = threading.Thread(
             target=camera_detection_loop,

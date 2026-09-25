@@ -1,8 +1,17 @@
+import os
 import time
 
 from typing import Sequence
 
 from app.models import RegisteredSource, Zone
+
+# Where the browser running Grafana reaches the anomaly API. The detector
+# control panel below calls it from the user's machine (Train, detector
+# toggles, status poll), so this is the published port, not the in-network one
+# (the API listens on 8000 inside compose; docker-compose.yml maps 8001).
+ANOMALY_API_PUBLIC_URL = os.environ.get(
+    "ANOMALY_API_PUBLIC_URL", "http://localhost:8001"
+).rstrip("/")
 
 GRID_COLUMNS = 24
 
@@ -111,10 +120,13 @@ def _make_camera_panel(source: RegisteredSource, idx: int, y_offset: int) -> dic
     }
 
 
-def _make_alerts_panel(idx: int, y: int, zone_name: str = "") -> dict:
-    zone_filter = ""
-    if zone_name:
-        zone_filter = f"AND details->>'zone' = '{zone_name}' "
+def _sql_str(value: str) -> str:
+    """A SQL string literal. Zone names now come from a session title, so a
+    stray quote would otherwise end the literal early."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _make_alerts_panel(idx: int, y: int, zone_id: int) -> dict:
     return {
         "title": "Recent Alerts",
         "type": "table",
@@ -177,19 +189,26 @@ def _make_alerts_panel(idx: int, y: int, zone_name: str = "") -> dict:
                 "datasource": {"type": "postgres", "uid": "postgres"},
                 "format": "table",
                 "rawSql": (
-                    "SELECT timestamp, source_id AS source, "
-                    "anomaly_score AS score, '' AS snapshot "
-                    "FROM sensor_anomaly_results "
-                    "WHERE is_anomaly = true "
-                    "  AND source_id LIKE '%\_" + zone_name.replace("production_line_", "") + "' "
+                    "SELECT sar.timestamp, sar.source_id AS source, "
+                    "sar.anomaly_score AS score, '' AS snapshot "
+                    "FROM sensor_anomaly_results sar "
+                    "JOIN registered_sources rs ON rs.source_id = sar.source_id "
+                    f"WHERE sar.is_anomaly = true AND rs.zone_id = {zone_id} "
                     "UNION ALL "
-                    "SELECT timestamp, "
-                    "details->>'camera_id' AS source, "
-                    "anomaly_score AS score, "
-                    "details->>'anomaly_image_url' AS snapshot "
-                    "FROM image_detection_results "
-                    "WHERE is_anomaly = true AND details->>'anomaly_image_url' != '' "
-                    f"{zone_filter}"
+                    "SELECT idr.timestamp, "
+                    "idr.details->>'camera_id' AS source, "
+                    "idr.anomaly_score AS score, "
+                    # The heatmap overlay is the picture that shows *where* the
+                    # anomaly is, so prefer it over the bare frame; fall back to
+                    # the frame when the detector could not build one.
+                    "COALESCE(NULLIF(idr.details->>'heatmap_url', ''), "
+                    "         idr.details->>'anomaly_image_url') AS snapshot "
+                    "FROM image_detection_results idr "
+                    "JOIN registered_sources rs ON rs.source_id = idr.source_id "
+                    "WHERE idr.is_anomaly = true AND "
+                    "  COALESCE(NULLIF(idr.details->>'heatmap_url', ''), "
+                    "           idr.details->>'anomaly_image_url') != '' "
+                    f"  AND rs.zone_id = {zone_id} "
                     "ORDER BY timestamp DESC LIMIT 50"
                 ),
                 "refId": "A",
@@ -232,7 +251,6 @@ def build_zone_dashboard(zone: Zone, sources: Sequence[RegisteredSource]) -> dic
         ],
     })
     panel_id += 1
-    zone_letter = zone.name.replace("production_line_", "")
 
     panels.append({
         "title": "Critical Alerts",
@@ -260,11 +278,12 @@ def build_zone_dashboard(zone: Zone, sources: Sequence[RegisteredSource]) -> dic
                 "format": "table",
                 "rawSql": (
                     "SELECT COUNT(*) AS critical "
-                    "FROM alerts "
-                    "WHERE severity IN ('high', 'critical') "
-                    f"  AND (source_id LIKE '%\\_{zone_letter}' "
-                    f"       OR source_id = '{zone.name}' "
-                    f"       OR source_id LIKE 'zone\\_{zone.name}')"
+                    "FROM alerts a "
+                    "LEFT JOIN registered_sources rs ON rs.source_id = a.source_id "
+                    "WHERE a.severity IN ('high', 'critical') "
+                    f"  AND (rs.zone_id = {zone.id} "
+                    f"       OR a.source_id IN ({_sql_str(zone.name)}, "
+                    f"                         {_sql_str('zone_' + zone.name)}))"
                 ),
                 "refId": "A",
             }
@@ -329,7 +348,7 @@ def build_zone_dashboard(zone: Zone, sources: Sequence[RegisteredSource]) -> dic
                 f'    m2adBar.style.width = "0%";'
                 f'    m2adBar.style.background = "#7eb8da";'
                 f'    m2adSt.innerText = "pending...";'
-                f"    fetch('http://localhost:8000/admin/detector/train',{{method:'POST',headers:{{'Content-Type':'application/json'}},"
+                f"    fetch('{ANOMALY_API_PUBLIC_URL}/admin/detector/train',{{method:'POST',headers:{{'Content-Type':'application/json'}},"
                 f"      body:JSON.stringify({{zone_name:zn,detector_type:'m2ad'}})}})"
                 f'      .then(function() {{ setTimeout(poll, 2000); }});'
                 f'  }};'
@@ -337,14 +356,14 @@ def build_zone_dashboard(zone: Zone, sources: Sequence[RegisteredSource]) -> dic
                 f'    ckaadBar.style.width = "0%";'
                 f'    ckaadBar.style.background = "#7eb8da";'
                 f'    ckaadSt.innerText = "pending...";'
-                f"    fetch('http://localhost:8000/admin/detector/train',{{method:'POST',headers:{{'Content-Type':'application/json'}},"
+                f"    fetch('{ANOMALY_API_PUBLIC_URL}/admin/detector/train',{{method:'POST',headers:{{'Content-Type':'application/json'}},"
                 f"      body:JSON.stringify({{zone_name:'shared',detector_type:'ckaad'}})}})"
                 f'      .then(function() {{ setTimeout(poll, 2000); }});'
                 f'  }};'
                 f'  m2adTog.onclick = function(e) {{'
                 f'    var en = ds.m2ad;'
                 f'    var cmd = en ? "disable" : "enable";'
-                f"    fetch('http://localhost:8000/admin/detector/control',{{method:'POST',headers:{{'Content-Type':'application/json'}},"
+                f"    fetch('{ANOMALY_API_PUBLIC_URL}/admin/detector/control',{{method:'POST',headers:{{'Content-Type':'application/json'}},"
                 f"      body:JSON.stringify({{zone_name:zn,detector_type:'m2ad',command:cmd}})}})"
                 f'      .then(function() {{'
                 f'        ds.m2ad = !en;'
@@ -356,7 +375,7 @@ def build_zone_dashboard(zone: Zone, sources: Sequence[RegisteredSource]) -> dic
                 f'  ckaadTog.onclick = function(e) {{'
                 f'    var en = ds.ckaad;'
                 f'    var cmd = en ? "disable" : "enable";'
-                f"    fetch('http://localhost:8000/admin/detector/control',{{method:'POST',headers:{{'Content-Type':'application/json'}},"
+                f"    fetch('{ANOMALY_API_PUBLIC_URL}/admin/detector/control',{{method:'POST',headers:{{'Content-Type':'application/json'}},"
                 f"      body:JSON.stringify({{zone_name:zn,detector_type:'ckaad',command:cmd}})}})"
                 f'      .then(function() {{'
                 f'        ds.ckaad = !en;'
@@ -367,7 +386,7 @@ def build_zone_dashboard(zone: Zone, sources: Sequence[RegisteredSource]) -> dic
                 f'  }};'
                 f'  async function poll() {{'
                 f'    try {{'
-                f'      var r = await fetch("http://localhost:8000/admin/detector/status");'
+                f'      var r = await fetch("{ANOMALY_API_PUBLIC_URL}/admin/detector/status");'
                 f'      var d = await r.json();'
                 f'      var ts = d.training_state || {{}};'
                 f'      var m = ts["{zone_name}:m2ad"] || {{}};'
@@ -454,7 +473,7 @@ def build_zone_dashboard(zone: Zone, sources: Sequence[RegisteredSource]) -> dic
         n_rows = (len(camera_panels) + cols - 1) // cols
         y_cursor += n_rows * CAMERA_H
 
-    panels.append(_make_alerts_panel(panel_id, y_cursor, zone.name))
+    panels.append(_make_alerts_panel(panel_id, y_cursor, zone.id))
 
     return {
         "title": title,

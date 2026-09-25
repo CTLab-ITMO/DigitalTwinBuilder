@@ -5,8 +5,9 @@ import time
 from typing import Optional
 
 from detector.shared import (
+    alert_due,
     bump_severity,
-    check_and_clear_train,
+    clear_alert,
     compute_severity,
     fusion_lock,
     fusion_state,
@@ -20,6 +21,9 @@ from detector.shared import (
 logger = logging.getLogger("detector.fusion")
 
 FUSION_INTERVAL = float(os.environ.get("FUSION_INTERVAL", "30"))
+# One alert per sustained episode: a fused score above the threshold for an
+# hour is one anomaly, not 120 rows in `alerts`.
+FUSION_ALERT_COOLDOWN = float(os.environ.get("FUSION_ALERT_COOLDOWN_S", "300"))
 
 
 def fusion_loop(zone_name: str):
@@ -48,7 +52,6 @@ def fusion_loop(zone_name: str):
 
                     sensor_score = state["sensor_max_score"]
                     camera_score = state["camera_max_score"]
-                    sensor_anomaly_count = state["sensor_anomaly_count"]
 
                 if sensor_score == 0.0 and camera_score == 0.0:
                     shutdown_event.wait(timeout=FUSION_INTERVAL)
@@ -70,9 +73,18 @@ def fusion_loop(zone_name: str):
                     severity = compute_severity(camera_score)
                     alert_type = "camera_anomaly"
                 else:
-                    combined_score = max(sensor_score, camera_score)
-                    severity = "low"
-                    alert_type = "fused"
+                    # Nothing is anomalous: scores between zero and the
+                    # threshold are ordinary, and the old `fused`/"low" branch
+                    # wrote an alert for each of them every interval — an alert
+                    # stream for a quiet zone. Log the level and release any
+                    # episode's cooldown instead.
+                    clear_alert(f"fusion:{zone_name}")
+                    logger.debug(
+                        f"[{zone_name}] Fused below threshold: "
+                        f"sensor={sensor_score:.3f}, camera={camera_score:.3f}"
+                    )
+                    shutdown_event.wait(timeout=FUSION_INTERVAL)
+                    continue
 
                 logger.info(
                     f"[{zone_name}] Fused: sensor={sensor_score:.3f}, "
@@ -81,12 +93,9 @@ def fusion_loop(zone_name: str):
                 )
 
                 run_id = f"fused_{zone_name}_{int(time.time())}"
-                alert_details = {
-                    "sensor_max_score": float(sensor_score),
-                    "camera_max_score": float(camera_score),
-                    "combined_score": float(combined_score),
-                    "sensor_anomaly_count": int(sensor_anomaly_count),
-                }
+
+                if not alert_due(f"fusion:{zone_name}", FUSION_ALERT_COOLDOWN):
+                    continue
 
                 alerts = [
                     {
