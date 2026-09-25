@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useAppStore } from '../stores/app'
+import { t, tAgentStatus } from '../i18n'
 import type { Session } from '../types'
 
 const store = useAppStore()
@@ -20,7 +21,7 @@ function selectSession(id: string) {
 }
 
 function displayTitle(s: Session) {
-  return s.title || `Chat ${s.id.substring(0, 8)}`
+  return s.title || t('sidebar.chat', { id: s.id.substring(0, 8) })
 }
 
 function startRename(s: Session) {
@@ -57,9 +58,7 @@ async function commitRename(s: Session) {
 }
 
 async function onDelete(s: Session) {
-  const ok = confirm(
-    `Удалить сессию «${displayTitle(s)}»? Вместе с ней удалятся все её диалоги и сообщения.`
-  )
+  const ok = confirm(t('sidebar.confirmDelete', { title: displayTitle(s) }))
   if (!ok) return
   await store.deleteSession(s.id)
 }
@@ -68,9 +67,9 @@ async function onDelete(s: Session) {
 <template>
   <aside class="sidebar">
     <div class="sidebar-header">
-      <h2>Sessions</h2>
+      <h2>{{ t('sidebar.sessions') }}</h2>
       <button class="btn btn-primary" style="width:100%" @click="onNewChat">
-        + New Chat
+        {{ t('sidebar.newChat') }}
       </button>
     </div>
 
@@ -97,7 +96,7 @@ async function onDelete(s: Session) {
           </button>
 
           <span class="session-actions">
-            <button class="icon-btn" title="Переименовать" @click="startRename(s)">
+            <button class="icon-btn" :title="t('sidebar.rename')" @click="startRename(s)">
               <svg
                 viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
@@ -106,7 +105,7 @@ async function onDelete(s: Session) {
                 <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
               </svg>
             </button>
-            <button class="icon-btn danger" title="Удалить" @click="onDelete(s)">
+            <button class="icon-btn danger" :title="t('sidebar.delete')" @click="onDelete(s)">
               <svg
                 viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
@@ -122,7 +121,7 @@ async function onDelete(s: Session) {
       </div>
 
       <div v-if="store.sessions.length === 0" class="empty">
-        No sessions yet
+        {{ t('sidebar.empty') }}
       </div>
     </div>
 
@@ -139,8 +138,8 @@ async function onDelete(s: Session) {
             red: status?.status === 'offline' || !status
           }]"
         />
-        <span class="agent-label">Agent {{ i }}</span>
-        <span class="agent-state">{{ status?.status || 'offline' }}</span>
+        <span class="agent-label">{{ t('sidebar.agent', { i }) }}</span>
+        <span class="agent-state">{{ tAgentStatus(status?.status) }}</span>
       </div>
     </div>
   </aside>

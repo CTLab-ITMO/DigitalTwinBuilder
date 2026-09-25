@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import { useAppStore } from './stores/app'
+import { locale, setLocale, t, type MessageKey } from './i18n'
 import SessionSidebar from './components/SessionSidebar.vue'
 import InterviewTab from './components/InterviewTab.vue'
 import DatabaseTab from './components/DatabaseTab.vue'
@@ -9,7 +10,7 @@ import SettingsTab from './components/SettingsTab.vue'
 
 const store = useAppStore()
 
-const tabs = ['Интервью', 'База данных', 'Цифровой двойник', 'Настройки']
+const tabs: MessageKey[] = ['tab.interview', 'tab.database', 'tab.twin', 'tab.settings']
 
 onMounted(() => {
   store.loadSessions()
@@ -23,17 +24,31 @@ onMounted(() => {
 
     <main class="main-area">
       <header class="top-bar">
-        <h1>Digital Twin Builder</h1>
+        <h1>{{ t('app.title') }}</h1>
+        <div class="lang-switch">
+          <button
+            :class="['lang-btn', { active: locale === 'ru' }]"
+            @click="setLocale('ru')"
+          >
+            RU
+          </button>
+          <button
+            :class="['lang-btn', { active: locale === 'en' }]"
+            @click="setLocale('en')"
+          >
+            EN
+          </button>
+        </div>
       </header>
 
       <div class="tabs">
         <button
           v-for="(tab, i) in tabs"
-          :key="i"
+          :key="tab"
           :class="['tab', { active: store.activeTab === i }]"
           @click="store.activeTab = i"
         >
-          {{ tab }}
+          {{ t(tab) }}
         </button>
       </div>
 
@@ -98,11 +113,44 @@ html, body, #app {
 .top-bar {
   padding: 16px 24px;
   border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
 }
 
 .top-bar h1 {
   font-size: 20px;
   font-weight: 600;
+}
+
+.lang-switch {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.lang-btn {
+  padding: 6px 12px;
+  border: none;
+  background: var(--surface2);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.lang-btn:hover {
+  color: var(--text);
+}
+
+.lang-btn.active {
+  background: var(--accent);
+  color: white;
 }
 
 .tabs {

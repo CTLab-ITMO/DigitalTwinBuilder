@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useAppStore } from '../stores/app'
+import { t } from '../i18n'
 
 const store = useAppStore()
 const generatingConfig = ref(false)
@@ -20,7 +21,7 @@ async function generateConfig() {
   try {
     const convId = await store.ensureConversation(agentId, 0)
     if (!convId) {
-      store.error = 'Не удалось создать conversation — проверьте API'
+      store.error = t('error.createConversation')
       return
     }
     await store.generateTwinConfig(convId)
@@ -35,7 +36,7 @@ async function generateSim() {
   try {
     const convId = await store.ensureConversation(agentId, 1)
     if (!convId) {
-      store.error = 'Не удалось создать conversation — проверьте API'
+      store.error = t('error.createConversation')
       return
     }
     await store.generateTwinSim(convId)
@@ -53,7 +54,7 @@ async function generateDes() {
   try {
     const convId = await store.ensureConversation(agentId, desConvIdx)
     if (!convId) {
-      store.error = 'Не удалось создать conversation — проверьте API'
+      store.error = t('error.createConversation')
       return
     }
     await store.generateDesModel(convId)
@@ -82,79 +83,78 @@ function regenSim() {
 
 <template>
   <div class="twin-tab">
-    <h2>Конфигурация цифрового двойника</h2>
+    <h2>{{ t('twin.title') }}</h2>
 
     <div v-if="!store.dbSchema" class="card warning">
-      ⚠️ Пожалуйста, завершите настройку базы данных
+      {{ t('twin.needDb') }}
     </div>
 
     <template v-if="store.dbSchema">
       <div class="card">
-        <h3>SQL код для БД</h3>
+        <h3>{{ t('twin.sqlHeading') }}</h3>
         <details>
-          <summary>Просмотр SQL</summary>
+          <summary>{{ t('twin.viewSql') }}</summary>
           <pre class="code-block"><code>{{ store.dbSchema }}</code></pre>
         </details>
         <button class="btn btn-secondary" style="margin-top:8px" @click="download('schema.sql', store.dbSchema!)">
-          Скачать SQL
+          {{ t('twin.downloadSql') }}
         </button>
       </div>
 
       <div v-if="!store.twinConfig" class="card">
         <button class="btn btn-primary" :disabled="generatingConfig" @click="generateConfig">
-          {{ generatingConfig ? 'Generating...' : 'Сгенерировать конфигурацию' }}
+          {{ generatingConfig ? t('common.generating') : t('twin.generateConfig') }}
         </button>
         <p v-if="!generatingConfig && store.twinVerdict?.slot === 'gen_conf' && !store.twinVerdict.ok" class="verdict bad">
-          {{ store.twinVerdict.report || 'Агент не вернул ответ' }}
+          {{ store.twinVerdict.report || t('twin.noReply') }}
         </p>
       </div>
 
       <div v-if="store.twinConfig" class="card">
-        <h3>Конфигурация цифрового двойника</h3>
+        <h3>{{ t('twin.configHeading') }}</h3>
         <details open>
-          <summary>Посмотреть конфигурацию ЦД</summary>
+          <summary>{{ t('twin.viewConfig') }}</summary>
           <pre class="code-block"><code>{{ JSON.stringify(store.twinConfig, null, 2) }}</code></pre>
         </details>
       </div>
 
       <div v-if="store.twinConfig" class="card">
-        <h3>Код симуляции PyChrono</h3>
+        <h3>{{ t('twin.simHeading') }}</h3>
         <div v-if="!store.simulationCode">
           <button class="btn btn-primary" :disabled="generatingSim" @click="generateSim">
-            {{ generatingSim ? 'Generating...' : 'Сгенерировать код' }}
+            {{ generatingSim ? t('common.generating') : t('twin.generateCode') }}
           </button>
           <p v-if="!generatingSim && store.twinVerdict?.slot === 'gen_sim' && !store.twinVerdict.ok" class="verdict bad">
-            {{ store.twinVerdict.report || 'Агент не вернул ответ' }}
+            {{ store.twinVerdict.report || t('twin.noReply') }}
           </p>
         </div>
         <div v-if="store.simulationCode">
           <details open>
-            <summary>Просмотр кода PyChrono</summary>
+            <summary>{{ t('twin.viewChrono') }}</summary>
             <pre class="code-block"><code>{{ store.simulationCode }}</code></pre>
           </details>
           <div style="display:flex;gap:8px;margin-top:8px">
             <button class="btn btn-secondary" @click="download('simulation.py', store.simulationCode!)">
-              Скачать код
+              {{ t('twin.downloadCode') }}
             </button>
             <button class="btn btn-secondary" @click="regenSim">
-              Перегенерировать
+              {{ t('twin.regenerate') }}
             </button>
           </div>
         </div>
       </div>
 
       <div v-if="store.twinConfig" class="card">
-        <h3>DES-модель (SimPy)</h3>
+        <h3>{{ t('twin.desHeading') }}</h3>
 
         <div v-if="!store.desCode">
           <button class="btn btn-primary" :disabled="generatingDes" @click="generateDes">
-            {{ generatingDes ? 'Generating...' : 'Сгенерировать DES-модель' }}
+            {{ generatingDes ? t('common.generating') : t('twin.generateDes') }}
           </button>
         </div>
 
         <p v-if="generatingDes" class="hint">
-          Модель генерируется, запускается и при ошибке отправляется на
-          исправление — до тех пор, пока не завершится и не напечатает KPI.
+          {{ t('twin.desRunning') }}
         </p>
 
         <div v-if="store.pipelineJob && store.pipelineJob.slot === 'des' && store.pipelineJob.attempts.length" class="attempts">
@@ -163,30 +163,30 @@ function regenSim() {
             :key="a.attempt"
             :class="['attempt', a.ok ? 'ok' : 'bad']"
           >
-            Попытка {{ a.attempt + 1 }}:
-            {{ a.attempt === 0 ? 'генерация' : 'исправление' }} —
-            {{ a.chars }} симв.
-            {{ a.ok ? '— запускается и печатает KPI' : `— не прошла (${a.status || 'no_reply'})` }}
+            {{ t('twin.attempt', { n: a.attempt + 1 }) }}
+            {{ a.attempt === 0 ? t('twin.attemptGen') : t('twin.attemptRepair') }} —
+            {{ t('twin.chars', { n: a.chars }) }}
+            {{ a.ok ? t('twin.attemptOk') : t('twin.attemptBad', { status: a.status || 'no_reply' }) }}
           </div>
         </div>
 
         <div v-if="store.desVerdict && !generatingDes" :class="['verdict', store.desVerdict.ok ? 'ok' : 'bad']">
-          {{ store.desVerdict.ok ? 'Модель запускается и сообщает KPI' : 'Модель не прошла проверку' }}:
-          попыток {{ store.desVerdict.attempts }}, исправлений {{ store.desVerdict.repaired }}.
+          {{ store.desVerdict.ok ? t('twin.desOk') : t('twin.desBad') }}:
+          {{ t('twin.attemptsRepairs', { attempts: store.desVerdict.attempts, repaired: store.desVerdict.repaired }) }}
         </div>
 
         <div v-if="store.desVerdict?.ok" class="kpis">
           <div class="kpi">
-            <span class="kpi-label">Throughput</span>
-            <span class="kpi-value">{{ fmt(store.desVerdict.kpis.throughput_per_hour) }} parts/hour</span>
+            <span class="kpi-label">{{ t('kpi.throughput') }}</span>
+            <span class="kpi-value">{{ fmt(store.desVerdict.kpis.throughput_per_hour) }} {{ t('unit.partsPerHour') }}</span>
           </div>
           <div class="kpi">
-            <span class="kpi-label">WIP</span>
-            <span class="kpi-value">{{ fmt(store.desVerdict.kpis.wip_parts) }} parts</span>
+            <span class="kpi-label">{{ t('kpi.wip') }}</span>
+            <span class="kpi-value">{{ fmt(store.desVerdict.kpis.wip_parts) }} {{ t('unit.parts') }}</span>
           </div>
           <div class="kpi">
-            <span class="kpi-label">Energy / part</span>
-            <span class="kpi-value">{{ fmt(store.desVerdict.kpis.energy_per_part_kwh, 3) }} kWh/part</span>
+            <span class="kpi-label">{{ t('kpi.energy') }}</span>
+            <span class="kpi-value">{{ fmt(store.desVerdict.kpis.energy_per_part_kwh, 3) }} {{ t('unit.kwhPerPart') }}</span>
           </div>
         </div>
 
@@ -194,15 +194,15 @@ function regenSim() {
 
         <div v-if="store.desCode">
           <details open>
-            <summary>Просмотр кода SimPy</summary>
+            <summary>{{ t('twin.viewSimpy') }}</summary>
             <pre class="code-block"><code>{{ store.desCode }}</code></pre>
           </details>
           <div style="display:flex;gap:8px;margin-top:8px">
             <button class="btn btn-secondary" @click="download('des_model.py', store.desCode!)">
-              Скачать код
+              {{ t('twin.downloadCode') }}
             </button>
             <button class="btn btn-primary" :disabled="generatingDes" @click="generateDes">
-              Перегенерировать
+              {{ t('twin.regenerate') }}
             </button>
           </div>
         </div>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useAppStore } from '../stores/app'
+import { t, tAgentStatus } from '../i18n'
 
 const store = useAppStore()
 const health = ref<any>(null)
@@ -15,10 +16,10 @@ onMounted(async () => {
 
 <template>
   <div class="settings-tab">
-    <h2>Настройки</h2>
+    <h2>{{ t('settings.title') }}</h2>
 
     <div class="card">
-      <h3>Статус агентов</h3>
+      <h3>{{ t('settings.agentStatus') }}</h3>
       <div class="agent-grid">
         <div
           v-for="(status, i) in store.agentStatuses"
@@ -31,12 +32,12 @@ onMounted(async () => {
               yellow: status?.status === 'busy',
               red: !status || status?.status === 'offline'
             }]" />
-            <strong>Agent {{ i }}</strong>
+            <strong>{{ t('sidebar.agent', { i }) }}</strong>
           </div>
           <div class="agent-info">
-            <span>Status: <strong>{{ status?.status || 'offline' }}</strong></span>
+            <span>{{ t('settings.status') }} <strong>{{ tAgentStatus(status?.status) }}</strong></span>
             <span v-if="status?.last_heartbeat">
-              Last heartbeat: {{ new Date(status.last_heartbeat).toLocaleTimeString() }}
+              {{ t('settings.lastHeartbeat', { t: new Date(status.last_heartbeat).toLocaleTimeString() }) }}
             </span>
           </div>
         </div>
@@ -44,22 +45,22 @@ onMounted(async () => {
     </div>
 
     <div class="card">
-      <h3>Очереди задач</h3>
+      <h3>{{ t('settings.queues') }}</h3>
       <div class="queue-grid">
         <div v-for="(q, i) in store.queueStatuses" :key="i" class="queue-item">
-          <strong>Agent {{ i }}</strong>
-          <span>Pending: {{ q.pending_count }}</span>
-          <span>Active: {{ q.active_task ? 'Yes' : 'No' }}</span>
+          <strong>{{ t('sidebar.agent', { i }) }}</strong>
+          <span>{{ t('settings.pending', { n: q.pending_count }) }}</span>
+          <span>{{ t('settings.active', { v: q.active_task ? t('settings.yes') : t('settings.no') }) }}</span>
         </div>
       </div>
     </div>
 
     <div class="card" v-if="health">
-      <h3>API Health</h3>
+      <h3>{{ t('settings.apiHealth') }}</h3>
       <div class="health-info">
-        <span>Status: <strong :style="{color: health.status === 'healthy' ? 'var(--green)' : 'var(--red)'}">{{ health.status }}</strong></span>
-        <span>Database: {{ health.database }}</span>
-        <span>Pool: {{ health.pool }}</span>
+        <span>{{ t('settings.status') }} <strong :style="{color: health.status === 'healthy' ? 'var(--green)' : 'var(--red)'}">{{ health.status }}</strong></span>
+        <span>{{ t('settings.database', { v: health.database }) }}</span>
+        <span>{{ t('settings.pool', { v: health.pool }) }}</span>
         <span>{{ health.timestamp }}</span>
       </div>
     </div>

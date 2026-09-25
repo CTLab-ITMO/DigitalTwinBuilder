@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useAppStore } from '../stores/app'
+import { t } from '../i18n'
 
 const store = useAppStore()
 const generating = ref(false)
@@ -18,7 +19,7 @@ async function generateSchema() {
   try {
     const convId = await store.ensureConversation(agentId, convIdx)
     if (!convId) {
-      store.error = 'Не удалось создать conversation — проверьте API'
+      store.error = t('error.createConversation')
       return
     }
     await store.generateDbSchema(convId)
@@ -30,15 +31,15 @@ async function generateSchema() {
 
 <template>
   <div class="db-tab">
-    <h2>Настройка базы данных</h2>
+    <h2>{{ t('db.title') }}</h2>
 
     <div v-if="!store.interviewResult" class="card warning">
-      Пожалуйста, завершите интервью на вкладке «Интервью»
+      {{ t('db.needInterview') }}
     </div>
 
     <template v-if="store.interviewResult">
       <div class="card">
-        <h3>Результат интервью</h3>
+        <h3>{{ t('db.interviewResult') }}</h3>
         <pre class="json-display">{{ JSON.stringify(store.interviewResult, null, 2) }}</pre>
       </div>
 
@@ -48,32 +49,29 @@ async function generateSchema() {
         :disabled="generating"
         @click="generateSchema"
       >
-        {{ generating ? 'Generating...' : 'Сгенерировать схему БД' }}
+        {{ generating ? t('common.generating') : t('db.generate') }}
       </button>
 
       <div v-if="generating" class="card">
-        <h3>Проверка схемы</h3>
+        <h3>{{ t('db.checking') }}</h3>
         <p class="hint">
-          Агент генерирует схему, она проверяется как PostgreSQL, и при ошибке
-          запрашивается исправление. Это может занять несколько минут.
+          {{ t('db.checkingHint') }}
         </p>
       </div>
 
       <div v-if="store.dbVerdict && !generating" class="card" :class="{ ok: store.dbVerdict.ok, bad: !store.dbVerdict.ok }">
-        <h3>{{ store.dbVerdict.ok ? 'Схема проверена' : 'Схема не прошла проверку' }}</h3>
+        <h3>{{ store.dbVerdict.ok ? t('db.ok') : t('db.bad') }}</h3>
         <p class="verdict">
-          Попыток: {{ store.dbVerdict.attempts }}, исправлений:
-          {{ store.dbVerdict.repaired }}
+          {{ t('db.attempts', { attempts: store.dbVerdict.attempts, repaired: store.dbVerdict.repaired }) }}
           <template v-if="store.dbVerdict.summary?.tables !== undefined">
-            — таблиц: {{ store.dbVerdict.summary.tables }},
-            представлений: {{ store.dbVerdict.summary.views ?? 0 }}
+            {{ t('db.tables', { tables: store.dbVerdict.summary.tables, views: store.dbVerdict.summary.views ?? 0 }) }}
           </template>
         </p>
         <pre v-if="!store.dbVerdict.ok && store.dbVerdict.report" class="report">{{ store.dbVerdict.report }}</pre>
       </div>
 
       <div v-if="store.dbSchema" class="card">
-        <h3>Схема базы данных</h3>
+        <h3>{{ t('db.schema') }}</h3>
         <pre class="sql-display"><code>{{ store.dbSchema }}</code></pre>
       </div>
     </template>

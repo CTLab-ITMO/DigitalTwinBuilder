@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useAppStore } from '../stores/app'
+import { t } from '../i18n'
 
 const store = useAppStore()
 const input = ref('')
@@ -52,14 +53,14 @@ async function send() {
     if (!store.currentSessionId) {
       const sid = await store.createSession()
       if (!sid) {
-        store.error = 'Не удалось создать сессию — проверьте API'
+        store.error = t('error.createSession')
         return
       }
     }
 
     const convId = await getOrCreateConv()
     if (!convId) {
-      store.error = 'Не удалось создать conversation — проверьте API'
+      store.error = t('error.createConversation')
       return
     }
 
@@ -87,18 +88,17 @@ async function send() {
 <template>
   <div class="interview-tab">
     <div class="scroll-area">
-      <h2>Создание цифрового двойника производства</h2>
+      <h2>{{ t('interview.title') }}</h2>
 
       <div v-if="store.interviewResult" class="card completed">
-        <strong>✓ Интервью завершено</strong>
-        <p class="hint">Перейдите на вкладку «База данных»</p>
+        <strong>{{ t('interview.completed') }}</strong>
+        <p class="hint">{{ t('interview.completedHint') }}</p>
       </div>
 
       <div v-if="store.uiVerdict && !store.uiVerdict.ok && !isProcessing" class="card failed">
-        <strong>Ответ агента не удалось разобрать</strong>
+        <strong>{{ t('interview.failed') }}</strong>
         <p class="hint">
-          Попыток: {{ store.uiVerdict.attempts }}. Ниже — что именно не так;
-          отправьте сообщение ещё раз, чтобы агент ответил заново.
+          {{ t('interview.failedHint', { n: store.uiVerdict.attempts }) }}
         </p>
         <pre class="report">{{ store.uiVerdict.report }}</pre>
       </div>
@@ -114,9 +114,9 @@ async function send() {
         <div v-if="isWaiting" class="message assistant">
           <div class="msg-content">
             <span class="spinner" style="display:inline-block;vertical-align:middle" />
-            Processing...
+            {{ t('interview.processing') }}
             <span v-if="repairs" class="repairs">
-              ответ не разобран, исправление {{ repairs }}
+              {{ t('interview.repair', { n: repairs }) }}
             </span>
           </div>
         </div>
@@ -126,12 +126,12 @@ async function send() {
     <div class="bottom-bar">
       <div class="card params-card">
         <div class="param-row">
-          <label>Temperature</label>
+          <label>{{ t('interview.temperature') }}</label>
           <input type="range" min="0" max="2" step="0.1" v-model.number="temperature" />
           <span class="param-value">{{ temperature }}</span>
         </div>
         <div class="param-row">
-          <label>Max Tokens</label>
+          <label>{{ t('interview.maxTokens') }}</label>
           <input type="number" v-model.number="maxTokens" min="100" max="10000" />
         </div>
       </div>
@@ -140,12 +140,12 @@ async function send() {
         <input
           v-model="input"
           type="text"
-          placeholder="Введите информацию о вашем производстве..."
+          :placeholder="t('interview.placeholder')"
           :disabled="!!store.interviewResult || isProcessing"
           @keydown.enter="send"
         />
         <button class="btn btn-primary" @click="send" :disabled="!input.trim() || isProcessing">
-          Send
+          {{ t('interview.send') }}
         </button>
       </div>
     </div>

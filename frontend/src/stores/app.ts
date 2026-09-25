@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { api } from '../api/client'
+import { t } from '../i18n'
 import type { Session, Conversation, Message, AgentStatus, QueueStatus, PipelineJob, PipelinePrompts, DbPipelineResult, DesPipelineResult, UiPipelineResult, TwinPipelineResult } from '../types'
 
 const UI_AGENT = 0
@@ -296,8 +297,7 @@ export const useAppStore = defineStore('app', () => {
         // silence: the transcript showed a finished interview while the DB tab
         // kept saying the interview was never completed. Say it out loud, and
         // leave the input enabled so the user can ask for the answer again.
-        error.value =
-          'Ответ агента не удалось разобрать как JSON — попросите его повторить или исправить ответ.'
+        error.value = t('error.jsonParse')
       }
     } else if (agentId === 1) {
       // DB agent — the broker unwraps the fence before handing the schema over,
@@ -310,7 +310,7 @@ export const useAppStore = defineStore('app', () => {
         const parsed = parseJsonObject(result)
         if (parsed) twinConfig.value = parsed
         else if (result.includes('{')) {
-          error.value = 'Ответ агента не удалось разобрать как JSON — попросите его повторить.'
+          error.value = t('error.jsonParseShort')
         }
       } else if (convIdx === 1) {
         // Simulation code
@@ -419,8 +419,8 @@ export const useAppStore = defineStore('app', () => {
         conv_idx: 0,
       })
       const job = await pollJob(started.job_id)
-      if (!job) { error.value = 'Превышено время ожидания генерации схемы'; return null }
-      if (job.status === 'failed') { error.value = job.error || 'Ошибка генерации схемы'; return null }
+      if (!job) { error.value = t('error.dbTimeout'); return null }
+      if (job.status === 'failed') { error.value = job.error || t('error.dbError'); return null }
 
       const result = job.result as DbPipelineResult | null
       if (!result) return null
@@ -446,8 +446,8 @@ export const useAppStore = defineStore('app', () => {
         conv_idx: DES_CONV_IDX,
       })
       const job = await pollJob(started.job_id)
-      if (!job) { error.value = 'Превышено время ожидания генерации DES-модели'; return null }
-      if (job.status === 'failed') { error.value = job.error || 'Ошибка генерации DES-модели'; return null }
+      if (!job) { error.value = t('error.desTimeout'); return null }
+      if (job.status === 'failed') { error.value = job.error || t('error.desError'); return null }
 
       const result = job.result as DesPipelineResult | null
       if (!result) return null
@@ -492,11 +492,11 @@ export const useAppStore = defineStore('app', () => {
       // once — so only the finished job is read.
       const job = await waitForJob(started.job_id, () => {})
       if (!job) {
-        error.value = 'Превышено время ожидания ответа агента'
+        error.value = t('error.agentTimeout')
         return null
       }
       if (job.status === 'failed') {
-        error.value = job.error || 'Ошибка генерации'
+        error.value = job.error || t('error.generationError')
         return null
       }
 
@@ -506,7 +506,7 @@ export const useAppStore = defineStore('app', () => {
       if (!result.ok || !result.artifact) {
         // The turn produced no reply at all — say so rather than leaving the
         // button silently reset with nothing on screen.
-        error.value = result.report || 'Агент не вернул ответ'
+        error.value = result.report || t('error.noReply')
         return result
       }
       // The broker hands the reply back as it was written; reading it is still
@@ -514,7 +514,7 @@ export const useAppStore = defineStore('app', () => {
       if (slot === 'gen_conf') {
         const parsed = parseJsonObject(result.artifact)
         if (parsed) twinConfig.value = parsed
-        else error.value = 'Ответ агента не удалось разобрать как JSON — попросите его повторить.'
+        else error.value = t('error.jsonParseShort')
       } else {
         const start = result.artifact.lastIndexOf('</think>')
         simulationCode.value = start !== -1 ? result.artifact.substring(start + 8) : result.artifact
@@ -567,11 +567,11 @@ export const useAppStore = defineStore('app', () => {
       })
       const job = await waitForJob(started.job_id, j => { uiJob.value = j })
       if (!job) {
-        error.value = 'Превышено время ожидания ответа агента'
+        error.value = t('error.agentTimeout')
         return null
       }
       if (job.status === 'failed') {
-        error.value = job.error || 'Ошибка обработки ответа агента'
+        error.value = job.error || t('error.agentError')
         return null
       }
 
@@ -585,8 +585,7 @@ export const useAppStore = defineStore('app', () => {
         // The reply could not be read as the schema's JSON even after the repair
         // turns. Say it out loud and leave the input enabled — the alternative
         // is a chat that looks finished while the DB tab says otherwise.
-        error.value =
-          'Ответ агента не удалось разобрать как JSON после нескольких попыток — попросите его повторить или исправить ответ.'
+        error.value = t('error.jsonParseFinal')
       }
       return result
     } catch (e: any) {
