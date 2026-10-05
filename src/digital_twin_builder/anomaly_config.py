@@ -22,6 +22,7 @@ the production type, then `production_line`.
 from __future__ import annotations
 
 import json
+import math
 import re
 
 __all__ = ["build_anomaly_config"]
@@ -249,10 +250,37 @@ def _as_int(value) -> int | None:
     return None
 
 
+def _as_float(value) -> float | None:
+    """A positive, finite number, or None.
+
+    A scale factor is a fixed-point multiplier — 0.1 for a ×10 register, 0.001
+    for a ×1000 one — so unlike an address it is usually not an integer and
+    `_as_int` would drop it. Zero, negatives and NaN/inf are not multipliers:
+    they are dropped here so the reader keeps its 1.0 default instead of
+    flattening or inverting every reading.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+    elif isinstance(value, str):
+        try:
+            number = float(value.strip())
+        except ValueError:
+            return None
+    else:
+        return None
+    if not math.isfinite(number) or number <= 0:
+        return None
+    return number
+
+
 # Which addressing keys each device carries, and how each is read. Defined here
 # because the coercers above are what they name; the order is the output order.
 # `register_type` is the Modbus table the register lives in (holding, input,
 # coil, discrete), defaulting to a holding register downstream when absent.
+# `scale` is the device's fixed-point multiplier (absent means 1:1).
 _SENSOR_KEYS = {"ip": _text, "port": _as_int, "unit_id": _as_int,
-                "register": _as_int, "register_type": _text, "data_type": _text}
+                "register": _as_int, "register_type": _text, "data_type": _text,
+                "scale": _as_float}
 _CAMERA_KEYS = {"ip": _text, "port": _as_int, "stream_path": _text}

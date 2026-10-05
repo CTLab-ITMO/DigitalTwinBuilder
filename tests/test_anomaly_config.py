@@ -88,6 +88,37 @@ def test_keeps_the_modbus_addressing():
     assert sensor["unit"] == "C"
 
 
+def test_scale_carries_through_as_a_float():
+    """A fixed-point multiplier survives the mapping, text or number alike."""
+    config = anomaly_config.build_anomaly_config({
+        "sensors": [
+            {"id": "boiler", "register": 0, "data_type": "int16", "scale": 0.1},
+            {"id": "tank", "register": 2, "data_type": "int16", "scale": "0.001"},
+        ]
+    })
+    sensors = config["production_line"]["sensors"]
+
+    assert sensors[0]["scale"] == 0.1
+    assert sensors[1]["scale"] == 0.001
+
+
+def test_a_scale_that_is_not_a_positive_number_is_dropped():
+    """Zero, negatives, non-numbers and bools are not multipliers, so they are
+    absent — the reader then keeps its 1.0 default instead of flattening or
+    inverting every reading of that sensor."""
+    config = anomaly_config.build_anomaly_config({
+        "sensors": [
+            {"id": "a", "register": 1, "scale": 0},
+            {"id": "b", "register": 2, "scale": -1},
+            {"id": "c", "register": 3, "scale": "half"},
+            {"id": "d", "register": 4, "scale": True},
+            {"id": "e", "register": 5, "scale": None},
+        ]
+    })
+    for sensor in config["production_line"]["sensors"]:
+        assert "scale" not in sensor
+
+
 def test_invents_no_address_the_user_did_not_give():
     sensor = anomaly_config.build_anomaly_config(REQ)["линия_розлива"]["sensors"][1]
 

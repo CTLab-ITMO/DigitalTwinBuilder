@@ -164,6 +164,12 @@ services:
     profiles: ["anomaly"]
     restart: unless-stopped
     logging: *default-logging
+    # The repo lives on an NTFS mount, which has no SELinux xattrs, so the
+    # bind-mounted init script is unlabeled and `container_t` is denied it
+    # under an enforcing host. Disable label confinement for this service, as
+    # the grafana service below does.
+    security_opt:
+      - label=disable
     environment:
       POSTGRES_USER: anomalydb
       POSTGRES_PASSWORD: anomalydb
@@ -220,6 +226,11 @@ services:
   grafana:
     image: grafana/grafana:latest
     profiles: ["anomaly"]
+    # The repo lives on an NTFS mount, which has no SELinux xattrs, so the
+    # bind-mounted provisioning files are unlabeled and `container_t` is denied
+    # them under an enforcing host. Disable label confinement for this service.
+    security_opt:
+      - label=disable
     restart: unless-stopped
     logging: *default-logging
     ports:
@@ -271,6 +282,11 @@ services:
       # — so the link has to name the published port, not this network's.
       ANOMALY_API_PUBLIC_URL: ${ANOMALY_API_PUBLIC_URL:-http://localhost:8001}
       SENSOR_DETECT_INTERVAL: "30"
+      # M2AD p-value cutoff for `is_anomaly`. Lowered from 0.05 to 0.02: at
+      # 0.05 the loop flagged ~6.5% of scored timesteps, mostly ordinary brew
+      # dynamics rather than faults. 0.02 keeps the injected empty-tank and
+      # boiler-overheat faults (p ~= 0.012) detectable while cutting the tail.
+      SENSOR_PVALUE_THRESHOLD: "0.02"
       CAMERA_DETECT_INTERVAL: "15"
       FUSION_INTERVAL: "30"
       # How often the RTSP loop grabs a frame, and how old a frame may be before

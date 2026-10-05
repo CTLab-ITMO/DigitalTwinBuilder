@@ -13,6 +13,7 @@ Nothing here is fatal.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import struct
 import time
@@ -110,6 +111,30 @@ def decode_registers(data_type: Optional[str], registers: List[int]) -> Optional
     return float(struct.unpack(fmt, raw)[0])
 
 
+def _scale_of(spec: Dict[str, Any]) -> float:
+    """The multiplier that turns a register's integer into physical units.
+
+    Devices report fixed-point integers: 930 in a ×10 register is 93.0 °C, and
+    a tank at 0.98 may be stored as 980 in a ×1000 register. Without the scale
+    the detector scores raw counts whose units differ by three orders of
+    magnitude between channels, so its z-scores are comparing unlike things.
+    A missing scale is 1.0; a malformed, zero or negative one is warned about
+    and treated as 1.0 rather than flattening or inverting every reading.
+    """
+    raw = spec.get("scale", 1.0)
+    if raw is None:
+        return 1.0
+    try:
+        scale = float(raw)
+    except (TypeError, ValueError):
+        logger.warning("[%s] scale %r is not a number; using 1.0", spec.get("id"), raw)
+        return 1.0
+    if not math.isfinite(scale) or scale <= 0:
+        logger.warning("[%s] scale %r is not positive; using 1.0", spec.get("id"), raw)
+        return 1.0
+    return scale
+
+
 def _read_value(client, spec: Dict[str, Any]) -> Optional[float]:
     """One value from one sensor over an already-connected client."""
     sensor_id = spec.get("id")
@@ -129,8 +154,12 @@ def _read_value(client, spec: Dict[str, Any]) -> Optional[float]:
         logger.warning("[%s] read error at register %s: %s", sensor_id, register, response)
         return None
     if not is_word:
+        # Coils and discrete inputs are one bit; a scale would be meaningless.
         return float(bool(response.bits[0])) if response.bits else None
-    return decode_registers(data_type, list(response.registers))
+    value = decode_registers(data_type, list(response.registers))
+    if value is None:
+        return None
+    return value * _scale_of(spec)
 
 
 def fetch_sensor_value(spec: Dict[str, Any]) -> Optional[float]:

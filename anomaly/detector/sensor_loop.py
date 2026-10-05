@@ -28,6 +28,14 @@ logger = logging.getLogger("detector.sensor")
 SENSOR_INTERVAL = float(os.environ.get("SENSOR_DETECT_INTERVAL", "30"))
 MAX_READINGS = int(os.environ.get("SENSOR_MAX_READINGS", "5000"))
 RETRAIN_EVERY = int(os.environ.get("SENSOR_RETRAIN_EVERY", "10"))
+# Readings before the first fit. The window capping below technically lets a fit
+# open at ~20 readings, but an LSTM autoencoder + GMM fitted on a hundred-odd
+# samples is not stable: measured over seeds, a fit at 120 readings flagged 0-6
+# samples on the same held-out data, while every fit at >= 160 was clean. So the
+# first fit waits for a floor that actually contains a signal to learn. A Train
+# press is still honoured once the floor is met; this only gates the automatic
+# first fit.
+MIN_TRAIN_READINGS = int(os.environ.get("SENSOR_MIN_TRAIN_READINGS", "150"))
 # One alert per sustained episode: M2AD over the threshold for an hour is one
 # anomaly, not 120 rows in `alerts`.
 SENSOR_ALERT_COOLDOWN = float(os.environ.get("SENSOR_ALERT_COOLDOWN_S", "300"))
@@ -48,6 +56,16 @@ MIN_FIT_SAMPLES = 9
 MIN_WINDOW = 2
 MAX_WINDOW = 100
 TEST_FRACTION = 0.2
+# p-value cutoff for `is_anomaly`. The library default (0.01) left `area` with
+# almost no dynamic range on this data, so the cutoff had been raised to 0.05.
+# Measured live at 0.05 the loop flagged ~6.5% of scored timesteps, and those
+# flags are ordinary brew dynamics (tank draining, then the level reset) rather
+# than faults. Walk-forward refits showed no cutoff that cleanly separates
+# normal from fault — normal p-values reach down to ~0.0003 — so this is a
+# pragmatic tightening, not a calibrated operating point. 0.02 keeps the
+# injected empty-tank / boiler-overheat faults (which reach p ~= 0.012)
+# detectable while cutting the ordinary-variation tail.
+SENSOR_PVALUE_THRESHOLD = float(os.environ.get("SENSOR_PVALUE_THRESHOLD", "0.02"))
 
 
 def _fetch_sensor_readings(
@@ -103,6 +121,33 @@ def _normalize_data(data: np.ndarray) -> np.ndarray:
     stds = np.nanstd(data, axis=0, keepdims=True)
     stds[stds == 0] = 1.0
     return (data - means) / stds
+
+
+def _has_variation(raw: np.ndarray) -> bool:
+    """Whether any channel differs across these readings.
+
+    A flat window is not something to fit or score. `_normalize_data` maps a
+    zero-std column to all-zeros, and M2AD's `area` error standardises that
+    residue and rolls a centered window over it, so the samples at the window
+    boundary come out extreme and `threshold=0.1` flags them on every idle
+    pass — the "everything is anomalous" reading on a machine that is simply
+    sitting still. With no variation there is no signal to judge, so the loop
+    reports idle instead of an anomaly it cannot justify.
+    """
+    return raw.size > 0 and bool(np.any(np.ptp(raw, axis=0) > 0))
+
+
+def _report_idle(zone_name: str, message: str) -> None:
+    """Report idle and close any open episode.
+
+    Skipping the score leaves `_write_m2ad_alerts_if_needed` unrun, so an
+    episode that was already open would keep its cooldown armed and its fused
+    score live. An idle window is the episode ending: release the alert and
+    zero the sensor's contribution to fusion.
+    """
+    update_train_state(zone_name, "m2ad", "idle", message=message)
+    clear_alert(f"sensor:{zone_name}")
+    _update_fusion_sensor_state(zone_name, 0.0, 0)
 
 
 def _split_for_training(n_total: int) -> Optional[Tuple[int, int]]:
@@ -166,7 +211,16 @@ def sensor_detection_loop(zone_name: str, channel_ids: List[str]):
                     shutdown_event.wait(timeout=SENSOR_INTERVAL)
                     continue
 
-                normalized, raw_array, _ = aligned
+                normalized, raw_array, timestamps = aligned
+                if not _has_variation(raw_array):
+                    _report_idle(
+                        zone_name,
+                        "No variation in readings yet (all channels constant); "
+                        "nothing to fit or score",
+                    )
+                    shutdown_event.wait(timeout=SENSOR_INTERVAL)
+                    continue
+
                 n_total = normalized.shape[0]
                 split = _split_for_training(n_total)
                 if split is None:
@@ -181,6 +235,23 @@ def sensor_detection_loop(zone_name: str, channel_ids: List[str]):
                 train_data = normalized[:n_train]
                 test_data = normalized[n_train:]
                 raw_test = raw_array[n_train:]
+                if not _has_variation(raw_test):
+                    _report_idle(
+                        zone_name,
+                        "Scoring window has no variation (machine idle); "
+                        "skipping score to avoid false anomalies",
+                    )
+                    shutdown_event.wait(timeout=SENSOR_INTERVAL)
+                    continue
+
+                if detector is None and n_total < MIN_TRAIN_READINGS:
+                    update_train_state(
+                        zone_name, "m2ad", "idle",
+                        message=f"Collecting readings ({n_total}/{MIN_TRAIN_READINGS}; "
+                                f"training starts on its own)",
+                    )
+                    shutdown_event.wait(timeout=SENSOR_INTERVAL)
+                    continue
 
                 detector = _train_m2ad_if_needed(
                     detector, zone_name, channel_ids, train_data,
@@ -201,23 +272,33 @@ def sensor_detection_loop(zone_name: str, channel_ids: List[str]):
                     # rolls with `min_periods = SCORE_WINDOW // 2`, so a detect
                     # slice shorter than that is all-NaN and a zero-variance
                     # error divides by zero — either way the scores are NaN.
-                    # NaN fails the `> 0.3` count and `max_score <= 0.3` is
-                    # False, so an alert carrying a NaN score would be written
-                    # every interval. A score that is not a number is not an
-                    # anomaly: it becomes 0 so no alert is written. The split's
-                    # test-size floor keeps the short-slice case away; this is
-                    # the backstop.
+                    # A NaN `max_score` would still print and be stored, and
+                    # `compute_severity(NaN)` is meaningless, so the score that
+                    # feeds severity and logs is zeroed. The detector's own
+                    # `is_anomaly` is already False for a NaN p-value, so the
+                    # anomaly count needs no sanitizing. The split's test-size
+                    # floor keeps the short-slice case away; this is the
+                    # backstop.
                     logger.warning(
                         f"[{zone_name}] M2AD produced non-finite scores "
                         f"(degenerate fit); treating them as 0"
                     )
                     scores = [s if np.isfinite(s) else 0.0 for s in scores]
                 max_score = float(np.max(scores)) if scores else 0.0
-                anomaly_count = sum(1 for s in scores if s > 0.3)
+                # `anomaly_score` is `1 - p` (higher is worse); `is_anomaly` is
+                # `p < threshold` (0.01). Counting `score > 0.3` here counted
+                # `p < 0.7` — a seven-times looser bar than the detector's own
+                # verdict — so the alert gate fired on ordinary variation even
+                # when nothing was flagged. The alert now follows the detector:
+                # how many samples it actually called anomalous.
+                anomaly_count = sum(1 for r in results if getattr(r, "is_anomaly", False))
                 mean_score = float(np.mean(scores)) if scores else 0.0
                 run_id = f"{run_id_base}_{int(time.time())}"
 
-                _store_m2ad_results(conn, results, raw_test, channel_ids, zone_name, run_id, mean_score)
+                _store_m2ad_results(
+                    conn, results, raw_test, timestamps[n_train:],
+                    channel_ids, zone_name, run_id, mean_score,
+                )
                 conn.commit()
 
                 run_count += 1
@@ -288,12 +369,21 @@ def _train_m2ad_if_needed(detector, zone_name, channel_ids, train_data,
     update_train_state(zone_name, "m2ad", "training", progress="0%", message="M2AD training on collected readings...")
     new_detector = M2AD(
         f"m2ad_{zone_name}",
+        # Every channel is a scored sensor, not a covariate. Without this the
+        # library's fallback with more than five columns keeps only the first
+        # as a scored sensor and treats the rest as covariates: the scaler is
+        # fitted on that one column, the other seven pass through unscaled, and
+        # the resulting reconstruction error is dominated by that channel's
+        # sharp transitions — a false anomaly on the first scored sample of
+        # almost every run.
+        sensors=channel_ids,
         window_size=window_size,
         epochs=min(30, max(5, n_timesteps // 50)),
         tolerance=5,
         gamma_thresh=1.0,
         error_name="area",
-        threshold=0.1,
+        # p-value cutoff for `is_anomaly`; see SENSOR_PVALUE_THRESHOLD.
+        threshold=SENSOR_PVALUE_THRESHOLD,
     )
 
     train_t0 = time.time()
@@ -322,39 +412,84 @@ def _train_m2ad_if_needed(detector, zone_name, channel_ids, train_data,
     return new_detector
 
 
-def _store_m2ad_results(conn, results, test_data, channel_ids, zone_name, run_id, mean_score):
+def _store_m2ad_results(conn, results, test_data, timestamps, channel_ids,
+                        zone_name, run_id, mean_score):
+    """Persist one row per flagged timestep, attributed to its top channel.
+
+    A flag is one multivariate verdict on one timestep, not one fault on every
+    channel: the fused p-value is the same for all eight columns, so writing a
+    row per channel exploded each detection into eight identically-scored rows
+    (and the dashboard showed all eight channels "critical" at the same
+    instant). The row is attributed to the channel with the lowest per-sensor
+    p-value — the one that actually moved — so the stored `source_id` and
+    `value` point at the evidence for the flag.
+
+    The loop re-fetches and re-scores the same trailing window every interval,
+    so the flagged timesteps overlap from run to run. The reading's own
+    `timestamp` is stored (not `now()`) and timesteps already present are
+    skipped, so a persistent flag is one row per reading rather than one row
+    per 30s re-scan.
+    """
     import json
     n_sensors = len(channel_ids)
+
+    flagged = []
+    for i, r in enumerate(results):
+        if not getattr(r, 'is_anomaly', False):
+            continue
+        details = getattr(r, 'details', None) or {}
+        sensor_pvalues = details.get("sensor_pvalues") or {}
+        # Attribute to the most anomalous channel; fall back to the first only
+        # if the detector could not report per-sensor p-values.
+        top_channel = min(sensor_pvalues, key=sensor_pvalues.get) if sensor_pvalues else None
+        if top_channel not in channel_ids:
+            top_channel = channel_ids[0]
+        col_idx = channel_ids.index(top_channel)
+        ts = timestamps[i] if i < len(timestamps) else None
+        value = float(test_data[i, col_idx]) if i < test_data.shape[0] else None
+        flagged.append((top_channel, ts, value, float(r.anomaly_score), sensor_pvalues))
+
+    if not flagged:
+        return
+
+    ts_values = [ts for _, ts, _, _, _ in flagged if ts is not None]
+    existing = set()
+    if ts_values:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT timestamp FROM sensor_anomaly_results
+                   WHERE source_id = ANY(%s) AND timestamp >= %s AND timestamp <= %s""",
+                (list(channel_ids), min(ts_values), max(ts_values)),
+            )
+            existing = {row[0] for row in cur.fetchall()}
+
     with conn.cursor() as cur:
-        for i in range(len(results)):
-            r = results[i]
-            score = r.anomaly_score if hasattr(r, 'anomaly_score') else float(r.score)
-            is_anom = r.is_anomaly if hasattr(r, 'is_anomaly') else bool(score > 0.3)
-            if not is_anom:
+        for top_channel, ts, value, score, sensor_pvalues in flagged:
+            if ts is not None and ts in existing:
                 continue
-            ts_now = datetime.now(timezone.utc)
-            for col_idx, cid in enumerate(channel_ids):
-                sensor_val = float(test_data[i, col_idx]) if i < test_data.shape[0] else None
-                cur.execute(
-                    """INSERT INTO sensor_anomaly_results
-                       (source_id, detector, run_id, timestamp, anomaly_score, is_anomaly, value, details)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
-                    (
-                        cid, "m2ad", run_id, ts_now,
-                        float(score), True, sensor_val,
-                        json.dumps({
-                            "zone": zone_name,
-                            "severity": compute_severity(float(score)),
-                            "mean_score": float(mean_score),
-                            "n_channels": n_sensors,
-                        }),
-                    ),
-                )
+            existing.add(ts)
+            cur.execute(
+                """INSERT INTO sensor_anomaly_results
+                   (source_id, detector, run_id, timestamp, anomaly_score, is_anomaly, value, details)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                (
+                    top_channel, "m2ad", run_id,
+                    ts if ts is not None else datetime.now(timezone.utc),
+                    float(score), True, value,
+                    json.dumps({
+                        "zone": zone_name,
+                        "severity": compute_severity(float(score)),
+                        "mean_score": float(mean_score),
+                        "n_channels": n_sensors,
+                        "sensor_pvalues": sensor_pvalues,
+                    }),
+                ),
+            )
 
 
 def _write_m2ad_alerts_if_needed(conn, zone_name, max_score, anomaly_count, run_id, scores):
     alert_key = f"sensor:{zone_name}"
-    if max_score <= 0.3:
+    if anomaly_count == 0:
         # The episode is over; release the cooldown so the next one alerts at
         # once rather than waiting out the previous episode's window.
         clear_alert(alert_key)
@@ -379,6 +514,15 @@ def _write_m2ad_alerts_if_needed(conn, zone_name, max_score, anomaly_count, run_
 
 
 def _update_fusion_sensor_state(zone_name, max_score, anomaly_count):
+    """Publish the sensor's contribution to the fusion loop.
+
+    `max_score` is `1 - p` (higher is worse), but the fusion loop alerts on
+    `sensor_max_score > 0.3` — i.e. `p < 0.7`. Publishing the raw score made
+    every ordinary run look anomalous to fusion: a p of 0.29 (this data's
+    median clean value) reads as 0.71 and cleared the 0.3 bar, so fusion raised
+    a `sensor_anomaly` alert on a quiet machine. Report a score only when the
+    detector actually flagged a sample; a clean run contributes nothing.
+    """
     with fusion_lock:
         if zone_name not in fusion_state:
             fusion_state[zone_name] = {
@@ -386,5 +530,7 @@ def _update_fusion_sensor_state(zone_name, max_score, anomaly_count):
                 "camera_max_score": 0.0,
                 "sensor_anomaly_count": 0,
             }
-        fusion_state[zone_name]["sensor_max_score"] = float(max_score)
+        fusion_state[zone_name]["sensor_max_score"] = (
+            float(max_score) if anomaly_count > 0 else 0.0
+        )
         fusion_state[zone_name]["sensor_anomaly_count"] = int(anomaly_count)

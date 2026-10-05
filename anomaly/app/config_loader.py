@@ -78,7 +78,17 @@ async def load_config_from_file(
                     db, zone, src_id, "camera", src_info, summary
                 )
 
-        await _ensure_zone_dashboard(zone, db, grafana)
+        # The dashboard is the one part of a load that depends on Grafana
+        # accepting something, and its rejection must not cost the zone and its
+        # sources: the commit below is the only thing that makes them durable,
+        # so letting this raise threw the whole session's registration away and
+        # left `zones` empty. The detector polls what those rows describe, so
+        # they matter more than the dashboard does.
+        try:
+            await _ensure_zone_dashboard(zone, db, grafana)
+        except Exception as exc:
+            logger.warning("Dashboard for zone %s not created: %s", zone_name, exc)
+            continue
         summary["dashboards_generated"] += 1
 
     await db.commit()

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 from typing import List, Optional
 
 import httpx
@@ -18,6 +19,13 @@ from app.config_loader import load_config_from_file, DEFAULT_CONFIG_PATH
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# The detector's status sidecar, reached over the compose network. The service
+# is named `anomaly-detector`; the old `detector` host did not resolve, so every
+# training-panel poll fell back to "idle" no matter what the detector reported.
+DETECTOR_STATUS_URL = os.environ.get(
+    "DETECTOR_STATUS_URL", "http://anomaly-detector:9100/status"
+)
 
 
 class ZoneCreate(BaseModel):
@@ -422,7 +430,7 @@ async def get_detector_status(db: AsyncSession = Depends(get_db)):
         async with httpx.AsyncClient(timeout=5.0) as client:
             for attempt in range(3):
                 try:
-                    resp = await client.get("http://detector:9100/status")
+                    resp = await client.get(DETECTOR_STATUS_URL)
                     if resp.status_code == 200:
                         train_state = resp.json()
                         break

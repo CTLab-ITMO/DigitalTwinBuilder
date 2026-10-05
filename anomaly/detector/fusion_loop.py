@@ -64,23 +64,19 @@ def fusion_loop(zone_name: str):
                     combined_score = 1.0 - (1.0 - sensor_score) * (1.0 - camera_score)
                     severity = bump_severity(compute_severity(combined_score))
                     alert_type = "cross_modal"
-                elif sensor_score > SENSOR_THRESH:
-                    combined_score = sensor_score
-                    severity = compute_severity(sensor_score)
-                    alert_type = "sensor_anomaly"
-                elif camera_score > CAMERA_THRESH:
-                    combined_score = camera_score
-                    severity = compute_severity(camera_score)
-                    alert_type = "camera_anomaly"
                 else:
-                    # Nothing is anomalous: scores between zero and the
-                    # threshold are ordinary, and the old `fused`/"low" branch
-                    # wrote an alert for each of them every interval — an alert
-                    # stream for a quiet zone. Log the level and release any
-                    # episode's cooldown instead.
+                    # Fusion raises exactly one alert the per-modality loops
+                    # cannot: the cross-modal verdict. A single modality firing
+                    # is already written by that modality's own loop
+                    # (`sensor_loop` / `camera_loop` each call `write_alerts`),
+                    # so re-emitting it here doubled every event — and with the
+                    # camera offline `camera_score` is always 0, so *every*
+                    # sensor anomaly produced two `alerts` rows. Scores between
+                    # zero and the threshold are ordinary. Either way, end any
+                    # open fusion episode and let the owning loop alert.
                     clear_alert(f"fusion:{zone_name}")
                     logger.debug(
-                        f"[{zone_name}] Fused below threshold: "
+                        f"[{zone_name}] Not cross-modal: "
                         f"sensor={sensor_score:.3f}, camera={camera_score:.3f}"
                     )
                     shutdown_event.wait(timeout=FUSION_INTERVAL)
@@ -95,6 +91,13 @@ def fusion_loop(zone_name: str):
                 run_id = f"fused_{zone_name}_{int(time.time())}"
 
                 if not alert_due(f"fusion:{zone_name}", FUSION_ALERT_COOLDOWN):
+                    # Suppressed by the cooldown, not by a lack of signal: a
+                    # sustained episode keeps the score above threshold for its
+                    # whole duration. Wait out the interval here — this branch
+                    # sits above the loop's own sleep, so a bare `continue`
+                    # spun the loop at full speed and flooded the log with the
+                    # `Fused:` line every few microseconds.
+                    shutdown_event.wait(timeout=FUSION_INTERVAL)
                     continue
 
                 alerts = [

@@ -89,6 +89,8 @@ def _make_sensor_panel(source: RegisteredSource, idx: int) -> dict:
                     f"SELECT sar.timestamp, sar.value AS anomalous_value "
                     f"FROM sensor_anomaly_results sar "
                     f"WHERE sar.source_id = '{sid}' AND sar.is_anomaly = true "
+                    f"AND sar.detector IN ($detector) "
+                    f"AND ('$run_id' = '' OR sar.run_id = '$run_id') "
                     f"ORDER BY sar.timestamp DESC LIMIT 5000"
                 ),
                 "refId": "B",
@@ -161,6 +163,12 @@ def _make_alerts_panel(idx: int, y: int, zone_id: int) -> dict:
             },
             "overrides": [
                 {
+                    "matcher": {"id": "byName", "options": "severity"},
+                    "properties": [
+                        {"id": "custom.cellOptions", "value": {"type": "color-text"}},
+                    ],
+                },
+                {
                     "matcher": {"id": "byName", "options": "snapshot"},
                     "properties": [
                         {
@@ -190,7 +198,8 @@ def _make_alerts_panel(idx: int, y: int, zone_id: int) -> dict:
                 "format": "table",
                 "rawSql": (
                     "SELECT sar.timestamp, sar.source_id AS source, "
-                    "sar.anomaly_score AS score, '' AS snapshot "
+                    "sar.anomaly_score AS score, "
+                    "sar.details->>'severity' AS severity, '' AS snapshot "
                     "FROM sensor_anomaly_results sar "
                     "JOIN registered_sources rs ON rs.source_id = sar.source_id "
                     f"WHERE sar.is_anomaly = true AND rs.zone_id = {zone_id} "
@@ -198,6 +207,7 @@ def _make_alerts_panel(idx: int, y: int, zone_id: int) -> dict:
                     "SELECT idr.timestamp, "
                     "idr.details->>'camera_id' AS source, "
                     "idr.anomaly_score AS score, "
+                    "idr.details->>'severity' AS severity, "
                     # The heatmap overlay is the picture that shows *where* the
                     # anomaly is, so prefer it over the bare frame; fall back to
                     # the frame when the detector could not build one.
@@ -215,6 +225,29 @@ def _make_alerts_panel(idx: int, y: int, zone_id: int) -> dict:
             }
         ],
     }
+
+
+# Grafana answers `400 dashboard tag too long, max 50 characters` and refuses
+# the whole save. It counts *bytes*, not characters: measured against Grafana
+# 13, 49 ASCII and 25 Cyrillic characters pass, 51 ASCII and 26 Cyrillic do not.
+MAX_TAG_BYTES = 50
+
+
+def _zone_tag(zone: Zone) -> str:
+    """The zone's dashboard tag, inside Grafana's 50-byte cap.
+
+    A zone is named after the session title, which is arbitrary user text and
+    is often Cyrillic — two bytes per character, so a 26-character title is
+    already over the limit and its dashboard could never be saved. The title
+    still carries the name in full; the tag is a search handle, so it slugifies
+    to ASCII and falls back to the zone id when nothing survives (an all-Cyrillic
+    name slugs to nothing).
+    """
+    slug = "".join(
+        c if (c.isascii() and (c.isalnum() or c in "-_")) else "_"
+        for c in zone.name
+    ).strip("_")
+    return slug[:MAX_TAG_BYTES] or f"zone-{zone.id}"
 
 
 def build_zone_dashboard(zone: Zone, sources: Sequence[RegisteredSource]) -> dict:
@@ -482,10 +515,35 @@ def build_zone_dashboard(zone: Zone, sources: Sequence[RegisteredSource]) -> dic
         "timezone": "browser",
         "schemaVersion": 39,
         "editable": True,
-        "tags": ["dynamic", "zone", zone.name],
+        "tags": ["dynamic", "zone", _zone_tag(zone)],
         "panels": panels,
         "annotations": {
-            "list": [],
+            "list": [
+                {
+                    # Marks every anomaly interval on every panel of the zone
+                    # dashboard, so *when* a detector fired is visible against
+                    # the raw sensor traces, not only in the alerts table.
+                    "name": "M2AD anomaly",
+                    "datasource": {"type": "postgres", "uid": "postgres"},
+                    "enable": True,
+                    "hide": False,
+                    "iconColor": "red",
+                    "target": {
+                        "format": "table",
+                        "refId": "Anno",
+                        "rawSql": (
+                            "SELECT DISTINCT sar.timestamp AS time, "
+                            "'M2AD anomaly' AS text "
+                            "FROM sensor_anomaly_results sar "
+                            "JOIN registered_sources rs ON rs.source_id = sar.source_id "
+                            "WHERE sar.detector = 'm2ad' AND sar.is_anomaly = true "
+                            f"  AND rs.zone_id = {zone.id} "
+                            "AND $__timeFilter(sar.timestamp) "
+                            "ORDER BY 1"
+                        ),
+                    },
+                }
+            ],
         },
         "templating": {
             "list": [

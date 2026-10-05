@@ -204,12 +204,21 @@ class M2AD(AnomalyDetector):
 
             anomalyscore = visuals['test_anomaly_score']
             test_timestamps = visuals['test_timestamps']
+            # `p_val_sensors` is (n_windows, n_sensors), row-aligned with
+            # `test_timestamps` and column-aligned with `sensor_names`. It
+            # carries the per-sensor two-sided p-value behind the fused verdict,
+            # which the caller uses to attribute a flagged timestep to the
+            # channel that actually moved.
+            test_pvals = visuals.get('test_pvals')
 
             scores = np.ones(len(data))
-            for i, (ts, score) in enumerate(zip(test_timestamps, anomalyscore)):
+            sensor_pvalues = np.ones((len(data), len(sensor_names)))
+            for row, ts in enumerate(test_timestamps):
                 orig_idx = int(ts)
                 if 0 <= orig_idx < len(scores):
-                    scores[orig_idx] = score
+                    scores[orig_idx] = anomalyscore[row]
+                    if test_pvals is not None and row < len(test_pvals):
+                        sensor_pvalues[orig_idx] = test_pvals[row]
 
             is_anomaly = scores < self.threshold
             normalized = 1.0 - np.minimum(scores, 1.0)
@@ -219,7 +228,14 @@ class M2AD(AnomalyDetector):
                     is_anomaly=bool(is_anomaly[i]),
                     anomaly_score=float(normalized[i]),
                     anomaly_type="m2ad_lstm_gmm",
-                    details={"raw_pvalue": float(scores[i]), "normalized": float(normalized[i])}
+                    details={
+                        "raw_pvalue": float(scores[i]),
+                        "normalized": float(normalized[i]),
+                        "sensor_pvalues": {
+                            name: float(sensor_pvalues[i, j])
+                            for j, name in enumerate(sensor_names)
+                        },
+                    }
                 )
                 for i in range(len(data))
             ]

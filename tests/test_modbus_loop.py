@@ -131,6 +131,37 @@ def test_error_response_yields_no_reading():
     assert modbus_loop._read_value(client, spec) is None
 
 
+def test_scale_converts_a_register_count_to_physical_units():
+    spec = {"id": "s", "ip": "1.2.3.4", "register": 1, "data_type": "int16",
+            "scale": 0.1}
+    client = _FakeClient(spec, response=_Response(registers=[934]))
+    assert abs(modbus_loop._read_value(client, spec) - 93.4) < 1e-9
+
+    # A numeric scale given as text still applies; a ×1000 tank register.
+    spec = {"id": "s", "ip": "1.2.3.4", "register": 2, "data_type": "uint16",
+            "scale": "0.001"}
+    client = _FakeClient(spec, response=_Response(registers=[980]))
+    assert abs(modbus_loop._read_value(client, spec) - 0.98) < 1e-9
+
+
+def test_scale_defaults_to_one_and_rejects_nonsense():
+    spec = {"id": "s", "ip": "1.2.3.4", "register": 1, "data_type": "int16"}
+    client = _FakeClient(spec, response=_Response(registers=[7]))
+    assert modbus_loop._read_value(client, spec) == 7.0  # no scale -> identity
+
+    # Zero and negatives are not multipliers, and a non-number is not one
+    # either; all fall back to 1.0 rather than flattening the reading.
+    for bad in (0, -2, "half", None, True):
+        assert modbus_loop._scale_of({"id": "s", "scale": bad}) == 1.0
+
+
+def test_a_coil_is_never_scaled():
+    spec = {"id": "s", "ip": "1.2.3.4", "register": 5,
+            "register_type": "coil", "scale": 0.001}
+    client = _FakeClient(spec, response=_Response(bits=[True]))
+    assert modbus_loop._read_value(client, spec) == 1.0
+
+
 def test_fetch_sensor_value_returns_none_and_closes_on_a_dead_device():
     spec = {"id": "s", "ip": "1.2.3.4", "register": 1}
     client = _FakeClient(spec, connected=False)
