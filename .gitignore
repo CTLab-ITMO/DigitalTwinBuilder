@@ -178,3 +178,8 @@ logs/
 # Node / frontend
 node_modules/
 *.tsbuildinfo
+
+# Local demo, DB snapshots and exported logs
+demo/
+checkpoint/
+conversation_logs.zip
