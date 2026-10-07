@@ -6,6 +6,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../'))
 from digital_twin_builder.agents import BaseAgent
 from digital_twin_builder.config import API_URL, UI_AGENT_INDEX, UI_AGENT_MODEL
+from digital_twin_builder.interview_context import fit_context
 
 class UserInteractionAgent(BaseAgent):
     def __init__(self):
@@ -20,6 +21,9 @@ class UserInteractionAgent(BaseAgent):
                 UI_AGENT_MODEL,
                 device_map="auto"
             )
+            # Inference, not training: eval mode disables dropout, so a turn is
+            # reproducible and does not carry the training path's extra state.
+            self.model.eval()
             self.logger.info(f"Model {UI_AGENT_MODEL} loaded")
         except Exception as e:
             self.logger.error(f"Model {UI_AGENT_MODEL} loading failed: {str(e)}")
@@ -32,8 +36,20 @@ class UserInteractionAgent(BaseAgent):
 
         self.logger.info(f"Processing task {task_id}")
         try:
-            context = self.get_conversation_context(conversation_id)
-            print(context)
+            context = self.get_conversation_context(conversation_id) or []
+            # The whole conversation is re-fed every turn, and a repair turn's
+            # correction prompt embeds the previous reply on top of it, so the
+            # prompt grows without bound — and the model's attention buffer grows
+            # with its square, which is how a session's second turn ran the GPU
+            # out of memory. `fit_context` drops the reasoning blocks and bounds
+            # the prompt; the first turn, well under the cap, is untouched.
+            before = sum(len(m["content"]) for m in context)
+            context = fit_context(context)
+            after = sum(len(m["content"]) for m in context)
+            if after < before:
+                self.logger.info(
+                    f"Interview prompt {before} -> {after} chars "
+                    f"({len(context)} messages)")
 
             text = self.tokenizer.apply_chat_template(
                 context,

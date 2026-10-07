@@ -693,6 +693,7 @@ export const useAppStore = defineStore('app', () => {
         conv_idx: 0,
         max_tokens: params.max_tokens,
         attempts: params.attempts,
+        retry: params.retry,
       })
       const job = await waitForJob(started.job_id, j => { uiJob.value = j })
       if (!job) {

@@ -67,6 +67,17 @@ UI_REPAIR_ATTEMPTS = int(os.getenv("UI_REPAIR_ATTEMPTS", "2"))
 # mid-object cannot be read at all, so the default matches the DB slot's budget.
 UI_MAX_TOKENS = int(os.getenv("UI_MAX_TOKENS", "3000"))
 
+# How large a prompt the interview agent may hand its local model. The agent
+# re-reads its whole conversation every turn, and attention cost grows with the
+# square of that prompt, so an unbounded conversation is what ran the GPU out of
+# memory on a session's second turn. `interview_context` keeps the assembled
+# prompt under UI_MAX_CONTEXT_CHARS and shortens any one non-system message over
+# UI_MAX_MESSAGE_CHARS — a long reply or correction prompt is what would grow
+# without this. The system message is exempt from that per-message cap: it is
+# the instruction set, and clipping its middle dropped the JSON-type rules.
+UI_MAX_CONTEXT_CHARS = int(os.getenv("UI_MAX_CONTEXT_CHARS", "18000"))
+UI_MAX_MESSAGE_CHARS = int(os.getenv("UI_MAX_MESSAGE_CHARS", "7000"))
+
 # Database Configuration
 POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "admin")
@@ -107,6 +118,8 @@ __all__ = [
     "DB_REPAIR_ATTEMPTS",
     "UI_REPAIR_ATTEMPTS",
     "UI_MAX_TOKENS",
+    "UI_MAX_CONTEXT_CHARS",
+    "UI_MAX_MESSAGE_CHARS",
     "POSTGRES_USER",
     "POSTGRES_PASSWORD",
     "POSTGRES_DB",

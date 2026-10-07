@@ -3,7 +3,7 @@ import json
 def init_ui_assistant_answer(*args):
     return "Привет! Я помогу тебе создать цифровой двойник твоего производства. Пожалуйста, расскажи мне о своем производстве: какой это тип производства, какие процессы там происходят, какое оборудование используется, какие датчики установлены и какие цели ты хочешь достичь с помощью цифрового двойника?"
 
-def make_ui_repair(previous_reply, failure_report, attempt, total_attempts, *args):
+def make_ui_repair(_previous_reply, failure_report, attempt, total_attempts, *args):
     """Follow-up turn for the interview slot: the previous reply was not readable JSON.
 
     `failure_report` is what reading the previous reply actually found — no JSON
@@ -11,13 +11,16 @@ def make_ui_repair(previous_reply, failure_report, attempt, total_attempts, *arg
     object whose `requirements` is incomplete or mistyped. It is fed back
     verbatim so the model corrects the defect it can see instead of answering
     the same question again from scratch.
+
+    The previous reply itself is *not* repeated here: the agent stores every
+    reply it returns, so it is already the assistant turn immediately before
+    this correction, and quoting it in full would hand the model its own answer
+    a second time and lengthen the prompt. `_previous_reply` is kept only to
+    match the loop's `repair_prompt(reply, report, attempt, total)` call.
     """
     prompt = f"""Твой предыдущий ответ не удалось прочитать как JSON. Вот что именно не так:
 
 {failure_report}
-
-Вот твой предыдущий ответ целиком:
-{previous_reply}
 
 Исправь указанную ошибку и верни ответ заново.
 

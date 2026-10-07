@@ -377,7 +377,7 @@ def test_ui_first_turn_is_the_user_message():
     assert calls[0]["attempt"] == 0
 
 
-def test_ui_repair_turn_carries_the_report_and_the_previous_reply():
+def test_ui_repair_turn_carries_the_report_without_re_sending_the_reply():
     submit, calls = scripted(BROKEN_REPLY, GOOD_REPLY)
 
     pipeline.generate_interview_result(submit, "кофемашина!", attempts=2)
@@ -385,7 +385,11 @@ def test_ui_repair_turn_carries_the_report_and_the_previous_reply():
     repair = calls[1]["prompt"]
     assert repair.startswith("Твой предыдущий ответ не удалось прочитать как JSON.")
     assert "never closed" in repair          # the defect, named
-    assert BROKEN_REPLY in repair            # the reply itself is handed back
+    # The reply is already the assistant turn in the conversation, so the repair
+    # quotes it once — inside the failure report — and does not re-send the whole
+    # thing as a separate section, which put the same answer in the prompt twice.
+    assert repair.count(BROKEN_REPLY) == 1
+    assert "Вот твой предыдущий ответ целиком" not in repair
     assert "попытка исправления 1 из 2" in repair
 
 

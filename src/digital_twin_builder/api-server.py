@@ -280,6 +280,10 @@ class PipelineUiRequest(BaseModel):
     conv_idx: int = 0
     max_tokens: int = config.UI_MAX_TOKENS
     attempts: Optional[int] = None
+    # True when `message` re-asks a turn that already failed: the question is
+    # already in the conversation, so the re-ask is posted as the broker's own
+    # turn and the user's message is not shown a second time.
+    retry: bool = False
 
 class AnomalyConfigRequest(BaseModel):
     """Build the anomaly stack's config for a session.
@@ -914,7 +918,8 @@ async def _ask_agent(agent_id, conversation_id, content, params, timeout_s,
     return await _await_task_result(created["task_id"], timeout_s)
 
 
-def _make_submit(loop, agent_id, conversation_id, params, timeout_s):
+def _make_submit(loop, agent_id, conversation_id, params, timeout_s,
+                 first_turn_metadata=None):
     """The synchronous `submit` the repair loop calls, from a worker thread.
 
     The thread cannot await, so each turn is handed back to the event loop and
@@ -925,10 +930,13 @@ def _make_submit(loop, agent_id, conversation_id, params, timeout_s):
     A turn after the first is the broker's own correction prompt, not something
     the user typed, so it is posted tagged `kind: repair`. The transcript keeps
     it for the record, but a client rendering the conversation as the user's
-    dialogue must not show it as the user's message.
+    dialogue must not show it as the user's message. `first_turn_metadata` is
+    the same tag for the *first* turn when that turn is itself a re-ask — a
+    manual retry of a failed turn, whose question is already in the
+    conversation.
     """
     def submit(prompt, attempt):
-        metadata = {"kind": "repair"} if attempt else None
+        metadata = {"kind": "repair"} if attempt else first_turn_metadata
         return asyncio.run_coroutine_threadsafe(
             _ask_agent(agent_id, conversation_id, prompt, params, timeout_s,
                        metadata),
@@ -955,7 +963,7 @@ def _attempt_entry(slot, i, artifact, verdict) -> dict:
 
 
 async def _run_pipeline_job(*, job_id, slot, agent_id, conversation_id, params,
-                            timeout_s, work) -> None:
+                            timeout_s, work, first_turn_metadata=None) -> None:
     """Drive one slot's loop and record its outcome.
 
     `work(submit, on_attempt)` is `pipeline.generate_db_schema` /
@@ -978,7 +986,8 @@ async def _run_pipeline_job(*, job_id, slot, agent_id, conversation_id, params,
 
     try:
         outcome = await asyncio.to_thread(
-            work, _make_submit(loop, agent_id, conversation_id, params, timeout_s),
+            work, _make_submit(loop, agent_id, conversation_id, params, timeout_s,
+                               first_turn_metadata),
             on_attempt)
         await _finish_pipeline_job(job_id, pipeline.job_result(slot, outcome))
     except Exception as e:
@@ -1007,7 +1016,12 @@ async def _start_pipeline_job(*, slot, req, work) -> dict:
         params={"max_tokens": req.max_tokens},
         timeout_s=(config.DES_GEN_TIMEOUT_S if slot == "des"
                    else DB_TURN_TIMEOUT_S),
-        work=work))
+        work=work,
+        # A retry re-asks the last user turn; the question is already in the
+        # conversation, so the re-ask is tagged as the broker's own turn and the
+        # transcript does not show the user's message twice.
+        first_turn_metadata=({"kind": "repair"}
+                             if getattr(req, "retry", False) else None)))
     _pipeline_tasks.add(task)
     task.add_done_callback(_pipeline_tasks.discard)
 
@@ -1075,6 +1089,10 @@ async def start_ui_pipeline(req: PipelineUiRequest):
     a legitimate answer — the agent asking the user a question — and is returned
     as it is; only a reply that cannot be read as the schema's JSON, or that
     claims to be finished with an incomplete `requirements`, is repaired.
+
+    `retry` re-asks a turn that already failed: the same message, but posted as
+    the broker's own turn because the user's question is already in the
+    conversation.
     """
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="message must not be empty")

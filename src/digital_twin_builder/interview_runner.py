@@ -186,7 +186,14 @@ def check(reply: str) -> str | None:
 
 
 def _report(reason: str, reply: str) -> str:
-    """`reason` plus the reply it was found in, as the text fed to the agent."""
+    """`reason` plus the reply it was found in, as the text fed to the agent.
+
+    This is the *only* copy of the reply the correction prompt carries: the
+    agent's own turn is already in the conversation, and `make_ui_repair` no
+    longer re-sends it in full, but the prompt budget drops a long assistant
+    turn before the user's description, so the bounded excerpt here is what
+    guarantees the model can still see the text it has to correct.
+    """
     body = strip_think(reply or "").strip()
     return (reason + ".\n\nThe reply that was returned "
             f"(last {REPORT_CHARS} characters):\n"

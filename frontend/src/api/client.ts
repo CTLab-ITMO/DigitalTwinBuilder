@@ -147,7 +147,9 @@ export const api = {
   },
 
   // The interview slot: the broker posts the user's turn, reads the agent's
-  // reply and asks for a correction while it is not the schema's JSON.
+  // reply and asks for a correction while it is not the schema's JSON. `retry`
+  // re-asks a turn whose reply could not be read; the question is already in
+  // the conversation, so the broker posts the re-ask as its own turn.
   startUiPipeline(body: {
     session_id: string
     conversation_id?: string
@@ -155,6 +157,7 @@ export const api = {
     conv_idx?: number
     max_tokens?: number
     attempts?: number
+    retry?: boolean
   }): Promise<{ job_id: string; slot: string; conversation_id: string }> {
     return request('/pipeline/ui', { method: 'POST', body: JSON.stringify(body) })
   },

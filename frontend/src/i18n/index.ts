@@ -37,6 +37,7 @@ const en = {
   'interview.failed': "The agent's reply could not be parsed",
   'interview.failedHint':
     'Attempts: {n}. Below is what exactly is wrong; send the message again so the agent answers anew.',
+  'interview.retry': 'Try again',
   'interview.processing': 'Processing...',
   'interview.repair': 'reply not parsed, repair {n}',
   'interview.placeholder': 'Enter information about your production...',
@@ -173,6 +174,7 @@ const ru: Record<MessageKey, string> = {
   'interview.failed': 'Ответ агента не удалось разобрать',
   'interview.failedHint':
     'Попыток: {n}. Ниже — что именно не так; отправьте сообщение ещё раз, чтобы агент ответил заново.',
+  'interview.retry': 'Попробовать снова',
   'interview.processing': 'Обработка...',
   'interview.repair': 'ответ не разобран, исправление {n}',
   'interview.placeholder': 'Введите информацию о вашем производстве...',

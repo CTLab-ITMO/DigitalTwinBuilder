@@ -46,13 +46,26 @@ async function getOrCreateConv(): Promise<string | null> {
   return store.ensureConversation(agentId, convIdx)
 }
 
-async function send() {
-  const msg = input.value.trim()
-  if (!msg) return
+// The last thing the user actually said. A failed turn ends the transcript on
+// this message — the broker's repair prompts are filtered out of it — so it is
+// what a retry re-asks.
+const lastUserMessage = computed(() => {
+  for (let i = store.messages.length - 1; i >= 0; i--) {
+    if (store.messages[i].role === 'user') return store.messages[i].content
+  }
+  return ''
+})
 
-  // Clear input immediately
-  input.value = ''
+// A turn whose reply could not be read even after the broker's repairs is
+// retryable, as long as there is a user turn left to re-ask.
+const canRetry = computed(() =>
+  !!store.uiVerdict
+  && !store.uiVerdict.ok
+  && !store.interviewResult
+  && lastUserMessage.value !== ''
+)
 
+async function submitTurn(msg: string, retry: boolean) {
   try {
     // Auto-create session if none selected
     if (!store.currentSessionId) {
@@ -69,24 +82,44 @@ async function send() {
       return
     }
 
-    // Show the turn at once; the broker posts the authoritative copy, and the
-    // transcript is reloaded from it when the job finishes.
-    store.messages.push({
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: msg,
-    })
-
     // The broker posts the message, reads the reply as the schema's JSON, and
     // sends a correction back while it cannot be read — so an unparseable answer
     // never reaches the transcript-and-DB-tab disagreement this used to cause.
+    // On a retry the broker posts its own copy of the re-ask, since the user's
+    // question is already in the conversation.
     await store.sendInterviewMessage(convId, msg, {
       temperature: temperature.value,
       max_tokens: maxTokens.value,
+      retry,
     })
   } catch (e: any) {
     store.error = e?.message || String(e)
   }
+}
+
+async function send() {
+  const msg = input.value.trim()
+  if (!msg) return
+
+  // Clear input immediately
+  input.value = ''
+
+  // Show the turn at once; the broker posts the authoritative copy, and the
+  // transcript is reloaded from it when the job finishes.
+  store.messages.push({
+    id: crypto.randomUUID(),
+    role: 'user',
+    content: msg,
+  })
+
+  await submitTurn(msg, false)
+}
+
+// Re-ask the last turn: the same question, submitted as a retry so the message
+// the user already sees is not shown a second time.
+async function retry() {
+  if (!canRetry.value) return
+  await submitTurn(lastUserMessage.value, true)
 }
 </script>
 
@@ -109,6 +142,13 @@ async function send() {
           {{ t('interview.failedHint', { n: store.uiVerdict.attempts }) }}
         </p>
         <pre class="report">{{ store.uiVerdict.report }}</pre>
+        <button
+          class="btn btn-primary retry-btn"
+          :disabled="!canRetry"
+          @click="retry"
+        >
+          {{ t('interview.retry') }}
+        </button>
       </div>
 
       <div class="messages">
@@ -193,6 +233,8 @@ async function send() {
   max-height: 240px;
   overflow: auto;
 }
+
+.retry-btn { margin-top: 12px; }
 
 .repairs { color: var(--text-muted); font-size: 12px; margin-left: 8px; }
 
