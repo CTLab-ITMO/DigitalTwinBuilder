@@ -12,16 +12,20 @@ from detector.shared import (
     ANOMALY_API_PUBLIC_URL,
     FRAME_DIR,
     alert_due,
+    ckaad_margin,
     clear_alert,
     clear_train,
     compute_severity,
     fusion_lock,
     fusion_state,
+    get_ckaad_alert_threshold,
+    get_ckaad_setting,
     get_db_connection,
     is_detector_enabled,
     shutdown_event,
     signal_train,
     train_requested,
+    update_train_samples,
     update_train_state,
     write_alerts,
 )
@@ -30,17 +34,25 @@ logger = logging.getLogger("detector.camera")
 
 CAMERA_INTERVAL = float(os.environ.get("CAMERA_DETECT_INTERVAL", "15"))
 RETRAIN_EVERY = int(os.environ.get("CAMERA_RETRAIN_EVERY", "50"))
-# CKAAD needs a handful of normal frames to fit a backbone on. They used to be
-# the Kaggle MVTec stills; now the capture loop fills the directory in real
-# time, so this is also how long the loop waits before it has anything to train.
-MIN_TRAINING_FRAMES = 10
+# CKAAD needs a real sample of normal frames to fit a backbone on; a handful
+# undersamples the backbone and produces a threshold that does not generalize.
+# They used to be the Kaggle MVTec stills; now the capture loop fills the
+# directory in real time, so this is also how long the loop waits before it has
+# anything to train. The capture loop records one frame per camera per interval,
+# so at the 0.5s default that is ~100 seconds of warm-up for a single camera and
+# proportionally less as cameras are added.
+MIN_TRAINING_FRAMES = 200
 
-# The capture loop writes one frame per camera per `CAMERA_CAPTURE_INTERVAL_S`,
+# The capture loop records one frame per camera per `CAMERA_CAPTURE_INTERVAL_S`,
 # so a newest frame older than a few intervals means that stream stopped — the
 # directory only advances on a successful grab. Scoring the last frame a dead
-# camera ever sent would report on a camera that is no longer there.
-CAPTURE_INTERVAL = float(os.environ.get("CAMERA_CAPTURE_INTERVAL_S", "15"))
-FRAME_MAX_AGE = float(os.environ.get("CAMERA_FRAME_MAX_AGE_S", str(3 * CAPTURE_INTERVAL)))
+# camera ever sent would report on a camera that is no longer there. The floor
+# keeps a sub-second interval from making a single missed record look like a
+# dead camera.
+CAPTURE_INTERVAL = float(os.environ.get("CAMERA_CAPTURE_INTERVAL_S", "0.5"))
+FRAME_MAX_AGE = float(
+    os.environ.get("CAMERA_FRAME_MAX_AGE_S", str(max(10.0, 3 * CAPTURE_INTERVAL)))
+)
 
 # One alert per sustained episode: CKAAD above the threshold for an hour is one
 # anomaly, not 240 rows in `alerts`.
@@ -84,6 +96,20 @@ def _load_collected_training_images(
         f"Total: {len(all_images)} collected training frames across {len(all_cameras)} cameras"
     )
     return all_images
+
+
+def _count_collected_frames(all_cameras: List[Dict[str, Any]]) -> int:
+    """Cheap count of collected frames, for the control page's sample readout.
+
+    Globs the frame dirs instead of decoding them the way
+    `_load_collected_training_images` does, so it is safe to call every pass.
+    """
+    total = 0
+    for cam in all_cameras:
+        cam_dir = os.path.join(FRAME_DIR, cam["id"])
+        if os.path.isdir(cam_dir):
+            total += sum(1 for _ in Path(cam_dir).glob("*.png"))
+    return total
 
 
 def _load_live_frame(camera_id: str) -> Optional[np.ndarray]:
@@ -170,26 +196,38 @@ def _init_ckaad_model(training_images: List[np.ndarray], progress_callback=None)
     return detector
 
 
+def _ckaad_min_training_frames() -> int:
+    """The frame floor for a CKAAD fit, from the control page or the default.
+
+    Re-read on every use so a change lands on the next pass. The default (200)
+    is ~100s of capture at the 0.5s interval for one camera, proportionally
+    less as cameras are added.
+    """
+    return max(1, int(get_ckaad_setting("min_train_samples") or MIN_TRAINING_FRAMES))
+
+
 def _wait_for_training_frames(all_cameras: List[Dict[str, Any]]) -> bool:
     """Block until the capture loop has produced enough frames, or shut down.
 
     Frames arrive from the cameras themselves, one per camera per capture
-    interval, so a stack started against a live stream has none at startup —
-    roughly ten capture intervals before there is enough to train on. Exiting
-    instead, which is what the Kaggle-seeded frames allowed, would disable
-    camera detection for the whole run before anyone could press Train. The
-    sensor loop already waits for its readings this way.
+    interval, so a stack started against a live stream has none at startup and
+    must accumulate MIN_TRAINING_FRAMES before there is enough to train on.
+    Exiting instead, which is what the Kaggle-seeded frames allowed, would
+    disable camera detection for the whole run before anyone could press Train.
+    The sensor loop already waits for its readings this way.
 
     The images themselves are not returned: `_ensure_ckaad_trained` reloads the
     directory at fit time, so a retrain trains on the frames that exist then
     rather than on the startup snapshot.
     """
     while not shutdown_event.is_set():
+        min_frames = _ckaad_min_training_frames()
         images = _load_collected_training_images(all_cameras)
-        if len(images) >= MIN_TRAINING_FRAMES:
+        update_train_samples("shared", "ckaad", len(images), min_frames, CAMERA_INTERVAL)
+        if len(images) >= min_frames:
             return True
         logger.info(
-            f"Collected {len(images)} frames so far ({MIN_TRAINING_FRAMES} needed "
+            f"Collected {len(images)} frames so far ({min_frames} needed "
             f"for CKAAD); waiting for the capture loop"
         )
         shutdown_event.wait(timeout=CAMERA_INTERVAL)
@@ -211,6 +249,10 @@ def camera_detection_loop(all_cameras: List[Dict[str, Any]]):
     run_count = 0
     detection_counters: Dict[str, int] = {c["id"]: 0 for c in all_cameras}
     rolling_max_scores: Dict[str, float] = {c["id"]: 0.0 for c in all_cameras}
+    # Each camera's effective cutoff from the most recent inference, so the
+    # fusion margin is taken against the same per-zone threshold the alert gate
+    # used rather than the model's calibrated value.
+    effective_thresholds: Dict[str, float] = {c["id"]: 0.0 for c in all_cameras}
 
     try:
         while not shutdown_event.is_set():
@@ -220,15 +262,29 @@ def camera_detection_loop(all_cameras: List[Dict[str, Any]]):
                 shutdown_event.wait(timeout=CAMERA_INTERVAL)
                 continue
 
+            update_train_samples(
+                "shared", "ckaad",
+                _count_collected_frames(all_cameras),
+                _ckaad_min_training_frames(),
+                CAMERA_INTERVAL,
+            )
+
             # A Train press and the periodic re-train are the same operation;
             # the periodic one is just a press nobody made. Both go through
             # `_ensure_ckaad_trained`, which reloads the frames and owns the
             # fit/state bookkeeping — there is no second copy of it to drift.
-            periodic_retrain = run_count > 0 and run_count % RETRAIN_EVERY == 0
+            # Auto-retrain off closes the periodic path; a manual Train still
+            # works. The cadence is re-read each pass, so a change lands here.
+            retrain_every = max(1, int(get_ckaad_setting("retrain_every") or RETRAIN_EVERY))
+            auto_retrain = bool(get_ckaad_setting("auto_retrain"))
+            periodic_retrain = (
+                auto_retrain and run_count > 0 and run_count % retrain_every == 0
+            )
             ckaad = _ensure_ckaad_trained(conn, ckaad, all_cameras, periodic_retrain)
             if ckaad is not None:
-                _run_camera_inferences(conn, all_cameras, ckaad, detection_counters, rolling_max_scores)
-                _update_camera_fusion_state(all_cameras, rolling_max_scores)
+                _run_camera_inferences(conn, all_cameras, ckaad, detection_counters,
+                                       rolling_max_scores, effective_thresholds)
+                _update_camera_fusion_state(all_cameras, rolling_max_scores, effective_thresholds)
 
                 run_count += 1
                 if run_count % 10 == 0:
@@ -275,8 +331,12 @@ def _adopt_pending_ckaad_train(conn) -> bool:
                     "UPDATE detector_control SET executed_at = NOW() WHERE id = %s",
                     (row["id"],)
                 )
+            # Always end the transaction. Committing only when a command was
+            # found left an empty read parked "idle in transaction" holding an
+            # ACCESS SHARE lock on detector_control, which blocks the API's
+            # startup DROP TRIGGER (ACCESS EXCLUSIVE) and hangs the boot.
+            conn.commit()
             if pending:
-                conn.commit()
                 signal_train("shared", "ckaad")
                 logger.info(f"Adopted {len(pending)} pending CKAAD train command(s)")
     except Exception:
@@ -306,10 +366,11 @@ def _ensure_ckaad_trained(conn, ckaad, all_cameras, force=False):
     if ckaad is not None and not retrain_requested and not force:
         return ckaad
 
+    min_frames = _ckaad_min_training_frames()
     training_images = _load_collected_training_images(all_cameras)
-    if len(training_images) < MIN_TRAINING_FRAMES:
+    if len(training_images) < min_frames:
         logger.warning(
-            f"Only {len(training_images)} frames available ({MIN_TRAINING_FRAMES} "
+            f"Only {len(training_images)} frames available ({min_frames} "
             f"needed); keeping the current CKAAD model and retrying later"
         )
         return ckaad
@@ -351,7 +412,8 @@ def _ensure_ckaad_trained(conn, ckaad, all_cameras, force=False):
     return trained
 
 
-def _run_camera_inferences(conn, all_cameras, ckaad, detection_counters, rolling_max_scores):
+def _run_camera_inferences(conn, all_cameras, ckaad, detection_counters, rolling_max_scores,
+                           effective_thresholds):
     for cam in all_cameras:
         cam_id = cam["id"]
         cam_category = cam["category"]
@@ -380,14 +442,21 @@ def _run_camera_inferences(conn, all_cameras, ckaad, detection_counters, rolling
             )
             detection_counters[cam_id] += 1
 
-            image_url, heatmap_url = _save_ckaad_anomaly_frame(score, ckaad, result, frame, zone_name, cam_id)
+            # The one cutoff for this camera: a per-zone override the control
+            # page wrote, else the shared fallback, else the model's calibrated
+            # value. Every gate below uses it, so the alert, the saved frame and
+            # `is_anomaly` never disagree about what counts as anomalous.
+            threshold = get_ckaad_alert_threshold(zone_name, ckaad.threshold)
+            effective_thresholds[cam_id] = threshold
+
+            image_url, heatmap_url = _save_ckaad_anomaly_frame(threshold, score, result, frame, zone_name, cam_id)
 
             run_id = f"ckaad_{int(time.time())}"
-            _store_ckaad_result(conn, cam_id, cam_category, ckaad, score, run_id,
+            _store_ckaad_result(conn, cam_id, cam_category, threshold, score, run_id,
                                 detection_counters[cam_id], image_url, heatmap_url, rolling_max_scores[cam_id])
 
             alert_key = f"camera:{cam_id}"
-            if score > ckaad.threshold * 0.8:
+            if score > threshold:
                 if alert_due(alert_key, CAMERA_ALERT_COOLDOWN):
                     severity = compute_severity(score)
                     alerts = [
@@ -397,7 +466,7 @@ def _run_camera_inferences(conn, all_cameras, ckaad, detection_counters, rolling
                             "severity": severity,
                             "message": (
                                 f"[{cam_id}] CKAAD anomaly: score={score:.3f} "
-                                f"(threshold={ckaad.threshold:.3f})"),
+                                f"(threshold={threshold:.3f})"),
                             "score": float(score),
                             "run_id": run_id,
                         }
@@ -411,7 +480,7 @@ def _run_camera_inferences(conn, all_cameras, ckaad, detection_counters, rolling
             conn.rollback()
 
 
-def _save_ckaad_anomaly_frame(score, ckaad, result, frame, zone_name, cam_id):
+def _save_ckaad_anomaly_frame(threshold, score, result, frame, zone_name, cam_id):
     """The frame's snapshot URL, and the overlay URL when a heatmap was drawn.
 
     The snapshot is always the camera's own frame; the heatmap is the coloured
@@ -420,11 +489,14 @@ def _save_ckaad_anomaly_frame(score, ckaad, result, frame, zone_name, cam_id):
     `image_url` and returned `heatmap_url` as a constant `""`, so a consumer
     that asked for the heatmap got nothing and one that asked for the snapshot
     got an overlay.
+
+    `threshold` is the camera's effective cutoff; at or below it there is
+    nothing to save.
     """
     from PIL import Image
     image_url = ""
     heatmap_url = ""
-    if score <= ckaad.threshold * 0.8:
+    if score <= threshold:
         return image_url, heatmap_url
 
     ts = int(time.time())
@@ -447,7 +519,7 @@ def _save_ckaad_anomaly_frame(score, ckaad, result, frame, zone_name, cam_id):
     return image_url, heatmap_url
 
 
-def _store_ckaad_result(conn, cam_id, cam_category, ckaad, score, run_id, counter, image_url, heatmap_url, rolling_max):
+def _store_ckaad_result(conn, cam_id, cam_category, threshold, score, run_id, counter, image_url, heatmap_url, rolling_max):
     if score <= 0.05 and counter % 10 != 0:
         return
     with conn.cursor() as cur:
@@ -462,11 +534,11 @@ def _store_ckaad_result(conn, cam_id, cam_category, ckaad, score, run_id, counte
                 "ckaad",
                 run_id,
                 f"{cam_id}_frame_{int(time.time())}.png",
-                bool(score > ckaad.threshold),
+                bool(score > threshold),
                 float(score),
                 json.dumps({
                     "camera_id": cam_id,
-                    "threshold": float(ckaad.threshold),
+                    "threshold": float(threshold),
                     "rolling_max": float(rolling_max),
                     "anomaly_image_url": image_url,
                     "heatmap_url": heatmap_url,
@@ -476,14 +548,25 @@ def _store_ckaad_result(conn, cam_id, cam_category, ckaad, score, run_id, counte
     conn.commit()
 
 
-def _update_camera_fusion_state(all_cameras, rolling_max_scores):
+def _update_camera_fusion_state(all_cameras, rolling_max_scores, effective_thresholds):
+    """Publish the camera's contribution to the fusion loop.
+
+    Fusion compares the camera against its OWN cutoff, so the raw rolling max
+    alone is not enough: `camera_margin` is the largest, over this zone's
+    cameras, of `score / effective_threshold - 1`. A per-zone cutoff the
+    control page raises therefore raises the bar fusion uses too, instead of a
+    hardcoded absolute score that drifts out of step with it.
+    """
     zone_max_scores: Dict[str, float] = {}
+    zone_max_margins: Dict[str, float] = {}
     for cam in all_cameras:
         zone = cam["zone"]
         cam_id = cam["id"]
-        zone_max_scores[zone] = max(
-            zone_max_scores.get(zone, 0.0),
-            rolling_max_scores.get(cam_id, 0.0),
+        score = rolling_max_scores.get(cam_id, 0.0)
+        zone_max_scores[zone] = max(zone_max_scores.get(zone, 0.0), score)
+        zone_max_margins[zone] = max(
+            zone_max_margins.get(zone, 0.0),
+            ckaad_margin(score, effective_thresholds.get(cam_id)),
         )
 
     with fusion_lock:
@@ -493,5 +576,8 @@ def _update_camera_fusion_state(all_cameras, rolling_max_scores):
                     "sensor_max_score": 0.0,
                     "camera_max_score": 0.0,
                     "sensor_anomaly_count": 0,
+                    "sensor_margin": 0.0,
+                    "camera_margin": 0.0,
                 }
             fusion_state[zone]["camera_max_score"] = float(max_score)
+            fusion_state[zone]["camera_margin"] = float(zone_max_margins.get(zone, 0.0))

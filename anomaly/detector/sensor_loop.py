@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 from detector.shared import (
+    alert_active,
     alert_due,
     clear_alert,
     clear_train,
@@ -15,10 +16,13 @@ from detector.shared import (
     fusion_lock,
     fusion_state,
     get_db_connection,
+    get_setting,
     is_detector_enabled,
+    sensor_margin,
     shutdown_event,
     signal_train,
     train_requested,
+    update_train_samples,
     update_train_state,
     write_alerts,
 )
@@ -39,6 +43,16 @@ MIN_TRAIN_READINGS = int(os.environ.get("SENSOR_MIN_TRAIN_READINGS", "150"))
 # One alert per sustained episode: M2AD over the threshold for an hour is one
 # anomaly, not 120 rows in `alerts`.
 SENSOR_ALERT_COOLDOWN = float(os.environ.get("SENSOR_ALERT_COOLDOWN_S", "300"))
+
+# A periodic refit is held off while an anomaly episode is open, so a fault is
+# not fitted as normal. Manual Train and the first fit bypass the gate. The skip
+# cannot last forever: after this many consecutive skipped boundaries the refit
+# runs regardless, so a stuck flag (or a genuinely sustained fault) does not
+# freeze the model indefinitely. When such a forced refit does run, the
+# flagged-reading exclusion below drops the rows it already caught — unless
+# doing so would starve the fit, in which case the slice is trained on in full
+# and the still-flagged rows are learned after all.
+MAX_RETRAIN_SKIPS = int(os.environ.get("SENSOR_MAX_RETRAIN_SKIPS", "6"))
 
 # Readings per channel needed before anything can be aligned at all.
 MIN_READINGS = 10
@@ -62,10 +76,12 @@ TEST_FRACTION = 0.2
 # flags are ordinary brew dynamics (tank draining, then the level reset) rather
 # than faults. Walk-forward refits showed no cutoff that cleanly separates
 # normal from fault — normal p-values reach down to ~0.0003 — so this is a
-# pragmatic tightening, not a calibrated operating point. 0.02 keeps the
-# injected empty-tank / boiler-overheat faults (which reach p ~= 0.012)
-# detectable while cutting the ordinary-variation tail.
-SENSOR_PVALUE_THRESHOLD = float(os.environ.get("SENSOR_PVALUE_THRESHOLD", "0.02"))
+# pragmatic tightening, not a calibrated operating point. Replaying real
+# telemetry through the live pipeline put the clean baseline's floor at ~0.019
+# (brewing/refill transients), while the injected demo faults reach
+# p <= 0.0035; 0.005 sits below the baseline floor with ~4x margin and still
+# keeps every injected fault.
+SENSOR_PVALUE_THRESHOLD = float(os.environ.get("SENSOR_PVALUE_THRESHOLD", "0.005"))
 
 
 def _fetch_sensor_readings(
@@ -147,7 +163,7 @@ def _report_idle(zone_name: str, message: str) -> None:
     """
     update_train_state(zone_name, "m2ad", "idle", message=message)
     clear_alert(f"sensor:{zone_name}")
-    _update_fusion_sensor_state(zone_name, 0.0, 0)
+    _update_fusion_sensor_state(zone_name, 0.0, 0, 0.0)
 
 
 def _split_for_training(n_total: int) -> Optional[Tuple[int, int]]:
@@ -181,6 +197,10 @@ def sensor_detection_loop(zone_name: str, channel_ids: List[str]):
     detector: Optional[M2AD] = None
     run_count = 0
     run_id_base = f"detector_{zone_name}"
+    # Anomalous readings flagged by the previous pass, and consecutive periodic
+    # boundaries skipped because one was open. Both feed the retrain gate below.
+    last_anomaly_count = 0
+    retrain_skips = 0
 
     conn = get_db_connection()
 
@@ -191,6 +211,17 @@ def sensor_detection_loop(zone_name: str, channel_ids: List[str]):
             if not is_detector_enabled(zone_name, "m2ad"):
                 shutdown_event.wait(timeout=SENSOR_INTERVAL)
                 continue
+
+            # Runtime knobs from the control page, re-read every pass so a
+            # change lands without a restart. `get_setting` falls back to the
+            # module defaults (the env-var values) when nothing is configured.
+            min_train = max(
+                MIN_READINGS,
+                int(get_setting(zone_name, "m2ad", "min_train_samples") or MIN_TRAIN_READINGS),
+            )
+            retrain_every = max(1, int(get_setting(zone_name, "m2ad", "retrain_every")))
+            auto_retrain = bool(get_setting(zone_name, "m2ad", "auto_retrain"))
+            pvalue_threshold = float(get_setting(zone_name, "m2ad", "pvalue_threshold"))
 
             # A Train press is durable and optional. Read, never consumed here:
             # it stays outstanding until a fit succeeds, so one press that lands
@@ -203,11 +234,11 @@ def sensor_detection_loop(zone_name: str, channel_ids: List[str]):
                 channel_data = _fetch_sensor_readings(conn, channel_ids)
                 aligned = _align_and_pivot(channel_data)
                 if aligned is None:
-                    update_train_state(
-                        zone_name, "m2ad", "idle",
-                        message=f"Collecting readings (need >= {MIN_READINGS} per channel; "
-                                f"training starts on its own)",
-                    )
+                    message = (f"Collecting readings (need >= {MIN_READINGS} per channel; "
+                               f"training starts on its own)")
+                    logger.info(f"[{zone_name}] M2AD {message}")
+                    update_train_samples(zone_name, "m2ad", 0, min_train, SENSOR_INTERVAL)
+                    update_train_state(zone_name, "m2ad", "idle", message=message)
                     shutdown_event.wait(timeout=SENSOR_INTERVAL)
                     continue
 
@@ -222,17 +253,20 @@ def sensor_detection_loop(zone_name: str, channel_ids: List[str]):
                     continue
 
                 n_total = normalized.shape[0]
+                # Report the live count so the control page can show the user
+                # how much data a min_train_samples would actually cover.
+                update_train_samples(zone_name, "m2ad", n_total, min_train, SENSOR_INTERVAL)
                 split = _split_for_training(n_total)
                 if split is None:
-                    update_train_state(
-                        zone_name, "m2ad", "idle",
-                        message=f"Collecting readings ({n_total} so far; training starts on its own)",
-                    )
+                    message = f"Collecting readings ({n_total} so far; training starts on its own)"
+                    logger.info(f"[{zone_name}] M2AD {message}")
+                    update_train_state(zone_name, "m2ad", "idle", message=message)
                     shutdown_event.wait(timeout=SENSOR_INTERVAL)
                     continue
 
                 n_train, window_size = split
                 train_data = normalized[:n_train]
+                train_ts = timestamps[:n_train]
                 test_data = normalized[n_train:]
                 raw_test = raw_array[n_train:]
                 if not _has_variation(raw_test):
@@ -244,22 +278,54 @@ def sensor_detection_loop(zone_name: str, channel_ids: List[str]):
                     shutdown_event.wait(timeout=SENSOR_INTERVAL)
                     continue
 
-                if detector is None and n_total < MIN_TRAIN_READINGS:
-                    update_train_state(
-                        zone_name, "m2ad", "idle",
-                        message=f"Collecting readings ({n_total}/{MIN_TRAIN_READINGS}; "
-                                f"training starts on its own)",
-                    )
+                if detector is None and n_total < min_train:
+                    message = (f"Collecting readings ({n_total}/{min_train}; "
+                               f"training starts on its own)")
+                    logger.info(f"[{zone_name}] M2AD {message}")
+                    update_train_state(zone_name, "m2ad", "idle", message=message)
                     shutdown_event.wait(timeout=SENSOR_INTERVAL)
                     continue
 
+                # Hold the periodic refit off while an anomaly episode is open,
+                # so a live fault is not fitted as normal. Manual Train and the
+                # first fit ignore this. After MAX_RETRAIN_SKIPS consecutive
+                # boundaries the refit runs anyway (the flagged-row exclusion
+                # still keeps the fault itself out of the fit). Auto-retrain off
+                # closes this path entirely; manual Train still works.
+                periodic_due = (
+                    auto_retrain and run_count > 0 and run_count % retrain_every == 0
+                )
+                anomalies_open = (
+                    last_anomaly_count > 0 or alert_active(f"sensor:{zone_name}")
+                )
+                if periodic_due and anomalies_open and retrain_skips < MAX_RETRAIN_SKIPS:
+                    periodic_ok = False
+                    retrain_skips += 1
+                    logger.info(
+                        f"[{zone_name}] periodic retrain deferred: anomaly episode open "
+                        f"(flagged={last_anomaly_count}, skip {retrain_skips}/{MAX_RETRAIN_SKIPS})"
+                    )
+                else:
+                    periodic_ok = True
+                    if periodic_due:
+                        if anomalies_open:
+                            logger.warning(
+                                f"[{zone_name}] periodic retrain force-run after "
+                                f"{retrain_skips} deferred boundaries despite an open episode"
+                            )
+                        retrain_skips = 0
+
                 detector = _train_m2ad_if_needed(
-                    detector, zone_name, channel_ids, train_data,
-                    retrain_requested, run_count, window_size
+                    detector, zone_name, channel_ids, train_data, train_ts,
+                    retrain_requested, run_count, window_size, periodic_ok, conn,
+                    retrain_every=retrain_every, pvalue_threshold=pvalue_threshold,
                 )
                 if detector is None:
                     shutdown_event.wait(timeout=SENSOR_INTERVAL)
                     continue
+
+                # The cutoff is read live so a change applies without a refit.
+                detector.threshold = pvalue_threshold
 
                 results = detector.detect_batch(test_data)
                 if not results:
@@ -292,6 +358,9 @@ def sensor_detection_loop(zone_name: str, channel_ids: List[str]):
                 # when nothing was flagged. The alert now follows the detector:
                 # how many samples it actually called anomalous.
                 anomaly_count = sum(1 for r in results if getattr(r, "is_anomaly", False))
+                # Feeds the next iteration's retrain gate: a fault flagged now
+                # holds the periodic refit off before it can age into training.
+                last_anomaly_count = anomaly_count
                 mean_score = float(np.mean(scores)) if scores else 0.0
                 run_id = f"{run_id_base}_{int(time.time())}"
 
@@ -307,7 +376,7 @@ def sensor_detection_loop(zone_name: str, channel_ids: List[str]):
                     f"max_score={max_score:.3f}, anomalies={anomaly_count}/{len(scores)}")
 
                 _write_m2ad_alerts_if_needed(conn, zone_name, max_score, anomaly_count, run_id, scores)
-                _update_fusion_sensor_state(zone_name, max_score, anomaly_count)
+                _update_fusion_sensor_state(zone_name, max_score, anomaly_count, pvalue_threshold)
 
             except Exception as e:
                 logger.error(f"[{zone_name}] Detection error: {e}", exc_info=True)
@@ -347,8 +416,12 @@ def _m2ad_train_requested(zone_name: str, conn) -> bool:
                     "UPDATE detector_control SET executed_at = NOW() WHERE id = %s",
                     (row["id"],)
                 )
+            # Always end the transaction. Committing only when a command was
+            # found left an empty read parked "idle in transaction" holding an
+            # ACCESS SHARE lock on detector_control, which blocks the API's
+            # startup DROP TRIGGER (ACCESS EXCLUSIVE) and hangs the boot.
+            conn.commit()
             if pending:
-                conn.commit()
                 signal_train(zone_name, "m2ad")
                 logger.info(f"[{zone_name}] Adopted {len(pending)} pending M2AD train command(s)")
     except Exception:
@@ -356,12 +429,86 @@ def _m2ad_train_requested(zone_name: str, conn) -> bool:
     return train_requested(zone_name, "m2ad")
 
 
-def _train_m2ad_if_needed(detector, zone_name, channel_ids, train_data,
-                          retrain_requested, run_count, window_size):
+def _flagged_timestamps(conn, zone_name, since) -> set:
+    """Reading timestamps already flagged as anomalous for this zone.
+
+    A flagged reading is evidence of a fault, not a normal sample, so it must
+    not be fitted as baseline. This is the other half of the injection problem:
+    a fault sits in the scored slice while it is live (and a refit then still
+    sees pre-fault training data), but once it ages out of the scored 20% into
+    the training 80% a later periodic refit would learn "fault = normal" — and
+    detection of that fault silently degrades from then on. Dropping the flagged
+    timestamps keeps a caught fault out of the baseline regardless of age.
+
+    Only faults the detector actually caught can be excluded; a fault that was
+    never flagged (too subtle, or already baked in) cannot be identified here.
+    """
+    if since is None:
+        return set()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT DISTINCT timestamp FROM sensor_anomaly_results
+                   WHERE detector = 'm2ad' AND details->>'zone' = %s
+                   AND timestamp >= %s""",
+                (zone_name, since),
+            )
+            return {row[0] for row in cur.fetchall()}
+    except Exception as e:
+        # A failed lookup must not take the training slice down with it; fall
+        # back to training on the full slice (the previous behaviour).
+        conn.rollback()
+        logger.warning(f"[{zone_name}] could not load flagged timestamps ({e}); "
+                       f"training on all rows this round")
+        return set()
+
+
+def _drop_flagged_rows(conn, zone_name, train_data, train_ts, window_size):
+    """The training slice with already-flagged readings removed.
+
+    `train_ts[i]` is the timestamp of `train_data[i]`. Rows whose timestamp was
+    flagged are dropped so the fault never becomes baseline. The window was
+    sized to the *full* slice, so if the mask would starve the fit (fewer rows
+    than the window plus the minimum fit windows) the exclusion is skipped this
+    round rather than failing the fit outright.
+    """
+    if train_data.shape[0] == 0 or not train_ts:
+        return train_data
+    flagged = _flagged_timestamps(conn, zone_name, train_ts[0])
+    if not flagged:
+        return train_data
+    keep = np.array([ts not in flagged for ts in train_ts], dtype=bool)
+    n_drop = int((~keep).sum())
+    if n_drop == 0:
+        return train_data
+    if int(keep.sum()) < window_size + MIN_FIT_SAMPLES + 1:
+        logger.warning(
+            f"[{zone_name}] {n_drop} flagged reading(s) in the training slice, "
+            f"but dropping them would leave too few rows to fit; keeping them "
+            f"this round"
+        )
+        return train_data
+    logger.info(f"[{zone_name}] excluding {n_drop} flagged reading(s) from the training slice")
+    return train_data[keep]
+
+
+def _train_m2ad_if_needed(detector, zone_name, channel_ids, train_data, train_ts,
+                          retrain_requested, run_count, window_size, periodic_ok, conn,
+                          retrain_every: Optional[int] = None,
+                          pvalue_threshold: Optional[float] = None):
     from detection.sensor.anomaly import M2AD
-    if not (detector is None or retrain_requested
-            or (run_count > 0 and run_count % RETRAIN_EVERY == 0)):
+    # `retrain_every`/`pvalue_threshold` are the runtime values the loop read
+    # from the settings table; their defaults keep the module constants for
+    # callers (tests, one-off fits) that do not pass them.
+    retrain_every = retrain_every or RETRAIN_EVERY
+    threshold = SENSOR_PVALUE_THRESHOLD if pvalue_threshold is None else pvalue_threshold
+    # The first fit and a manual Train press always proceed. Only the periodic
+    # boundary is gated, and only while an anomaly episode is open.
+    periodic_due = periodic_ok and run_count > 0 and run_count % retrain_every == 0
+    if not (detector is None or retrain_requested or periodic_due):
         return detector
+
+    train_data = _drop_flagged_rows(conn, zone_name, train_data, train_ts, window_size)
 
     n_timesteps = train_data.shape[0]
     logger.info(f"[{zone_name}] Training M2AD on collected readings "
@@ -382,8 +529,9 @@ def _train_m2ad_if_needed(detector, zone_name, channel_ids, train_data,
         tolerance=5,
         gamma_thresh=1.0,
         error_name="area",
-        # p-value cutoff for `is_anomaly`; see SENSOR_PVALUE_THRESHOLD.
-        threshold=SENSOR_PVALUE_THRESHOLD,
+        # p-value cutoff for `is_anomaly`; the runtime value if one is set, the
+        # module default (see SENSOR_PVALUE_THRESHOLD) otherwise.
+        threshold=threshold,
     )
 
     train_t0 = time.time()
@@ -513,24 +661,28 @@ def _write_m2ad_alerts_if_needed(conn, zone_name, max_score, anomaly_count, run_
     write_alerts(conn, alerts)
 
 
-def _update_fusion_sensor_state(zone_name, max_score, anomaly_count):
+def _update_fusion_sensor_state(zone_name, max_score, anomaly_count, pvalue_threshold):
     """Publish the sensor's contribution to the fusion loop.
 
-    `max_score` is `1 - p` (higher is worse), but the fusion loop alerts on
-    `sensor_max_score > 0.3` — i.e. `p < 0.7`. Publishing the raw score made
-    every ordinary run look anomalous to fusion: a p of 0.29 (this data's
-    median clean value) reads as 0.71 and cleared the 0.3 bar, so fusion raised
-    a `sensor_anomaly` alert on a quiet machine. Report a score only when the
-    detector actually flagged a sample; a clean run contributes nothing.
+    `max_score` is `1 - p` (higher is worse). Fusion needs a margin over the
+    sensor's OWN cutoff, not a raw score: `sensor_margin` reports how many
+    decades the run's smallest p-value falls below `pvalue_threshold`, so the
+    camera side and the sensor side are on the same 0..1 scale. A clean run
+    contributes margin 0. The raw `max_score` is kept alongside it for the
+    alert message and logs.
     """
+    margin = sensor_margin(pvalue_threshold, max_score) if anomaly_count > 0 else 0.0
     with fusion_lock:
         if zone_name not in fusion_state:
             fusion_state[zone_name] = {
                 "sensor_max_score": 0.0,
                 "camera_max_score": 0.0,
                 "sensor_anomaly_count": 0,
+                "sensor_margin": 0.0,
+                "camera_margin": 0.0,
             }
         fusion_state[zone_name]["sensor_max_score"] = (
             float(max_score) if anomaly_count > 0 else 0.0
         )
+        fusion_state[zone_name]["sensor_margin"] = float(margin)
         fusion_state[zone_name]["sensor_anomaly_count"] = int(anomaly_count)

@@ -10,8 +10,10 @@ from detector.shared import (
     clear_alert,
     compute_severity,
     fusion_lock,
+    fusion_should_fire,
     fusion_state,
     get_db_connection,
+    get_fusion_sensitivity,
     get_zone_dashboard_uids,
     is_detector_enabled,
     shutdown_event,
@@ -47,21 +49,35 @@ def fusion_loop(zone_name: str):
                             "sensor_max_score": 0.0,
                             "camera_max_score": 0.0,
                             "sensor_anomaly_count": 0,
+                            "sensor_margin": 0.0,
+                            "camera_margin": 0.0,
                         }
                         state = fusion_state[zone_name]
 
-                    sensor_score = state["sensor_max_score"]
-                    camera_score = state["camera_max_score"]
+                    sensor_score = state.get("sensor_max_score", 0.0)
+                    camera_score = state.get("camera_max_score", 0.0)
+                    sensor_margin = state.get("sensor_margin", 0.0)
+                    camera_margin = state.get("camera_margin", 0.0)
 
                 if sensor_score == 0.0 and camera_score == 0.0:
                     shutdown_event.wait(timeout=FUSION_INTERVAL)
                     continue
 
-                SENSOR_THRESH = 0.3
-                CAMERA_THRESH = 0.3
+                # Each modality is measured as a margin past its own runtime
+                # cutoff (sensor: decades below its p-value threshold; camera:
+                # score over its effective per-zone cutoff). Fusion fires only
+                # when the SMALLER margin clears the per-zone sensitivity, so a
+                # single loud modality cannot carry a cross-modal verdict — the
+                # old hardcoded `camera > 0.3` could, which is why raising the
+                # zone's CKAAD cutoff left fusion alerting anyway.
+                sensitivity = get_fusion_sensitivity(zone_name)
+                joint_margin = min(sensor_margin, camera_margin)
 
-                if sensor_score > SENSOR_THRESH and camera_score > CAMERA_THRESH:
-                    combined_score = 1.0 - (1.0 - sensor_score) * (1.0 - camera_score)
+                if fusion_should_fire(sensor_margin, camera_margin, sensitivity):
+                    # Noisy-OR is OR-like, so it is only the *reported* combined
+                    # strength, never the decision: two strong margins read as
+                    # one strong event without letting either alone through.
+                    combined_score = 1.0 - (1.0 - sensor_margin) * (1.0 - camera_margin)
                     severity = bump_severity(compute_severity(combined_score))
                     alert_type = "cross_modal"
                 else:
@@ -71,21 +87,24 @@ def fusion_loop(zone_name: str):
                     # (`sensor_loop` / `camera_loop` each call `write_alerts`),
                     # so re-emitting it here doubled every event — and with the
                     # camera offline `camera_score` is always 0, so *every*
-                    # sensor anomaly produced two `alerts` rows. Scores between
-                    # zero and the threshold are ordinary. Either way, end any
-                    # open fusion episode and let the owning loop alert.
+                    # sensor anomaly produced two `alerts` rows. Margins below
+                    # the sensitivity are ordinary. Either way, end any open
+                    # fusion episode and let the owning loop alert.
                     clear_alert(f"fusion:{zone_name}")
                     logger.debug(
                         f"[{zone_name}] Not cross-modal: "
-                        f"sensor={sensor_score:.3f}, camera={camera_score:.3f}"
+                        f"sensor={sensor_score:.3f} (m={sensor_margin:.3f}), "
+                        f"camera={camera_score:.3f} (m={camera_margin:.3f}), "
+                        f"joint={joint_margin:.3f} <= S={sensitivity:.3f}"
                     )
                     shutdown_event.wait(timeout=FUSION_INTERVAL)
                     continue
 
                 logger.info(
-                    f"[{zone_name}] Fused: sensor={sensor_score:.3f}, "
-                    f"camera={camera_score:.3f}, "
-                    f"type={alert_type}, score={combined_score:.3f} ({severity})"
+                    f"[{zone_name}] Fused: sensor={sensor_score:.3f} "
+                    f"(m={sensor_margin:.3f}), camera={camera_score:.3f} "
+                    f"(m={camera_margin:.3f}), type={alert_type}, "
+                    f"score={combined_score:.3f} ({severity})"
                 )
 
                 run_id = f"fused_{zone_name}_{int(time.time())}"
@@ -107,8 +126,9 @@ def fusion_loop(zone_name: str):
                         "severity": severity,
                         "message": (
                             f"[{zone_name}] {alert_type}: {severity.upper()}"
-                            f" (sensor={sensor_score:.2f}, camera={camera_score:.2f}, "
-                            f"fused={combined_score:.2f})"
+                            f" (sensor={sensor_score:.2f} m={sensor_margin:.2f}, "
+                            f"camera={camera_score:.2f} m={camera_margin:.2f}, "
+                            f"joint={joint_margin:.2f}, fused={combined_score:.2f})"
                         ),
                         "score": float(combined_score),
                         "run_id": run_id,

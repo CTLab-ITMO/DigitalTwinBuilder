@@ -104,7 +104,8 @@ def test_m2ad_is_built_with_every_channel_as_a_sensor(monkeypatch):
                 "flow_rate_ml_s", "dispensed_ml", "state_code", "target_ml"]
     train_data = np.zeros((60, len(channels)), dtype=np.float32)
     detector = sensor_loop._train_m2ad_if_needed(
-        None, "zone", channels, train_data, False, 0, window_size=5)
+        None, "zone", channels, train_data, [], False, 0, window_size=5,
+        periodic_ok=False, conn=None)
 
     assert detector is not None
     assert captured["sensors"] == channels
@@ -115,19 +116,20 @@ def test_m2ad_is_built_with_every_channel_as_a_sensor(monkeypatch):
 
 
 def test_fusion_only_hears_about_detected_anomalies():
-    """A clean run must not publish a score to the fusion loop.
+    """A clean run must not publish a score or margin to the fusion loop.
 
-    `anomaly_score` is `1 - p`, and fusion alerts at `sensor_max_score > 0.3`
-    (`p < 0.7`). Publishing the raw score on a clean run therefore raised a
-    fused `sensor_anomaly` alert for ordinary variation. With no flagged
-    samples the sensor's contribution is zero.
+    `anomaly_score` is `1 - p`. Fusion now keys off a normalized margin over
+    the sensor's own cutoff, but a run that flagged nothing must still
+    contribute zero, or ordinary variation would corroborate a camera event.
+    With no flagged samples both the score and the margin are zero.
     """
     sensor_loop.fusion_state.pop("zone", None)
-    sensor_loop._update_fusion_sensor_state("zone", 0.71, 0)
+    sensor_loop._update_fusion_sensor_state("zone", 0.71, 0, 0.005)
     assert sensor_loop.fusion_state["zone"]["sensor_max_score"] == 0.0
+    assert sensor_loop.fusion_state["zone"]["sensor_margin"] == 0.0
     assert sensor_loop.fusion_state["zone"]["sensor_anomaly_count"] == 0
 
-    sensor_loop._update_fusion_sensor_state("zone", 0.99, 3)
+    sensor_loop._update_fusion_sensor_state("zone", 0.99, 3, 0.005)
     assert sensor_loop.fusion_state["zone"]["sensor_max_score"] == 0.99
     assert sensor_loop.fusion_state["zone"]["sensor_anomaly_count"] == 3
     sensor_loop.fusion_state.pop("zone", None)
@@ -241,3 +243,198 @@ def test_clean_samples_and_duplicate_ts_within_a_pass_write_nothing_extra():
         conn, results, raw, ts, channels, "zone", "run", 0.5)
 
     assert len(conn._inserts()) == 1
+
+
+# --- flagged-row exclusion + periodic-retrain gate -------------------------
+
+
+class _FlagCursor:
+    def __init__(self, rows):
+        self.rows = rows
+        self.sql = None
+        self.params = None
+
+    def execute(self, sql, params=None):
+        self.sql = sql
+        self.params = params
+
+    def fetchall(self):
+        return [(t,) for t in self.rows]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class _FlagConn:
+    def __init__(self, flagged=()):
+        self.flagged = list(flagged)
+        self.rolled = False
+        self.cursor_obj = _FlagCursor(self.flagged)
+
+    def cursor(self):
+        return self.cursor_obj
+
+    def rollback(self):
+        self.rolled = True
+
+
+def _ts20():
+    return [f"2026-10-05T20:{i:02d}:00" for i in range(20)]
+
+
+def test_flagged_rows_are_dropped_from_the_training_slice():
+    """A reading the detector already flagged must not be fitted as baseline.
+
+    Otherwise a caught fault ages out of the scored slice into the training
+    slice and a later refit learns "fault = normal", silently degrading
+    detection of that fault from then on.
+    """
+    ts = _ts20()
+    data = np.arange(20 * 3, dtype=np.float32).reshape(20, 3)
+    conn = _FlagConn(flagged={ts[5], ts[6]})
+
+    out = sensor_loop._drop_flagged_rows(conn, "zone", data, ts, window_size=3)
+
+    assert out.shape[0] == 18
+    kept = {tuple(r) for r in out.tolist()}
+    assert tuple(data[5]) not in kept and tuple(data[6]) not in kept
+    assert tuple(data[4]) in kept and tuple(data[7]) in kept
+    # The lookup is bounded to the training slice: from the first timestamp,
+    # for this zone, m2ad rows only.
+    assert conn.cursor_obj.params == ("zone", ts[0])
+
+
+def test_flagged_rows_kept_when_dropping_would_starve_the_fit():
+    """Exclusion yields to the fit rather than failing it.
+
+    The window was sized to the full slice, so a slice dominated by flagged
+    rows is trained on in full this round (with a warning) instead of dropping
+    below the minimum the fit needs and failing outright.
+    """
+    ts = _ts20()
+    data = np.arange(20 * 3, dtype=np.float32).reshape(20, 3)
+    # window 3 + MIN_FIT_SAMPLES 9 + 1 = 13; dropping all but one -> 1 < 13.
+    conn = _FlagConn(flagged=ts[:-1])
+
+    out = sensor_loop._drop_flagged_rows(conn, "zone", data, ts, window_size=3)
+
+    assert out.shape[0] == 20
+
+
+def test_no_flagged_rows_leaves_the_slice_unchanged():
+    ts = _ts20()
+    data = np.arange(20 * 3, dtype=np.float32).reshape(20, 3)
+
+    out = sensor_loop._drop_flagged_rows(_FlagConn(flagged=()), "zone", data, ts, window_size=3)
+
+    assert out.shape[0] == 20
+
+
+def test_flagged_lookup_failure_falls_back_to_the_full_slice():
+    """A failed lookup must not take the training slice down with it."""
+
+    class _Boom(_FlagConn):
+        def cursor(self):
+            raise RuntimeError("db down")
+
+    ts = _ts20()
+    data = np.arange(20 * 3, dtype=np.float32).reshape(20, 3)
+    conn = _Boom()
+
+    out = sensor_loop._drop_flagged_rows(conn, "zone", data, ts, window_size=3)
+
+    assert out.shape[0] == 20
+    assert conn.rolled is True
+
+
+def test_periodic_refit_is_skipped_while_the_gate_is_closed(monkeypatch):
+    """A periodic boundary with `periodic_ok=False` keeps the current model.
+
+    The gate is what holds a refit off while an anomaly episode is open; the
+    first fit and a manual Train pass `periodic_ok`/`retrain_requested`
+    independently, so only the periodic path is affected.
+    """
+    import types
+    fitted = []
+
+    class FakeM2AD:
+        def __init__(self, dataset, **kwargs):
+            pass
+
+        def fit(self, data, progress_callback=None):
+            fitted.append(tuple(data.shape))
+            return True
+
+    fake_module = types.ModuleType("detection.sensor.anomaly")
+    fake_module.M2AD = FakeM2AD
+    monkeypatch.setitem(sys.modules, "detection.sensor.anomaly", fake_module)
+    monkeypatch.setattr(sensor_loop, "update_train_state", lambda *a, **k: None)
+    monkeypatch.setattr(sensor_loop, "clear_train", lambda *a, **k: None)
+
+    channels = ["boiler_temp_c", "water_tank"]
+    train_data = np.zeros((60, 2), dtype=np.float32)
+    existing = object()
+    boundary = sensor_loop.RETRAIN_EVERY
+
+    kept = sensor_loop._train_m2ad_if_needed(
+        existing, "zone", channels, train_data, [], False, boundary, 5,
+        periodic_ok=False, conn=None)
+    assert kept is existing
+    assert fitted == []
+
+    refit = sensor_loop._train_m2ad_if_needed(
+        existing, "zone", channels, train_data, [], False, boundary, 5,
+        periodic_ok=True, conn=None)
+    assert refit is not existing
+    assert fitted == [(60, 2)]
+
+
+def _fake_m2ad(monkeypatch, captured):
+    import types
+
+    class FakeM2AD:
+        def __init__(self, dataset, **kwargs):
+            captured.update(kwargs)
+
+        def fit(self, data, progress_callback=None):
+            captured["fitted"] = captured.get("fitted", 0) + 1
+            return True
+
+    fake_module = types.ModuleType("detection.sensor.anomaly")
+    fake_module.M2AD = FakeM2AD
+    monkeypatch.setitem(sys.modules, "detection.sensor.anomaly", fake_module)
+    monkeypatch.setattr(sensor_loop, "update_train_state", lambda *a, **k: None)
+    monkeypatch.setattr(sensor_loop, "clear_train", lambda *a, **k: None)
+
+
+def test_runtime_retrain_every_overrides_the_module_cadence(monkeypatch):
+    """The control page's `retrain_every` is what decides the periodic boundary.
+
+    `run_count=2` is a boundary for the runtime value of 2 but not for the
+    module default of 10, so a refit here proves the runtime value was used.
+    """
+    captured = {}
+    _fake_m2ad(monkeypatch, captured)
+
+    existing = object()
+    data = np.zeros((60, 2), dtype=np.float32)
+    refit = sensor_loop._train_m2ad_if_needed(
+        existing, "zone", ["a", "b"], data, [], False, 2, 5,
+        periodic_ok=True, conn=None, retrain_every=2)
+
+    assert refit is not existing
+    assert captured["fitted"] == 1
+
+
+def test_runtime_pvalue_threshold_reaches_the_model(monkeypatch):
+    captured = {}
+    _fake_m2ad(monkeypatch, captured)
+
+    sensor_loop._train_m2ad_if_needed(
+        None, "zone", ["a"], np.zeros((60, 1), dtype=np.float32), [],
+        False, 0, 5, periodic_ok=False, conn=None, pvalue_threshold=0.123)
+
+    assert captured["threshold"] == 0.123
