@@ -357,8 +357,56 @@ def test_loop_stops_when_a_turn_returns_nothing():
     assert outcome["reply"] == REPLY_TRUNCATED
     assert outcome["attempts"] == 1
     assert outcome["repaired"] == 0
-    assert "no answer" in outcome["report"]
+    # The outcome reports the reply that was actually read, not the turn that
+    # produced nothing: its defect is the thing to fix, and a "no answer" report
+    # contradicted the truncated reply the outcome still handed back.
+    assert "never closed" in outcome["report"]
+    assert "correction turn produced no answer" in outcome["report"]
     assert len(calls) == 2
+
+
+def test_a_first_turn_with_no_reply_reports_nothing_to_read():
+    submit, calls = scripted(None)
+
+    outcome = interview_runner.generate_with_repair(submit, attempts=2)
+
+    assert outcome["ok"] is False
+    assert outcome["reply"] is None and outcome["replies"] == []
+    assert outcome["requirements"] is None
+    assert "there was nothing to read" in outcome["report"]
+    assert "correction turn" not in outcome["report"]
+    assert len(calls) == 1
+
+
+def test_a_no_reply_correction_keeps_the_requirements_the_last_reply_carried():
+    # `without` is a readable `completed: true` reply the gate rejects for one
+    # absent key, so `verify` carries the requirements it did have. A correction
+    # that returns nothing must not discard them.
+    submit, _ = scripted(without("additional_info"), None)
+
+    outcome = interview_runner.generate_with_repair(submit, attempts=2)
+
+    assert outcome["ok"] is False
+    assert outcome["completed"] is False
+    assert outcome["requirements"]["production_type"] == REQ["production_type"]
+    assert "additional_info" in outcome["report"]
+    assert "correction turn produced no answer" in outcome["report"]
+
+
+def test_the_no_reply_turn_is_logged_as_no_reply_while_the_outcome_keeps_the_verdict():
+    seen = []
+
+    def record(i, reply, verdict):
+        seen.append((i, reply, verdict["ok"], verdict["report"]))
+
+    submit, _ = scripted(REPLY_TRUNCATED, None)
+    interview_runner.generate_with_repair(submit, attempts=2, on_attempt=record)
+
+    assert seen[0][0] == 0 and seen[0][1] == REPLY_TRUNCATED
+    assert seen[1][0] == 1 and seen[1][1] is None and seen[1][2] is False
+    # The per-turn log still names the turn that produced nothing, so the job's
+    # progress reads turn by turn even though the outcome keeps the verdict.
+    assert "there was nothing to read" in seen[1][3]
 
 
 def test_loop_returns_the_last_reply_when_every_attempt_fails():

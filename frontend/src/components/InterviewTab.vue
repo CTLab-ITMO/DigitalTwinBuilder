@@ -29,6 +29,11 @@ const repairs = computed(() => Math.max((store.uiJob?.attempts.length ?? 1) - 1,
 // Shows "Processing..." indicator: active poll, or old session with unanswered user message
 const isWaiting = computed(() => {
   if (isProcessing.value) return true
+  // A finished run reported its verdict, and a recovered requirements object is
+  // the interview's outcome: neither is still waiting on the agent. The
+  // transcript can still end on a user turn — that is the broker's repair
+  // prompt, written to the conversation the agent read, not an open question.
+  if (store.uiVerdict || store.interviewResult) return false
   const msgs = store.messages
   if (msgs.length === 0) return false
   return msgs[msgs.length - 1].role === 'user'
@@ -95,7 +100,10 @@ async function send() {
         <p class="hint">{{ t('interview.completedHint') }}</p>
       </div>
 
-      <div v-if="store.uiVerdict && !store.uiVerdict.ok && !isProcessing" class="card failed">
+      <div
+        v-if="store.uiVerdict && !store.uiVerdict.ok && !isProcessing && !store.interviewResult"
+        class="card failed"
+      >
         <strong>{{ t('interview.failed') }}</strong>
         <p class="hint">
           {{ t('interview.failedHint', { n: store.uiVerdict.attempts }) }}

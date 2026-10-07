@@ -298,7 +298,10 @@ def generate_with_repair(submit, *, attempts: int | None = None,
 
     `submit(prompt_text, attempt)` returns the agent's reply for one turn — or
     None if the turn produced no reply at all (task failed or timed out), which
-    stops the loop because there is nothing to read or to correct.
+    stops the loop because there is nothing to read or to correct. In that case
+    the outcome keeps the last verdict that *was* read, so the report still says
+    why that reply was rejected and the requirements it carried are not lost;
+    only a first turn that produces nothing yields the generic "nothing to read".
     `repair_prompt(previous_reply, report, attempt, total)` builds the follow-up
     message (normally `prompts.user.make_ui_repair`). The loop reads the reply
     after every turn and stops at the first one that is readable — including a
@@ -316,13 +319,33 @@ def generate_with_repair(submit, *, attempts: int | None = None,
     for i in range(total + 1):
         reply = submit(prompt, i)
         if reply is None:
-            verdict = {"ok": False, "completed": False, "requirements": None,
-                       "message": "", "summary": {},
-                       "report": ("The agent returned no answer for this turn "
-                                  "(the task failed or did not complete in "
-                                  "time), so there was nothing to read")}
+            # A turn that produced nothing is not a verdict on any reply: there
+            # is nothing to read or to correct. Record it as such *for this
+            # turn*, but keep the last *read* verdict for the outcome when there
+            # is one. Overwriting it made the outcome contradict itself: it
+            # handed the last reply back in `reply`/`replies` while the report
+            # claimed there was nothing to read, and a readable `completed: true`
+            # reply that was rejected for one missing key lost the requirements
+            # it did carry. The correction turn's failure is added to the report
+            # so both facts survive.
+            no_answer = {"ok": False, "completed": False,
+                         "requirements": None, "message": "", "summary": {},
+                         "report": ("The agent returned no answer for this turn "
+                                    "(the task failed or did not complete in "
+                                    "time), so there was nothing to read")}
+            if verdict is None:
+                verdict = no_answer
+            else:
+                verdict = {
+                    **verdict,
+                    "report": (verdict.get("report", "").rstrip()
+                               + "\n\nThe correction turn produced no answer "
+                                 "(the task failed or did not complete in "
+                                 "time), so the reply above is still the one "
+                                 "to fix.").strip(),
+                }
             if callable(on_attempt):
-                on_attempt(i, None, verdict)
+                on_attempt(i, None, no_answer)
             break
         replies.append(reply)
         verdict = verify(reply)

@@ -598,6 +598,7 @@ export const useAppStore = defineStore('app', () => {
     if (!currentSessionId.value) return null
     error.value = null
     uiRunning.value = true
+    let parseFailed = false
     try {
       const started = await api.startUiPipeline({
         session_id: currentSessionId.value,
@@ -628,6 +629,7 @@ export const useAppStore = defineStore('app', () => {
         // turns. Say it out loud and leave the input enabled — the alternative
         // is a chat that looks finished while the DB tab says otherwise.
         error.value = t('error.jsonParseFinal')
+        parseFailed = true
       }
       return result
     } catch (e: any) {
@@ -637,6 +639,11 @@ export const useAppStore = defineStore('app', () => {
       // The user's turn, the reply and any repair turns were all written
       // server-side, so the server's copy is the one to show.
       await loadConversation(conversationId)
+      // The broker can end on a repair turn that timed out even though an
+      // earlier reply was a readable, complete answer — and the transcript
+      // above has just recovered that answer's `requirements`. Do not let the
+      // "could not be parsed" banner contradict a completed interview.
+      if (parseFailed && interviewResult.value) error.value = null
       uiRunning.value = false
     }
   }
