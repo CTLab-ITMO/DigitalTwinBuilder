@@ -1,6 +1,8 @@
-from model.model import PretrainedFeatureExtractor, ED, Discriminator
 import logging
+import os
+import sys
 from typing import List, Optional, Union
+
 import numpy as np
 from PIL import Image
 import torch
@@ -8,17 +10,21 @@ import torch.nn.functional as F
 from torchvision import transforms
 from scipy.ndimage import gaussian_filter
 
-from detection import (
+# The CKAAD backend keeps its networks in a top-level `model` package living at
+# `models/CKAAD/model`, imported below as `model.model` / `model.encoder`. That
+# directory has to be on sys.path *before* the import runs: with the insertion
+# placed after it the module never loaded — "No module named 'model'".
+_CKAAD_DIR = os.path.join(os.path.dirname(__file__), 'models', 'CKAAD')
+if _CKAAD_DIR not in sys.path:
+    sys.path.insert(0, _CKAAD_DIR)
+
+from model.model import PretrainedFeatureExtractor, ED, Discriminator  # noqa: E402
+
+from detection import (  # noqa: E402
     ImageData,
     AnomalyDetector,
     AnomalyDetectionResult,
 )
-
-import sys
-import os
-_CKAAD_DIR = os.path.join(os.path.dirname(__file__), 'models', 'CKAAD')
-if _CKAAD_DIR not in sys.path:
-    sys.path.insert(0, _CKAAD_DIR)
 
 
 logger = logging.getLogger(__name__)
@@ -42,7 +48,9 @@ def _extract_image_array(data: ImageInput) -> np.ndarray:
 
 def _prepare_ckaad_images(normal_data):
     import numpy as np
-    from .ckaad_detector import ImageData
+    # `ImageData` is the one the `detection` package exports (imported at module
+    # top and used in `fit`'s signature); this used to re-import it from a
+    # `ckaad_detector` module that does not exist, which made every fit fail.
     if isinstance(normal_data, list):
         if isinstance(normal_data[0], ImageData):
             images = [sd.values for sd in normal_data]
