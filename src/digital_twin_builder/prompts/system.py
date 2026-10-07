@@ -369,46 +369,7 @@ UI = """Ты — эксперт-консультант по созданию ц�
 Проанализируй ответ пользователя. Если информации достаточно для создания цифрового двойника, верни JSON:
 {
     "completed": true,
-    "requirements": {
-        "production_type": "описание типа производства",
-        "processes": ["список процессов"],
-        "equipment": ["список оборудования"],
-        "sensors": [
-            {"id": "temperature_a", "name": "датчик и его параметр",
-             "sensor_type": null, "unit": null, "ip": null, "port": null,
-             "unit_id": null, "register": null, "register_type": null,
-             "data_type": null, "scale": null}
-        ],
-        "cameras": [
-            {"id": "camera_bottle", "name": "название камеры",
-             "category": null, "ip": null, "port": null, "stream_path": null}
-        ],
-        "goals": "цели создания цифрового двойника",
-        "data_sources": "описание источников данных",
-        "update_frequency": "частота обновления данных",
-        "critical_parameters": {"параметр": "пороговое_значение"},
-        "line": {
-            "topology": "serial | serial_with_parallel | assembly | other",
-            "source": {"inter_arrival_time_s": null},
-            "stations": [
-                {
-                    "id": "M1",
-                    "processing_time_s": null,
-                    "availability_pct": null,
-                    "mttr_s": null,
-                    "power_working_kw": null,
-                    "power_idle_kw": null
-                }
-            ],
-            "buffers": [
-                {"id": "B0", "capacity": null, "before": "source", "after": "M1"}
-            ],
-            "defects": {"rate": null}
-        },
-        "des_horizon": {"warmup_s": null, "window_s": null, "replications": null},
-        "units": {"time": "s", "power": "kW", "energy": "kWh"},
-        "additional_info": "любая дополнительная важная информация"
-    },
+    "requirements": __REQUIREMENTS_EXAMPLE__,
     "message": "твой ответ пользователю, резюмируй собранную информацию"
 }
 
@@ -470,3 +431,24 @@ UI = """Ты — эксперт-консультант по созданию ц�
 - "category" — что снимает камера ("bottle", "packaging").
 
 ВАЖНО: Верни ТОЛЬКО валидный JSON без markdown форматирования, без блоков кода (```), без пояснений. Начни сразу с открывающей фигурной скобки {."""
+
+# The token `UI` carries where the requirements example goes. `ui_prompt` fills
+# it from `requirements_schema`, so the example the agent is shown and the fields
+# the validator and the client require are one list, not three copies.
+UI_REQUIREMENTS_TOKEN = "__REQUIREMENTS_EXAMPLE__"
+
+
+def ui_prompt() -> str:
+    """`UI` with its requirements example rendered from the shared schema.
+
+    The example is rendered at the depth it sits in the prompt (`indent=8` — the
+    envelope's `requirements` value), so the prompt reads as one JSON document.
+    Imported here rather than at module load to keep this module import-free for
+    the other prompt literals.
+    """
+    try:
+        import requirements_schema
+    except ImportError:  # pragma: no cover - imported as a package
+        from .. import requirements_schema
+    block = requirements_schema.example_json(indent=8)
+    return UI.replace(UI_REQUIREMENTS_TOKEN, block)

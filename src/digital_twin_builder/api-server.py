@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 import anomaly_config
 import config
 import pipeline
+import requirements_schema
 from prompts import system as system_prompts
 from prompts import user as user_prompts
 
@@ -753,7 +754,7 @@ def _resolve_agent_id(slot: str) -> int:
 def _resolve_seed_prompt(slot: str) -> str:
     """The system prompt the conversation must open with for the slot's agent."""
     if slot == "ui":
-        return system_prompts.UI
+        return system_prompts.ui_prompt()
     if slot == "db":
         return system_prompts.DB
     if slot == "gen_conf":
@@ -904,9 +905,10 @@ async def _await_task_result(task_id, timeout_s):
         await asyncio.sleep(PIPELINE_TASK_POLL_S)
 
 
-async def _ask_agent(agent_id, conversation_id, content, params, timeout_s):
+async def _ask_agent(agent_id, conversation_id, content, params, timeout_s,
+                     metadata: Optional[Dict[str, Any]] = None):
     """Post one turn's prompt and wait for the agent's reply to it."""
-    await add_message(conversation_id, "user", content)
+    await add_message(conversation_id, "user", content, metadata=metadata or {})
     created = await _create_task_db(agent_id, conversation_id, params,
                                    priority=PIPELINE_TASK_PRIORITY)
     return await _await_task_result(created["task_id"], timeout_s)
@@ -919,10 +921,17 @@ def _make_submit(loop, agent_id, conversation_id, params, timeout_s):
     the thread blocks on its result until the agent answers or the turn times
     out. Every call acquires and releases its own connection: a pool connection
     must never be held across a wait that can last a whole turn.
+
+    A turn after the first is the broker's own correction prompt, not something
+    the user typed, so it is posted tagged `kind: repair`. The transcript keeps
+    it for the record, but a client rendering the conversation as the user's
+    dialogue must not show it as the user's message.
     """
     def submit(prompt, attempt):
+        metadata = {"kind": "repair"} if attempt else None
         return asyncio.run_coroutine_threadsafe(
-            _ask_agent(agent_id, conversation_id, prompt, params, timeout_s),
+            _ask_agent(agent_id, conversation_id, prompt, params, timeout_s,
+                       metadata),
             loop,
         ).result()
     return submit
@@ -1117,13 +1126,17 @@ async def get_pipeline_prompts():
 
     `ui` is the system prompt the interview slot starts with and `ui_greeting`
     the fixed opening assistant turn that goes right after it; `db` and `gen_des`
-    are used by the pipeline itself and are returned for transparency.
+    are used by the pipeline itself and are returned for transparency. `ui_schema`
+    is the requirements schema as data — the fields and their shapes — so the
+    client can tell a finished interview from an incomplete reply against the
+    same list the broker validates with, instead of a second copy of it.
     """
     return {
-        "ui": system_prompts.UI,
+        "ui": system_prompts.ui_prompt(),
         "ui_greeting": user_prompts.init_ui_assistant_answer(),
         "db": system_prompts.DB,
         "gen_des": system_prompts.GenDES,
+        "ui_schema": requirements_schema.as_dict(),
     }
 
 

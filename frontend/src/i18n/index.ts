@@ -130,6 +130,8 @@ const en = {
   'error.jsonParseShort': "The agent's reply could not be parsed as JSON — ask it to repeat.",
   'error.jsonParseFinal':
     "The agent's reply could not be parsed as JSON after several attempts — ask it to repeat or fix it.",
+  'error.interviewIncomplete':
+    'The interview reply is missing fields the schema requires — the interview is not finished.',
   'error.dbTimeout': 'Timed out waiting for schema generation',
   'error.dbError': 'Schema generation error',
   'error.desTimeout': 'Timed out waiting for DES model generation',
@@ -265,6 +267,8 @@ const ru: Record<MessageKey, string> = {
   'error.jsonParseShort': 'Ответ агента не удалось разобрать как JSON — попросите его повторить.',
   'error.jsonParseFinal':
     'Ответ агента не удалось разобрать как JSON после нескольких попыток — попросите его повторить или исправить ответ.',
+  'error.interviewIncomplete':
+    'В ответе интервью не хватает полей схемы — интервью не завершено.',
   'error.dbTimeout': 'Превышено время ожидания генерации схемы',
   'error.dbError': 'Ошибка генерации схемы',
   'error.desTimeout': 'Превышено время ожидания генерации DES-модели',

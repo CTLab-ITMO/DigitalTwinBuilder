@@ -29,6 +29,11 @@ try:  # the app imports this as a top-level module; tests may import it as a pac
 except ImportError:  # pragma: no cover - fallback for a bare `python interview_runner.py`
     UI_REPAIR_ATTEMPTS = 2
 
+try:  # see the `config` import above
+    import requirements_schema
+except ImportError:  # pragma: no cover
+    from . import requirements_schema
+
 # A reasoning block, with a closing tag. SmolLM3 writes `<think>`; the variants
 # are cheap to accept and cost nothing.
 THINK_RE = re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>",
@@ -41,26 +46,11 @@ THINK_OPEN_RE = re.compile(r"<think(?:ing)?>", re.IGNORECASE)
 # whole object on a normal reply, short enough not to crowd out the repair prompt.
 REPORT_CHARS = 4000
 
-# The requirements schema the UI agent is asked for: the 13 top-level fields of
-# the object in `prompts.system.UI`. All of them must be present on a finished
-# interview — a field with nothing to report is null or empty, not absent.
-REQUIRED_KEYS = (
-    "production_type", "processes", "equipment", "sensors", "cameras",
-    "goals", "data_sources", "update_frequency", "critical_parameters",
-    "line", "des_horizon", "units", "additional_info",
-)
-
-# The fields whose *shape* the schema fixes and a consumer depends on: the DB
-# prompt iterates `sensors` and `cameras`, the DES prompt reads `line` and
-# `des_horizon`. A field of the wrong kind is a defect, not a deviation.
-LIST_KEYS = ("processes", "sensors", "cameras")
-MAPPING_KEYS = ("line", "des_horizon", "units", "critical_parameters")
-# `equipment` is deliberately unconstrained. The schema shows it as a list, but
-# the recorded runs answer with a nested object, and no consumer reads it: every
-# prompt renders the whole requirements object as JSON and the agent is told to
-# treat the equipment as context only. Its kind is therefore not something a
-# reply can get wrong, and rejecting one spelling would only send a readable
-# reply back for a correction it does not need.
+# The requirements schema — its fields, their shapes, and the fraction rule for
+# `line.defects.rate` — is defined once in `requirements_schema`, so the prompt
+# the agent is shown, this validator and the client all check the same list.
+# `REQUIRED_KEYS` is re-exported here for callers that read it from this module.
+REQUIRED_KEYS = requirements_schema.REQUIRED_KEYS
 
 
 def strip_think(text: str) -> str:
@@ -124,51 +114,6 @@ def parse_reply(reply: str) -> dict | None:
     except ValueError:
         return None
     return parsed if isinstance(parsed, dict) else None
-
-
-def _device_problem(entries, name: str) -> str | None:
-    """Why a `sensors` / `cameras` list cannot be used, or None when it can.
-
-    Every entry has to be an object with a name: the DB prompt resolves a device
-    from its identifier, and an entry without one cannot be mapped to a machine.
-    """
-    for i, entry in enumerate(entries or []):
-        if not isinstance(entry, dict):
-            return (f"`requirements.{name}[{i}]` is not an object: every entry "
-                    f"needs a `name` (and its address, when the user named one)")
-        label = entry.get("name")
-        if not isinstance(label, str) or not label.strip():
-            return (f"`requirements.{name}[{i}]` has no `name`, so the device "
-                    f"cannot be identified")
-    return None
-
-
-def _rate_problem(requirements: dict) -> str | None:
-    """Why `line.defects.rate` is not a fraction, or None when it is.
-
-    The rest of the object states a share as a fraction (`water_tank: 0.05` for
-    5 %), so a defect rate written as a percentage (`2` for 2 %) is a unit
-    error the downstream model would read as a 200 % scrap rate. It is caught
-    here because it is the one semantic slip the recorded runs kept making.
-    """
-    line = requirements.get("line")
-    if not isinstance(line, dict):
-        return None
-    defects = line.get("defects")
-    if not isinstance(defects, dict):
-        return None
-    rate = defects.get("rate")
-    if rate is None or isinstance(rate, bool):
-        return None
-    if not isinstance(rate, (int, float)):
-        return ("`requirements.line.defects.rate` is not a number. It is the "
-                "fraction of parts that are scrapped, e.g. 0.02 for 2 %")
-    if not 0.0 <= float(rate) <= 1.0:
-        return (f"`requirements.line.defects.rate` is {rate}, but it is a "
-                f"fraction of the parts, not a percentage: 2 % is 0.02, the "
-                f"same way the water threshold 5 % is written 0.05 elsewhere "
-                f"in the object")
-    return None
 
 
 def summarize(requirements) -> dict:
@@ -237,28 +182,7 @@ def check(reply: str) -> str | None:
         return ("`completed` is true but `requirements` is missing or is not an "
                 "object: a finished interview has to carry the whole "
                 "requirements object")
-    missing = [key for key in REQUIRED_KEYS if key not in requirements]
-    if missing:
-        return ("the requirements object is missing "
-                + ", ".join(f"`{key}`" for key in missing)
-                + ". Every one of the 13 fields of the schema must be present "
-                  "(a field with nothing to report is `null`, an empty list or "
-                  "an empty string — not absent)")
-    for key in LIST_KEYS:
-        if not isinstance(requirements.get(key), list):
-            return (f"`requirements.{key}` is not a list, but the schema "
-                    f"defines it as a list of entries")
-    for key in MAPPING_KEYS:
-        if not isinstance(requirements.get(key), dict):
-            return (f"`requirements.{key}` is not an object, but the schema "
-                    f"defines it as an object")
-    problem = _device_problem(requirements.get("sensors"), "sensors")
-    if problem:
-        return problem
-    problem = _device_problem(requirements.get("cameras"), "cameras")
-    if problem:
-        return problem
-    return _rate_problem(requirements)
+    return requirements_schema.problem(requirements)
 
 
 def _report(reason: str, reply: str) -> str:

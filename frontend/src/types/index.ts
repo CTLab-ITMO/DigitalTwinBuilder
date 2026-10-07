@@ -20,7 +20,9 @@ export interface Message {
   role: 'user' | 'assistant' | 'system'
   content: string
   content_type?: string
-  metadata?: Record<string, any>
+  /** The API hands back `jsonb` as a JSON *string* (asyncpg reads it as text),
+   *  so readers must accept both spellings. */
+  metadata?: Record<string, any> | string | null
   created_at?: string
   tokens?: number
 }
@@ -149,6 +151,21 @@ export interface PipelineJob {
   completed_at: string | null
 }
 
+/**
+ * One field of the interview requirements schema, as the broker sends it
+ * (`requirements_schema.as_dict`). The client validates a finished reply against
+ * this — the same list the broker checks with — so a `completed: true` reply
+ * that is missing a field no longer paints the interview as finished.
+ */
+export interface SchemaField {
+  name: string
+  kind: 'any' | 'list' | 'dict'
+  /** For a `list`: the keys every entry must carry (e.g. a device `name`). */
+  entry_requires: string[]
+  /** A path within the field whose number is a 0..1 fraction, not a percentage. */
+  fraction: string[]
+}
+
 export interface PipelinePrompts {
   ui: string
   /** The fixed opening assistant turn, posted right after the system prompt so
@@ -156,6 +173,8 @@ export interface PipelinePrompts {
   ui_greeting: string
   db: string
   gen_des: string
+  /** The interview requirements schema, as data. */
+  ui_schema: SchemaField[]
 }
 
 export interface HealthStatus {

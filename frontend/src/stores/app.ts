@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { api } from '../api/client'
 import { t } from '../i18n'
-import type { Session, Conversation, Message, AgentStatus, QueueStatus, PipelineJob, PipelinePrompts, DbPipelineResult, DesPipelineResult, UiPipelineResult, TwinPipelineResult, AnomalyConfig } from '../types'
+import type { Session, Conversation, Message, AgentStatus, QueueStatus, PipelineJob, PipelinePrompts, SchemaField, DbPipelineResult, DesPipelineResult, UiPipelineResult, TwinPipelineResult, AnomalyConfig } from '../types'
 
 const UI_AGENT = 0
 const DB_AGENT = 1
@@ -131,6 +131,10 @@ export const useAppStore = defineStore('app', () => {
       desCode.value = null
       desVerdict.value = null
       messages.value = []
+      // The replay below judges a finished interview against `ui_schema`, which
+      // arrives with the prompts; load them first so a reload can make that
+      // judgement instead of accepting any `completed: true`.
+      await loadPrompts()
       // Replay every slot's conversation. The agents post their own replies
       // there (`BaseAgent.add_to_conversation`), so the last assistant turn of a
       // slot's conversation *is* that slot's artifact — which is what makes a
@@ -201,6 +205,22 @@ export const useAppStore = defineStore('app', () => {
   }
 
   /**
+   * A message's `metadata.kind`, or undefined when it carries none.
+   *
+   * The API returns `jsonb` as a JSON *string* rather than an object (asyncpg
+   * reads jsonb as text), so both spellings are accepted here.
+   */
+  function messageKind(msg: Message): string | undefined {
+    const raw = msg.metadata
+    if (!raw) return undefined
+    let meta: any = raw
+    if (typeof raw === 'string') {
+      try { meta = JSON.parse(raw) } catch { return undefined }
+    }
+    return meta && typeof meta === 'object' ? meta.kind : undefined
+  }
+
+  /**
    * Fetch a conversation and hand each assistant turn to the processor for the
    * slot it belongs to.
    *
@@ -212,10 +232,15 @@ export const useAppStore = defineStore('app', () => {
    */
   async function fetchConversation(conversationId: string, agentId: number, convIdx: number): Promise<Message[]> {
     const data = await api.getConversation(conversationId)
-    for (const msg of data.messages) {
+    // The broker's own correction prompts are stored as `user` turns so the
+    // agent reads them as its chat context, but they are not the user's words.
+    // Keep them out of the transcript: if the final repair turn failed, the
+    // chat would otherwise end on the broker's prompt, shown as the user's.
+    const shown = data.messages.filter(m => messageKind(m) !== 'repair')
+    for (const msg of shown) {
       if (msg.role === 'assistant') processResult(msg.content, agentId, convIdx)
     }
-    return data.messages
+    return shown
   }
 
   /** Reload the interview slot: its transcript, and the requirements in it. */
@@ -297,13 +322,74 @@ export const useAppStore = defineStore('app', () => {
     return m ? m[1].replace(/^\n+|\n+$/g, '') : (text || '')
   }
 
+  /**
+   * Why a `completed: true` reply's requirements is not the schema's object, or
+   * null when it is.
+   *
+   * `schema` is the broker's own (`ui_schema`), so the client is not keeping a
+   * second copy of the schema that could drift from the prompt the agent was
+   * given. A reply may be called finished only when every field is present and
+   * each list of devices carries the keys its consumer needs.
+   */
+  function requirementsProblem(requirements: any, schema: SchemaField[]): string | null {
+    if (!requirements || typeof requirements !== 'object' || Array.isArray(requirements)) {
+      return 'requirements is not an object'
+    }
+    const missing = schema.filter(f => !(f.name in requirements)).map(f => f.name)
+    if (missing.length) return `requirements is missing ${missing.join(', ')}`
+    for (const f of schema) {
+      const value = requirements[f.name]
+      if (f.kind === 'list' && !Array.isArray(value)) return `${f.name} is not a list`
+      if (f.kind === 'dict' && (value === null || typeof value !== 'object' || Array.isArray(value))) {
+        return `${f.name} is not an object`
+      }
+    }
+    for (const f of schema) {
+      if (f.kind !== 'list' || !f.entry_requires.length) continue
+      for (const entry of requirements[f.name] as any[]) {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+          return `${f.name} has an entry that is not an object`
+        }
+        for (const key of f.entry_requires) {
+          if (typeof entry[key] !== 'string' || !entry[key].trim()) {
+            return `${f.name} has an entry without a ${key}`
+          }
+        }
+      }
+    }
+    for (const f of schema) {
+      if (!f.fraction.length) continue
+      let node: any = requirements[f.name]
+      for (const key of f.fraction) {
+        node = node && typeof node === 'object' ? node[key] : undefined
+      }
+      if (node === null || node === undefined || typeof node === 'boolean') continue
+      if (typeof node !== 'number' || node < 0 || node > 1) {
+        return `${f.name}.${f.fraction.join('.')} is not a 0..1 fraction`
+      }
+    }
+    return null
+  }
+
   function processResult(result: string, agentId: number, convIdx: number) {
     if (agentId === 0) {
       // UI/Interview agent — extract JSON
       const parsed = parseJsonObject(result)
       if (parsed) {
         if (parsed.completed) {
-          interviewResult.value = parsed.requirements
+          // A reply may claim to be finished and still be missing fields the
+          // schema requires. Reading `completed` alone painted a green
+          // "interview done" card over such a reply; check it against the
+          // broker's schema and, when it falls short, say so instead.
+          const schema = prompts.value?.ui_schema
+          const problem = schema ? requirementsProblem(parsed.requirements, schema) : null
+          if (problem) {
+            interviewResult.value = null
+            error.value = t('error.interviewIncomplete')
+          } else {
+            interviewResult.value = parsed.requirements
+            if (error.value === t('error.interviewIncomplete')) error.value = null
+          }
         }
       } else if (result.includes('{')) {
         // A reply that looks like JSON but cannot be read used to be dropped in
