@@ -282,16 +282,25 @@ services:
       # — so the link has to name the published port, not this network's.
       ANOMALY_API_PUBLIC_URL: ${ANOMALY_API_PUBLIC_URL:-http://localhost:8001}
       SENSOR_DETECT_INTERVAL: "30"
-      # M2AD p-value cutoff for `is_anomaly`. Lowered from 0.05 to 0.02: at
-      # 0.05 the loop flagged ~6.5% of scored timesteps, mostly ordinary brew
-      # dynamics rather than faults. 0.02 keeps the injected empty-tank and
-      # boiler-overheat faults (p ~= 0.012) detectable while cutting the tail.
-      SENSOR_PVALUE_THRESHOLD: "0.02"
+      # M2AD p-value cutoff for `is_anomaly`. Lowered from 0.05 to 0.02, then
+      # to 0.005: replaying real telemetry through the live pipeline showed the
+      # clean baseline's lowest fused p-value sits at ~0.019 (ordinary brew /
+      # refill transients), so 0.02 still let those through. The demo's injected
+      # faults reach p <= 0.0035 on every seed, so 0.005 keeps them all with
+      # ~4x margin under the baseline floor.
+      SENSOR_PVALUE_THRESHOLD: "0.005"
       CAMERA_DETECT_INTERVAL: "15"
       FUSION_INTERVAL: "30"
-      # How often the RTSP loop grabs a frame, and how old a frame may be before
-      # it is treated as a dead stream and scored no more (default: 3 captures).
-      CAMERA_CAPTURE_INTERVAL_S: "15"
+      # How often the RTSP loop records a frame (each stream is held open and
+      # drained continuously, so this can be far below the ~2s an RTSP handshake
+      # costs), and how old a frame may be before it is treated as a dead stream
+      # and scored no more (default: 3 captures, floored at 10s).
+      CAMERA_CAPTURE_INTERVAL_S: "0.5"
+      # Frames kept per camera for CKAAD training; older ones are pruned on
+      # every write. 2000 at the 0.5s capture interval is ~17 min of footage
+      # per camera. Must exceed the CKAAD min_train_samples or the loop waits
+      # forever for frames the capture cap will never let accumulate.
+      CAMERA_FRAME_RETENTION: "2000"
       # One alert per episode, not one per detection interval: a score that
       # stays over the threshold does not re-alert until the cooldown elapses,
       # and a cleared condition alerts at once next time.
