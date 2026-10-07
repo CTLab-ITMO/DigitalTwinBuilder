@@ -89,7 +89,13 @@ def _make_sensor_panel(source: RegisteredSource, idx: int) -> dict:
                     f"SELECT sar.timestamp, sar.value AS anomalous_value "
                     f"FROM sensor_anomaly_results sar "
                     f"WHERE sar.source_id = '{sid}' AND sar.is_anomaly = true "
-                    f"AND sar.detector IN ($detector) "
+                    # `:sqlstring`/`IN (...)` collapse to `IN ()` when the
+                    # variable has no options (e.g. right after the results
+                    # table is emptied), and that is a SQL syntax error. `:csv`
+                    # inside a quoted literal degrades to `''` instead, and
+                    # NULLIF turns that into an empty match set -- no rows, no
+                    # parse error -- while a populated list still filters.
+                    f"AND sar.detector = ANY(string_to_array(NULLIF('${{detector:csv}}', ''), ',')) "
                     f"AND ('$run_id' = '' OR sar.run_id = '$run_id') "
                     f"ORDER BY sar.timestamp DESC LIMIT 5000"
                 ),
@@ -325,7 +331,12 @@ def build_zone_dashboard(zone: Zone, sources: Sequence[RegisteredSource]) -> dic
     panel_id += 1
 
     zone_name = zone.name
-    zone_slug = "".join(c if c.isalnum() else "_" for c in zone_name)
+    # This used to be the control surface itself: a Text panel with an inline
+    # <script> that Grafana 13 does not execute, so it only ever showed its
+    # static "idle" rows. The real controls now live on a page the anomaly API
+    # serves (`/admin/control`, its own document, same origin as the JSON it
+    # calls); this panel is the signpost to it.
+    control_url = f"{ANOMALY_API_PUBLIC_URL}/admin/control"
     panels.append({
         "title": "Detector Control & Training",
         "type": "text",
@@ -334,136 +345,21 @@ def build_zone_dashboard(zone: Zone, sources: Sequence[RegisteredSource]) -> dic
         "options": {
             "mode": "html",
             "content": (
-                f'<div id="train-status-{zone_slug}" '
-                f'     style="display:flex;flex-direction:column;gap:6px;padding:4px;font-size:11px;">'
-                f'<div style="display:flex;align-items:center;gap:6px;">'
-                f'  <span style="font-weight:bold;white-space:nowrap;min-width:46px;">M2AD</span>'
-                f'  <div class="progress" style="flex:1;height:14px;background:#333;border-radius:6px;overflow:hidden;">'
-                f'    <div id="m2ad-bar-{zone_slug}" style="width:0%;height:100%;background:#7eb8da;border-radius:6px;transition:width 0.5s;"></div>'
-                f'  </div>'
-                f'  <span id="m2ad-status-{zone_slug}" style="white-space:nowrap;min-width:100px;text-align:right;">idle</span>'
-                f'  <button id="m2ad-toggle-{zone_slug}" class="btn btn-success btn-small" style="padding:2px 10px;font-size:11px;min-width:34px;border:none;cursor:pointer;">On</button>'
-                f'  <button id="m2ad-train-{zone_slug}" class="btn btn-primary btn-small" style="padding:2px 10px;font-size:11px;border:none;cursor:pointer;">Train</button>'
-                f'</div>'
-                f'<div style="display:flex;align-items:center;gap:6px;">'
-                f'  <span style="font-weight:bold;white-space:nowrap;min-width:46px;">CKAAD</span>'
-                f'  <div class="progress" style="flex:1;height:14px;background:#333;border-radius:6px;overflow:hidden;">'
-                f'    <div id="ckaad-bar-{zone_slug}" style="width:0%;height:100%;background:#7eb8da;border-radius:6px;transition:width 0.5s;"></div>'
-                f'  </div>'
-                f'  <span id="ckaad-status-{zone_slug}" style="white-space:nowrap;min-width:100px;text-align:right;">idle</span>'
-                f'  <button id="ckaad-toggle-{zone_slug}" class="btn btn-success btn-small" style="padding:2px 10px;font-size:11px;min-width:34px;border:none;cursor:pointer;">On</button>'
-                f'  <button id="ckaad-train-{zone_slug}" class="btn btn-primary btn-small" style="padding:2px 10px;font-size:11px;border:none;cursor:pointer;">Train</button>'
-                f'</div>'
-                f'</div>'
-                f'<script>'
-                f'function _init_{zone_slug}() {{'
-                f'  function pctNum(p) {{'
-                f'    if (!p || p === "") return 0;'
-                f'    return parseInt(p.replace("%",""), 10) || 0;'
-                f'  }}'
-                f'  function fmtTime(ts) {{'
-                f'    if (!ts) return "";'
-                f'    var d = new Date(ts * 1000);'
-                f'    return d.toLocaleTimeString();'
-                f'  }}'
-                f'  var ds = {{m2ad: true, ckaad: true}};'
-                f'  var zn = "{zone_name}";'
-                f'  var m2adBar = document.getElementById("m2ad-bar-{zone_slug}");'
-                f'  var m2adSt = document.getElementById("m2ad-status-{zone_slug}");'
-                f'  var m2adTog = document.getElementById("m2ad-toggle-{zone_slug}");'
-                f'  var m2adTrn = document.getElementById("m2ad-train-{zone_slug}");'
-                f'  var ckaadBar = document.getElementById("ckaad-bar-{zone_slug}");'
-                f'  var ckaadSt = document.getElementById("ckaad-status-{zone_slug}");'
-                f'  var ckaadTog = document.getElementById("ckaad-toggle-{zone_slug}");'
-                f'  var ckaadTrn = document.getElementById("ckaad-train-{zone_slug}");'
-                f'  if (!m2adBar || !ckaadBar) return;'
-                f'  m2adTrn.onclick = function(e) {{'
-                f'    m2adBar.style.width = "0%";'
-                f'    m2adBar.style.background = "#7eb8da";'
-                f'    m2adSt.innerText = "pending...";'
-                f"    fetch('{ANOMALY_API_PUBLIC_URL}/admin/detector/train',{{method:'POST',headers:{{'Content-Type':'application/json'}},"
-                f"      body:JSON.stringify({{zone_name:zn,detector_type:'m2ad'}})}})"
-                f'      .then(function() {{ setTimeout(poll, 2000); }});'
-                f'  }};'
-                f'  ckaadTrn.onclick = function(e) {{'
-                f'    ckaadBar.style.width = "0%";'
-                f'    ckaadBar.style.background = "#7eb8da";'
-                f'    ckaadSt.innerText = "pending...";'
-                f"    fetch('{ANOMALY_API_PUBLIC_URL}/admin/detector/train',{{method:'POST',headers:{{'Content-Type':'application/json'}},"
-                f"      body:JSON.stringify({{zone_name:'shared',detector_type:'ckaad'}})}})"
-                f'      .then(function() {{ setTimeout(poll, 2000); }});'
-                f'  }};'
-                f'  m2adTog.onclick = function(e) {{'
-                f'    var en = ds.m2ad;'
-                f'    var cmd = en ? "disable" : "enable";'
-                f"    fetch('{ANOMALY_API_PUBLIC_URL}/admin/detector/control',{{method:'POST',headers:{{'Content-Type':'application/json'}},"
-                f"      body:JSON.stringify({{zone_name:zn,detector_type:'m2ad',command:cmd}})}})"
-                f'      .then(function() {{'
-                f'        ds.m2ad = !en;'
-                f'        m2adTog.innerText = ds.m2ad ? "On" : "Off";'
-                f'        m2adTog.className = ds.m2ad ? "btn btn-success btn-small" : "btn btn-danger btn-small";'
-                f'        setTimeout(poll, 600);'
-                f'      }});'
-                f'  }};'
-                f'  ckaadTog.onclick = function(e) {{'
-                f'    var en = ds.ckaad;'
-                f'    var cmd = en ? "disable" : "enable";'
-                f"    fetch('{ANOMALY_API_PUBLIC_URL}/admin/detector/control',{{method:'POST',headers:{{'Content-Type':'application/json'}},"
-                f"      body:JSON.stringify({{zone_name:zn,detector_type:'ckaad',command:cmd}})}})"
-                f'      .then(function() {{'
-                f'        ds.ckaad = !en;'
-                f'        ckaadTog.innerText = ds.ckaad ? "On" : "Off";'
-                f'        ckaadTog.className = ds.ckaad ? "btn btn-success btn-small" : "btn btn-danger btn-small";'
-                f'        setTimeout(poll, 600);'
-                f'      }});'
-                f'  }};'
-                f'  async function poll() {{'
-                f'    try {{'
-                f'      var r = await fetch("{ANOMALY_API_PUBLIC_URL}/admin/detector/status");'
-                f'      var d = await r.json();'
-                f'      var ts = d.training_state || {{}};'
-                f'      var m = ts["{zone_name}:m2ad"] || {{}};'
-                f'      var p = pctNum(m.progress);'
-                f'      m2adBar.style.width = p + "%";'
-                f'      m2adBar.style.background = m.status === "complete" ? "#56a64b" : "#7eb8da";'
-                f'      m2adSt.innerText = (m.status || "idle")'
-                f'        + (m.message ? " - " + m.message : "")'
-                f'        + (m.updated_at ? " [" + fmtTime(m.updated_at) + "]" : "");'
-                f'      var c = ts["shared:ckaad"] || {{}};'
-                f'      var cp = pctNum(c.progress);'
-                f'      ckaadBar.style.width = cp + "%";'
-                f'      ckaadBar.style.background = c.status === "complete" ? "#56a64b" : "#7eb8da";'
-                f'      ckaadSt.innerText = (c.status || "idle")'
-                f'        + (c.message ? " - " + c.message : "")'
-                f'        + (c.updated_at ? " [" + fmtTime(c.updated_at) + "]" : "");'
-                f'      var lc = d.latest_commands || [];'
-                f'      for (var i = 0; i < lc.length; i++) {{'
-                f'        var cv = lc[i];'
-                f'        if (cv.zone === "{zone_name}" && cv.type === "m2ad") {{'
-                f'          ds.m2ad = cv.command !== "disable";'
-                f'          m2adTog.innerText = ds.m2ad ? "On" : "Off";'
-                f'          m2adTog.className = ds.m2ad ? "btn btn-success btn-small" : "btn btn-danger btn-small";'
-                f'        }}'
-                f'        if (cv.zone === "shared" && cv.type === "ckaad") {{'
-                f'          ds.ckaad = cv.command !== "disable";'
-                f'          ckaadTog.innerText = ds.ckaad ? "On" : "Off";'
-                f'          ckaadTog.className = ds.ckaad ? "btn btn-success btn-small" : "btn btn-danger btn-small";'
-                f'        }}'
-                f'      }}'
-                f'    }} catch(e) {{ console.log("Status poll error", e); }}'
-                f'  }}'
-                f'  setInterval(poll, 3000);'
-                f'  poll();'
-                f'}}'
-                f'if (document.readyState === "loading") {{'
-                f'  document.addEventListener("DOMContentLoaded", _init_{zone_slug});'
-                f'}} else {{'
-                f'  _init_{zone_slug}();'
-                f'}}'
-                f'</script>'
+                '<div style="display:flex;flex-direction:column;gap:10px;padding:6px;font-size:12px;">'
+                f'<div>Zone <b>{zone_name}</b>: train-data size, auto-retrain, cadence, '
+                'on/off and a manual <b>Train</b> for M2AD and CKAAD.</div>'
+                f'<a href="{control_url}" target="_blank" '
+                'style="align-self:flex-start;padding:6px 14px;background:#3274d9;color:#fff;'
+                'border-radius:4px;text-decoration:none;font-weight:600;">'
+                'Open Detector Control &amp; Training</a>'
+                '<div style="color:#8e9297;">Live progress and status are shown on that page. '
+                'Grafana does not execute the inline scripts a panel would need to drive the '
+                'controls itself, which is why this is a link rather than widgets.</div>'
+                '</div>'
             ),
         },
         "fieldConfig": {"defaults": {}},
+        "disable_sanitize_html": True,
     })
     panel_id += 1
 

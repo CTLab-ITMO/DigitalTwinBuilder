@@ -56,7 +56,7 @@
         {
           "datasource": {"type": "postgres", "uid": "postgres"},
           "format": "table",
-          "rawSql": "SELECT sar.timestamp AS time, MAX(sar.anomaly_score) AS \"anomaly score\" FROM sensor_anomaly_results sar WHERE sar.is_anomaly = true AND sar.detector IN ($detector) AND ('$run_id' = '' OR sar.run_id = '$run_id') AND $__timeFilter(sar.timestamp) GROUP BY sar.timestamp ORDER BY 1",
+          "rawSql": "SELECT sar.timestamp AS time, MAX(sar.anomaly_score) AS \"anomaly score\" FROM sensor_anomaly_results sar WHERE sar.is_anomaly = true AND sar.detector = ANY(string_to_array(NULLIF('${detector:csv}', ''), ',')) AND ('$run_id' = '' OR sar.run_id = '$run_id') AND $__timeFilter(sar.timestamp) GROUP BY sar.timestamp ORDER BY 1",
           "refId": "A"
         }
       ]
@@ -85,7 +85,7 @@
         {
           "datasource": {"type": "postgres", "uid": "postgres"},
           "format": "table",
-          "rawSql": "SELECT date_trunc('minute', sar.timestamp) AS time, COUNT(DISTINCT sar.timestamp) AS \"detections\" FROM sensor_anomaly_results sar WHERE sar.is_anomaly = true AND sar.detector IN ($detector) AND ('$run_id' = '' OR sar.run_id = '$run_id') AND $__timeFilter(sar.timestamp) GROUP BY 1 ORDER BY 1",
+          "rawSql": "SELECT date_trunc('minute', sar.timestamp) AS time, COUNT(DISTINCT sar.timestamp) AS \"detections\" FROM sensor_anomaly_results sar WHERE sar.is_anomaly = true AND sar.detector = ANY(string_to_array(NULLIF('${detector:csv}', ''), ',')) AND ('$run_id' = '' OR sar.run_id = '$run_id') AND $__timeFilter(sar.timestamp) GROUP BY 1 ORDER BY 1",
           "refId": "A"
         }
       ]
@@ -141,7 +141,7 @@
         {
           "datasource": {"type": "postgres", "uid": "postgres"},
           "format": "table",
-          "rawSql": "SELECT sar.timestamp, sar.source_id AS channel, ROUND(sar.anomaly_score::numeric, 3) AS score, sar.details->>'severity' AS severity, sar.details->>'zone' AS zone, sar.value AS reading FROM sensor_anomaly_results sar WHERE sar.is_anomaly = true AND sar.detector IN ($detector) AND ('$run_id' = '' OR sar.run_id = '$run_id') AND $__timeFilter(sar.timestamp) ORDER BY sar.timestamp DESC, sar.source_id LIMIT 500",
+          "rawSql": "SELECT sar.timestamp, sar.source_id AS channel, ROUND(sar.anomaly_score::numeric, 3) AS score, sar.details->>'severity' AS severity, sar.details->>'zone' AS zone, sar.value AS reading FROM sensor_anomaly_results sar WHERE sar.is_anomaly = true AND sar.detector = ANY(string_to_array(NULLIF('${detector:csv}', ''), ',')) AND ('$run_id' = '' OR sar.run_id = '$run_id') AND $__timeFilter(sar.timestamp) ORDER BY sar.timestamp DESC, sar.source_id LIMIT 500",
           "refId": "A"
         }
       ]
@@ -164,7 +164,7 @@
         {
           "datasource": {"type": "postgres", "uid": "postgres"},
           "format": "table",
-          "rawSql": "SELECT sar.detector, COUNT(DISTINCT sar.run_id) AS detection_runs, COUNT(*) AS anomalous_rows, ROUND(AVG(sar.anomaly_score)::numeric, 3) AS avg_score, ROUND(MAX(sar.anomaly_score)::numeric, 3) AS max_score, MAX(sar.timestamp) AS last_detection FROM sensor_anomaly_results sar WHERE sar.detector IN ($detector) GROUP BY sar.detector ORDER BY sar.detector",
+          "rawSql": "SELECT sar.detector, COUNT(DISTINCT sar.run_id) AS detection_runs, COUNT(*) AS anomalous_rows, ROUND(AVG(sar.anomaly_score)::numeric, 3) AS avg_score, ROUND(MAX(sar.anomaly_score)::numeric, 3) AS max_score, MAX(sar.timestamp) AS last_detection FROM sensor_anomaly_results sar WHERE sar.detector = ANY(string_to_array(NULLIF('${detector:csv}', ''), ',')) GROUP BY sar.detector ORDER BY sar.detector",
           "refId": "A"
         }
       ]
