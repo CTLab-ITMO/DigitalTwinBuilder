@@ -6,14 +6,19 @@ from typing import List, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy import select, func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import Zone, RegisteredSource, DetectorConfig, DashboardDefinition, DetectorControl
+from app.models import (
+    Zone, RegisteredSource, DetectorConfig, DashboardDefinition,
+    DetectorControl, DetectorSetting,
+)
 from app.grafana_client import GrafanaClient
 from app.dashboard_templates import build_zone_dashboard
+from app.control_page import CONTROL_PAGE_HTML
 from app.config_loader import load_config_from_file, DEFAULT_CONFIG_PATH
 
 logger = logging.getLogger(__name__)
@@ -25,6 +30,50 @@ router = APIRouter()
 # training-panel poll fell back to "idle" no matter what the detector reported.
 DETECTOR_STATUS_URL = os.environ.get(
     "DETECTOR_STATUS_URL", "http://anomaly-detector:9100/status"
+)
+
+# The effective values shown when no row has been written. These mirror the
+# detector's own defaults (detector/shared.py `_SETTING_DEFAULTS`): the API image
+# does not copy the detector package, so the two small tables are kept in sync by
+# hand. `pvalue_threshold` is M2AD-only — CKAAD's cutoff is a fitted percentile,
+# not a p-value.
+DETECTOR_SETTING_DEFAULTS: dict = {
+    "m2ad": {
+        "enabled": True,
+        "auto_retrain": True,
+        "min_train_samples": 150,
+        "retrain_every": 10,
+        "pvalue_threshold": 0.005,
+        "score_threshold": None,
+    },
+    "ckaad": {
+        "enabled": True,
+        "auto_retrain": True,
+        "min_train_samples": 200,
+        "retrain_every": 50,
+        "pvalue_threshold": None,
+        # Absolute CKAAD score cutoff. NULL on the shared row means "use the
+        # model's calibrated value"; a value there is the fallback for cameras
+        # with no per-zone override of their own.
+        "score_threshold": None,
+    },
+    "fusion": {
+        # Cross-modal sensitivity S, carried in the `score_threshold` column.
+        # Fusion fires when the smaller of the two normalized margins (sensor,
+        # camera) is strictly greater than S; 0 means both must be past their
+        # own cutoff.
+        "score_threshold": 0.0,
+    },
+}
+
+# The tunable columns, in the order the control page presents them.
+SETTING_FIELDS = (
+    "enabled",
+    "auto_retrain",
+    "min_train_samples",
+    "retrain_every",
+    "pvalue_threshold",
+    "score_threshold",
 )
 
 
@@ -368,6 +417,11 @@ async def issue_control(body: DetectorControlCommand, db: AsyncSession = Depends
         command=body.command,
     )
     db.add(dc)
+    # Persist the choice in the settings table too, so it survives a detector
+    # restart and the control page shows the same state the command produced.
+    await _upsert_setting_enabled(
+        db, body.zone_name, body.detector_type, body.command == "enable"
+    )
     await db.commit()
     return {
         "status": "issued",
@@ -392,6 +446,31 @@ async def issue_reset(body: DetectorCommand, db: AsyncSession = Depends(get_db))
         "zone_name": body.zone_name,
         "detector_type": body.detector_type,
     }
+
+
+async def _fetch_detector_train_state() -> dict:
+    """The detector's live train state, or `{"_error": ...}` when unreachable.
+
+    Shared by `/detector/status` and the settings endpoint. Never raises: a
+    detector that is down should leave the settings readable rather than 500.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            for attempt in range(3):
+                try:
+                    resp = await client.get(DETECTOR_STATUS_URL)
+                    if resp.status_code == 200:
+                        return resp.json()
+                except (httpx.ConnectError, httpx.TimeoutException) as e:
+                    if attempt < 2:
+                        await asyncio.sleep(1)
+                        continue
+                    logger.warning(f"Detector status unreachable after {attempt+1} attempts: {e}")
+                    raise
+    except Exception as e:
+        logger.warning(f"Training state fetch failed: {type(e).__name__}: {e}")
+        return {"_error": "detector status endpoint unreachable"}
+    return {}
 
 
 @router.get("/detector/status")
@@ -425,24 +504,7 @@ async def get_detector_status(db: AsyncSession = Depends(get_db)):
     )
     latest_cmds = result.scalars().all()
 
-    train_state = {}
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            for attempt in range(3):
-                try:
-                    resp = await client.get(DETECTOR_STATUS_URL)
-                    if resp.status_code == 200:
-                        train_state = resp.json()
-                        break
-                except (httpx.ConnectError, httpx.TimeoutException) as e:
-                    if attempt < 2:
-                        await asyncio.sleep(1)
-                        continue
-                    logger.warning(f"Detector status unreachable after {attempt+1} attempts: {e}")
-                    raise
-    except Exception as e:
-        logger.warning(f"Training state fetch failed: {type(e).__name__}: {e}")
-        train_state = {"_error": f"detector status endpoint unreachable"}
+    train_state = await _fetch_detector_train_state()
 
     return {
         "pending_trains": sum(
@@ -464,6 +526,180 @@ async def get_detector_status(db: AsyncSession = Depends(get_db)):
         ],
         "training_state": train_state,
     }
+
+
+class DetectorSettingsUpdate(BaseModel):
+    zone_name: str
+    detector_type: str
+    enabled: Optional[bool] = None
+    auto_retrain: Optional[bool] = None
+    min_train_samples: Optional[int] = None
+    retrain_every: Optional[int] = None
+    pvalue_threshold: Optional[float] = None
+    # Per-zone absolute CKAAD cutoff, the `shared` fallback when the row is
+    # `("shared", "ckaad")`, or the cross-modal sensitivity when the row is
+    # `(zone, "fusion")`.
+    score_threshold: Optional[float] = None
+
+
+def _effective_settings(row: Optional[DetectorSetting], dtype: str) -> dict:
+    """The defaults for a detector type, overridden by any set column.
+
+    A NULL column means "unset" — not "false"/"zero" — so it falls through to
+    the default; only a value someone actually wrote wins.
+    """
+    out = dict(DETECTOR_SETTING_DEFAULTS.get(dtype, {}))
+    if row is not None:
+        for field in SETTING_FIELDS:
+            value = getattr(row, field)
+            if value is not None:
+                out[field] = value
+    return out
+
+
+async def _detector_setting_targets(db: AsyncSession, rows) -> list[tuple[str, str]]:
+    """Every `(zone, detector_type)` the control page should show.
+
+    The zones table is the M2AD list, each zone also gets a cross-modal
+    `fusion` entry (its sensitivity), and CKAAD is the one global `shared`
+    entry; rows are folded in too, so a setting written for a zone that has
+    since been removed is still visible and editable rather than orphaned.
+
+    A real-zone `ckaad` row is deliberately not a target: those rows exist only
+    to carry a per-zone `score_threshold` (see `/detector/settings`'s
+    `ckaad_zones`). Rendering them as cards would repeat the global CKAAD knobs
+    once per camera zone and imply each copy were independent.
+    """
+    zones = (await db.execute(select(Zone.name).order_by(Zone.name))).scalars().all()
+    targets = {(z, "m2ad") for z in zones}
+    targets |= {(z, "fusion") for z in zones}
+    targets.add(("shared", "ckaad"))
+    for r in rows:
+        if r.detector_type == "ckaad" and r.zone_name != "shared":
+            continue
+        targets.add((r.zone_name, r.detector_type))
+    return sorted(targets)
+
+
+async def _upsert_setting_enabled(
+    db: AsyncSession, zone_name: str, detector_type: str, enabled: bool
+) -> None:
+    """Mirror an enable/disable command into the settings row.
+
+    `/detector/control` writes a `detector_control` row that the detector
+    applies immediately; the settings table is what makes the choice survive a
+    detector restart. Keeping both in step means the settings poller re-asserts
+    the same value instead of fighting the command.
+    """
+    if zone_name == "*" or detector_type == "*":
+        return
+    result = await db.execute(
+        select(DetectorSetting).where(
+            DetectorSetting.zone_name == zone_name,
+            DetectorSetting.detector_type == detector_type,
+        )
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        db.add(DetectorSetting(
+            zone_name=zone_name, detector_type=detector_type, enabled=enabled,
+        ))
+    else:
+        row.enabled = enabled
+
+
+@router.get("/detector/settings")
+async def get_detector_settings(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(DetectorSetting))
+    rows = result.scalars().all()
+    by_key = {(r.zone_name, r.detector_type): r for r in rows}
+
+    train_state = await _fetch_detector_train_state()
+    if "_error" in train_state:
+        train_state = {}
+
+    settings = []
+    # One threshold override per real zone, for the CKAAD card's per-zone
+    # subsection. The m2ad targets enumerate exactly the configured zones, in
+    # name order; `None` means "no override, use the shared/calibrated value".
+    ckaad_zones = []
+    for zone_name, detector_type in await _detector_setting_targets(db, rows):
+        item = {
+            "zone_name": zone_name,
+            "detector_type": detector_type,
+            **_effective_settings(by_key.get((zone_name, detector_type)), detector_type),
+        }
+        item["training_state"] = train_state.get(f"{zone_name}:{detector_type}", {})
+        settings.append(item)
+        if detector_type == "m2ad":
+            override = by_key.get((zone_name, "ckaad"))
+            ckaad_zones.append({
+                "zone_name": zone_name,
+                "score_threshold": override.score_threshold if override else None,
+            })
+
+    return {
+        "settings": settings,
+        "defaults": DETECTOR_SETTING_DEFAULTS,
+        "ckaad_zones": ckaad_zones,
+    }
+
+
+@router.put("/detector/settings")
+async def update_detector_settings(
+    body: DetectorSettingsUpdate, db: AsyncSession = Depends(get_db)
+):
+    if body.detector_type not in DETECTOR_SETTING_DEFAULTS:
+        raise HTTPException(status_code=400, detail="unknown detector_type")
+    if body.min_train_samples is not None and body.min_train_samples < 1:
+        raise HTTPException(status_code=400, detail="min_train_samples must be >= 1")
+    if body.retrain_every is not None and body.retrain_every < 1:
+        raise HTTPException(status_code=400, detail="retrain_every must be >= 1")
+    if body.pvalue_threshold is not None and body.pvalue_threshold <= 0:
+        raise HTTPException(status_code=400, detail="pvalue_threshold must be > 0")
+    if body.score_threshold is not None and body.score_threshold < 0:
+        raise HTTPException(status_code=400, detail="score_threshold must be >= 0")
+    # Fusion reuses `score_threshold` for the cross-modal sensitivity, which is
+    # a normalized margin, so it is capped at 1 (the max any margin can reach).
+    if (body.detector_type == "fusion" and body.score_threshold is not None
+            and body.score_threshold > 1):
+        raise HTTPException(status_code=400, detail="fusion sensitivity must be <= 1")
+
+    result = await db.execute(
+        select(DetectorSetting).where(
+            DetectorSetting.zone_name == body.zone_name,
+            DetectorSetting.detector_type == body.detector_type,
+        )
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        row = DetectorSetting(zone_name=body.zone_name, detector_type=body.detector_type)
+        db.add(row)
+
+    for field in SETTING_FIELDS:
+        value = getattr(body, field)
+        if value is not None:
+            setattr(row, field, value)
+        elif field == "score_threshold" and field in body.model_fields_set:
+            # An explicit `null` clears a per-zone override, reverting the zone
+            # to the shared/calibrated cutoff. Only this field is nullable on
+            # purpose; the others are "unset means leave as is".
+            setattr(row, field, None)
+
+    await db.commit()
+    await db.refresh(row)
+
+    return {
+        "status": "saved",
+        "zone_name": row.zone_name,
+        "detector_type": row.detector_type,
+        **_effective_settings(row, row.detector_type),
+    }
+
+
+@router.get("/control", response_class=HTMLResponse)
+async def detector_control_page():
+    return CONTROL_PAGE_HTML
 
 
 @router.post("/config/load", response_model=ConfigLoadResponse)

@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from app.database import engine, async_session
 from app.models import Base
@@ -14,6 +15,50 @@ from app.config_loader import load_config_from_file, DEFAULT_CONFIG_PATH
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# `init.sql` only runs on a brand-new Postgres volume, so the fix that lets
+# CKAAD's 'shared' pseudo-zone through the detector_control zone check has to be
+# re-applied here for a stack that already has data. Every statement is
+# idempotent, so this is safe on every boot. Run one at a time: asyncpg's
+# prepared-statement path rejects multiple commands in a single execute.
+#
+# The `DROP TRIGGER` takes an ACCESS EXCLUSIVE lock on detector_control, so a
+# detector connection parked "idle in transaction" on that table would block
+# startup indefinitely -- and startup never reaches the config load, leaving no
+# zone dashboard. `lock_timeout` bounds the wait; on timeout the whole migration
+# transaction rolls back and boot continues with the trigger as it already was.
+_DETECTOR_CONTROL_TRIGGER_MIGRATION = [
+    "SET LOCAL lock_timeout = '3000ms'",
+    """
+    CREATE OR REPLACE FUNCTION check_detector_control_zone()
+    RETURNS trigger AS $$
+    BEGIN
+        IF NEW.zone_name NOT IN ('*', '', 'shared')
+           AND NOT EXISTS (SELECT 1 FROM zones WHERE name = NEW.zone_name) THEN
+            RAISE EXCEPTION 'zone_name % is not a valid zone name (use * for all)', NEW.zone_name;
+        END IF;
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+    """,
+    "DROP TRIGGER IF EXISTS trg_detector_control_zone ON detector_control",
+    """
+    CREATE TRIGGER trg_detector_control_zone
+        BEFORE INSERT OR UPDATE ON detector_control
+        FOR EACH ROW
+        EXECUTE FUNCTION check_detector_control_zone()
+    """,
+]
+
+# `create_all` only creates missing tables, so a `detector_settings` that
+# predates the per-zone score threshold needs the column added in place. Like
+# the trigger migration above, `ADD COLUMN` takes an ACCESS EXCLUSIVE lock that
+# a detector connection parked "idle in transaction" can hold off startup, so
+# bound the wait and continue with the column absent on timeout.
+_DETECTOR_SETTINGS_COLUMN_MIGRATION = [
+    "SET LOCAL lock_timeout = '3000ms'",
+    "ALTER TABLE detector_settings ADD COLUMN IF NOT EXISTS score_threshold DOUBLE PRECISION",
+]
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -21,6 +66,22 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database tables ensured.")
+
+    try:
+        async with engine.begin() as conn:
+            for stmt in _DETECTOR_CONTROL_TRIGGER_MIGRATION:
+                await conn.execute(text(stmt))
+        logger.info("detector_control zone trigger relaxed for the 'shared' pseudo-zone.")
+    except Exception as exc:
+        logger.warning("detector_control trigger migration failed: %s", exc)
+
+    try:
+        async with engine.begin() as conn:
+            for stmt in _DETECTOR_SETTINGS_COLUMN_MIGRATION:
+                await conn.execute(text(stmt))
+        logger.info("detector_settings score_threshold column ensured.")
+    except Exception as exc:
+        logger.warning("detector_settings column migration failed: %s", exc)
 
     try:
         grafana = GrafanaClient()

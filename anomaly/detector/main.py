@@ -16,6 +16,7 @@ from detector.shared import (
     get_train_state_snapshot,
     shutdown_event,
     poll_control_commands,
+    poll_detector_settings,
     detector_enabled,
     detector_enabled_lock,
     train_events,
@@ -23,6 +24,7 @@ from detector.shared import (
     signal_train,
     is_detector_enabled,
     set_detector_enabled,
+    register_zone,
 )
 
 from detector.camera_capture import capture_loop
@@ -115,6 +117,10 @@ def main():
     )
 
     for zone_name in zones:
+        # Record the zones this detector serves, so a control command naming a
+        # zone from some earlier config (a stale Grafana dashboard) is resolved
+        # onto a loop that exists instead of a key nothing reads.
+        register_zone(zone_name)
         for dtype in ("m2ad", "fusion"):
             set_detector_enabled(zone_name, dtype, True)
         set_detector_enabled(zone_name, "ckaad", True)
@@ -134,6 +140,9 @@ def main():
                         conn.rollback()
                     except Exception:
                         pass
+                # Same cadence as the control commands: the settings table is
+                # the other half of the control page, and both are cheap reads.
+                poll_detector_settings(conn)
                 shutdown_event.wait(timeout=5)
         finally:
             conn.close()

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, BigInteger, String, Float, Boolean, DateTime, Text, JSON, ForeignKey
+from sqlalchemy import Column, Integer, BigInteger, String, Float, Boolean, DateTime, Text, JSON, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, relationship
 from sqlalchemy.sql import func
 
@@ -116,6 +116,40 @@ class DetectorControl(Base):
     command = Column(String(50), nullable=False)
     issued_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
     executed_at = Column(DateTime(timezone=True))
+
+
+class DetectorSetting(Base):
+    """Runtime knobs for one detector, written by the control page.
+
+    The detector loops used to read their train floor, retrain cadence and
+    threshold from module-level env vars at import, so nothing could be changed
+    without a rebuild. This is the row the control page writes and the detector's
+    `poll_detector_settings` reads; a NULL column means "use the built-in
+    default", so a stack nobody has touched behaves exactly as before. `zone_name`
+    is a real zone for M2AD and the literal `shared` for the one global CKAAD.
+    """
+
+    __tablename__ = "detector_settings"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    zone_name = Column(String(100), nullable=False, default="*")
+    detector_type = Column(String(50), nullable=False)
+    enabled = Column(Boolean)
+    auto_retrain = Column(Boolean)
+    min_train_samples = Column(Integer)
+    retrain_every = Column(Integer)
+    pvalue_threshold = Column(Float)
+    # Per-zone absolute CKAAD alert cutoff. CKAAD is one shared model, but the
+    # raw anomaly score that separates "brewing" from "something went wrong"
+    # differs by camera, so each zone can override the calibrated global one.
+    # NULL (the common case) means "use the calibrated value for this zone's
+    # content"; a `shared` row sets the fallback for every zone that has none.
+    score_threshold = Column(Float)
+    updated_at = Column(DateTime(timezone=True), default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("zone_name", "detector_type", name="uq_detector_settings_target"),
+    )
 
 
 class DashboardDefinition(Base):

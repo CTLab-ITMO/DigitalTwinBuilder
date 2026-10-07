@@ -57,6 +57,22 @@ CREATE INDEX IF NOT EXISTS idx_detector_control_pending ON detector_control(zone
     WHERE executed_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_detector_control_issued ON detector_control(issued_at DESC);
 
+-- Runtime knobs written by the control page. A NULL column means "use the
+-- detector's built-in default"; the row only records what someone changed.
+CREATE TABLE IF NOT EXISTS detector_settings (
+    id BIGSERIAL PRIMARY KEY,
+    zone_name VARCHAR(100) NOT NULL DEFAULT '*',
+    detector_type VARCHAR(50) NOT NULL,
+    enabled BOOLEAN,
+    auto_retrain BOOLEAN,
+    min_train_samples INTEGER,
+    retrain_every INTEGER,
+    pvalue_threshold DOUBLE PRECISION,
+    score_threshold DOUBLE PRECISION,
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (zone_name, detector_type)
+);
+
 CREATE TABLE IF NOT EXISTS sensor_readings (
     id BIGSERIAL PRIMARY KEY,
     channel_id VARCHAR(100) NOT NULL,
@@ -120,8 +136,10 @@ CREATE INDEX IF NOT EXISTS idx_alerts_source_severity ON alerts(source_id, sever
 CREATE OR REPLACE FUNCTION check_detector_control_zone()
 RETURNS trigger AS $$
 BEGIN
-    IF NEW.zone_name != '*'
-       AND NEW.zone_name != ''
+    -- 'shared' is the pseudo-zone the one global CKAAD model trains under; it
+    -- is not a row in `zones`, so it has to be allowed explicitly or every
+    -- CKAAD Train/toggle from the control page fails the trigger.
+    IF NEW.zone_name NOT IN ('*', '', 'shared')
        AND NOT EXISTS (SELECT 1 FROM zones WHERE name = NEW.zone_name) THEN
         RAISE EXCEPTION 'zone_name % is not a valid zone name (use * for all)', NEW.zone_name;
     END IF;
