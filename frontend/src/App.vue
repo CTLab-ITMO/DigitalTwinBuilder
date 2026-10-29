@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, watch } from 'vue'
 import { useAppStore } from './stores/app'
 import { locale, setLocale, t, type MessageKey } from './i18n'
 import SessionSidebar from './components/SessionSidebar.vue'
@@ -15,6 +15,13 @@ const tabs: MessageKey[] = ['tab.interview', 'tab.database', 'tab.twin', 'tab.se
 onMounted(() => {
   store.loadSessions()
   setInterval(() => store.loadAgentStatuses(), 5000)
+})
+
+// The seeded prompts are language-specific. Drop the cached copy when the header
+// switches, so the next conversation this tab creates is seeded in that
+// language; existing conversations are reseeded server-side on their next run.
+watch(locale, () => {
+  store.loadPrompts(true)
 })
 </script>
 

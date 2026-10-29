@@ -155,7 +155,7 @@ def generate_des_model(submit, requirements, schema, *, attempts=None,
 
 
 def generate_interview_result(submit, user_message, *, attempts=None,
-                              on_attempt=None) -> dict:
+                              on_attempt=None, lang="ru") -> dict:
     """Read the interview agent's answer to one user turn, repairing it while it does not read.
 
     Unlike the DB and DES slots there is no engineered first-turn prompt to
@@ -173,7 +173,8 @@ def generate_interview_result(submit, user_message, *, attempts=None,
         _with_first_prompt(submit, user_message),
         attempts=attempts,
         repair_prompt=lambda reply, report, attempt, total: (
-            user_prompts.make_ui_repair(reply, report, attempt, total)),
+            user_prompts.make_ui_repair(reply, report, attempt, total,
+                                        lang=lang)),
         on_attempt=on_attempt,
     )
 

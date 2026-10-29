@@ -1,9 +1,17 @@
 import json
 
-def init_ui_assistant_answer(*args):
+def init_ui_assistant_answer(*args, lang="ru"):
+    """The fixed opening assistant turn, in the UI's language."""
+    if lang == "en":
+        return ("Hi! I'll help you build a digital twin of your production line. "
+                "Please tell me about your production: what type of production it "
+                "is, what processes happen there, what equipment is used, what "
+                "sensors are installed, and what goals you want to achieve with "
+                "the digital twin?")
     return "Привет! Я помогу тебе создать цифровой двойник твоего производства. Пожалуйста, расскажи мне о своем производстве: какой это тип производства, какие процессы там происходят, какое оборудование используется, какие датчики установлены и какие цели ты хочешь достичь с помощью цифрового двойника?"
 
-def make_ui_repair(_previous_reply, failure_report, attempt, total_attempts, *args):
+def make_ui_repair(_previous_reply, failure_report, attempt, total_attempts, *args,
+                   lang="ru"):
     """Follow-up turn for the interview slot: the previous reply was not readable JSON.
 
     `failure_report` is what reading the previous reply actually found — no JSON
@@ -17,7 +25,37 @@ def make_ui_repair(_previous_reply, failure_report, attempt, total_attempts, *ar
     this correction, and quoting it in full would hand the model its own answer
     a second time and lengthen the prompt. `_previous_reply` is kept only to
     match the loop's `repair_prompt(reply, report, attempt, total)` call.
+
+    `lang` follows the frontend's chosen language. The correction is a user turn
+    the model reads, so it is written in the language the agent is expected to
+    answer in; the failure report itself is the broker's diagnostics and is
+    passed through as-is.
     """
+    if lang == "en":
+        return f"""Your previous reply could not be read as JSON. Here is exactly what is wrong:
+
+{failure_report}
+
+Fix the error and return the answer again.
+
+ANSWER REQUIREMENTS:
+- Return EXACTLY ONE JSON object: start with {{ and end with its matching }}. No
+  text before or after it, no ``` blocks, no two objects in a row, and no extra
+  curly braces.
+- Lose nothing: return the whole object. If it already had requirements, return
+  them with all 13 fields. Do not delete sensors, cameras, line, des_horizon,
+  units or other fields because of one parsing error.
+- If there is enough information — return
+  {{"completed": true, "requirements": {{...}}, "message": "..."}}.
+  If not — return {{"completed": false, "message": "..."}} with questions for
+  the user.
+- Numbers in the line and des_horizon blocks — only those the user stated.
+  defects.rate is a FRACTION, not a percentage: 2 % is 0.02, just as 5 % of a
+  water level is 0.05.
+- In sensors and cameras every entry must have a "name" field.
+
+Return only JSON. This is repair attempt {attempt} of {total_attempts}."""
+
     prompt = f"""Твой предыдущий ответ не удалось прочитать как JSON. Вот что именно не так:
 
 {failure_report}

@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { api } from '../api/client'
-import { t } from '../i18n'
+import { locale, t } from '../i18n'
 import { parseJsonObject } from '../utils/reply'
 import type { Session, Conversation, Message, AgentStatus, QueueStatus, PipelineJob, PipelinePrompts, SchemaField, DbPipelineResult, DesPipelineResult, UiPipelineResult, TwinPipelineResult, AnomalyConfig } from '../types'
 
@@ -81,6 +81,9 @@ export const useAppStore = defineStore('app', () => {
 
   // DB / DES pipeline: the verdict of the last run and its per-turn log
   const prompts = ref<PipelinePrompts | null>(null)
+  // The language `prompts` was fetched in, so a switch cannot keep seeding from
+  // the previous language's cache.
+  const promptsLang = ref<string | null>(null)
   const pipelineJob = ref<PipelineJob | null>(null)
   const dbVerdict = ref<DbPipelineResult | null>(null)
   const desCode = ref<string | null>(null)
@@ -476,12 +479,28 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
-  /** The prompts the client needs to seed a conversation, fetched once. */
-  async function loadPrompts(): Promise<PipelinePrompts | null> {
-    if (prompts.value) return prompts.value
-    try {
-      prompts.value = await api.getPrompts()
+  /**
+   * The prompts the client needs to seed a conversation.
+   *
+   * Cached per language: `force` drops the cache after the header's language
+   * switch, so the next seeding uses the language now on screen. The prompts
+   * themselves are also passed to the pipeline calls with the current locale —
+   * the server writes them into the conversation it runs against.
+   */
+  async function loadPrompts(force = false): Promise<PipelinePrompts | null> {
+    if (prompts.value && !force && promptsLang.value === locale.value) {
       return prompts.value
+    }
+    const requested = locale.value
+    try {
+      const data = await api.getPrompts(requested)
+      // A fetch that started before the language switch must not overwrite the
+      // new language's prompts when it lands.
+      if (locale.value === requested) {
+        prompts.value = data
+        promptsLang.value = requested
+      }
+      return data
     } catch (e: any) {
       error.value = e.message
       return null
@@ -755,6 +774,7 @@ export const useAppStore = defineStore('app', () => {
         max_tokens: params.max_tokens,
         attempts: params.attempts,
         retry: params.retry,
+        lang: locale.value,
       })
       // Remember the job before waiting on it: a reload would otherwise lose the
       // only handle to a run that is still going server-side, and the chat would

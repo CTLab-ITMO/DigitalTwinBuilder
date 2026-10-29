@@ -158,6 +158,7 @@ export const api = {
     max_tokens?: number
     attempts?: number
     retry?: boolean
+    lang?: 'ru' | 'en'
   }): Promise<{ job_id: string; slot: string; conversation_id: string }> {
     return request('/pipeline/ui', { method: 'POST', body: JSON.stringify(body) })
   },
@@ -166,8 +167,8 @@ export const api = {
     return request(`/pipeline/jobs/${jobId}`)
   },
 
-  getPrompts(): Promise<PipelinePrompts> {
-    return request('/pipeline/prompts')
+  getPrompts(lang: 'ru' | 'en' = 'ru'): Promise<PipelinePrompts> {
+    return request(`/pipeline/prompts?lang=${lang}`)
   },
 
   // Anomaly detection — the interview's requirements become the config the

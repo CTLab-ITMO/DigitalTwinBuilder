@@ -1,7 +1,7 @@
 # api_server.py
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Literal
 import asyncio
 import uuid
 import json
@@ -207,6 +207,12 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# The language of the engineered prompts. The frontend sends the locale it is
+# showing; the per-model defaults preserve the pre-localisation behaviour for
+# direct API callers (the interview prompts were Russian, the code-generation
+# prompts English).
+PromptLang = Literal["ru", "en"]
+
 # Pydantic models
 class TaskRequest(BaseModel):
     agent_id: int
@@ -284,6 +290,9 @@ class PipelineUiRequest(BaseModel):
     # already in the conversation, so the re-ask is posted as the broker's own
     # turn and the user's message is not shown a second time.
     retry: bool = False
+    # The interview prompt is Russian by default, matching the UI agent's
+    # original language; the frontend sends its locale explicitly.
+    lang: PromptLang = "ru"
 
 class AnomalyConfigRequest(BaseModel):
     """Build the anomaly stack's config for a session.
@@ -755,10 +764,16 @@ def _resolve_agent_id(slot: str) -> int:
     return config.DT_AGENT_INDEX
 
 
-def _resolve_seed_prompt(slot: str) -> str:
-    """The system prompt the conversation must open with for the slot's agent."""
+def _resolve_seed_prompt(slot: str, lang: str = "ru") -> str:
+    """The system prompt the conversation must open with.
+
+    Only the interview slot follows the UI language: it is the one prompt whose
+    effect the user hears back. The code-generation slots keep the English
+    prompts they were written with — the artifact is code or JSON either way, and
+    the English instruction set is the more reliable one.
+    """
     if slot == "ui":
-        return system_prompts.ui_prompt()
+        return system_prompts.ui_prompt(lang)
     if slot == "db":
         return system_prompts.DB
     if slot == "gen_conf":
@@ -768,8 +783,40 @@ def _resolve_seed_prompt(slot: str) -> str:
     return system_prompts.GenDES
 
 
+def _conversation_meta(raw) -> dict:
+    """A conversation's jsonb metadata as a dict (asyncpg hands it back as text)."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+async def _refresh_ui_greeting(conn, conversation_id, lang) -> None:
+    """Move the fixed opening turn to `lang` if it is still one of ours.
+
+    The greeting is the only assistant message the broker writes itself. It is
+    part of the transcript, so an existing chat cannot be re-translated wholesale
+    when the language changes — but a greeting that still matches one of the
+    known templates is not a real agent answer and can safely be replaced.
+    """
+    known = {user_prompts.init_ui_assistant_answer(lang="ru").strip(),
+             user_prompts.init_ui_assistant_answer(lang="en").strip()}
+    first = await conn.fetchrow("""
+        SELECT id, content FROM messages
+        WHERE conversation_id = $1 AND role = 'assistant'
+        ORDER BY created_at ASC
+        LIMIT 1
+    """, conversation_id)
+    if first and (first["content"] or "").strip() in known:
+        await conn.execute(
+            "UPDATE messages SET content = $2 WHERE id = $1",
+            first["id"], user_prompts.init_ui_assistant_answer(lang=lang))
+
+
 async def _prepare_pipeline_conversation(session_id, conversation_id, agent_id,
-                                         conv_idx, seed_prompt):
+                                         conv_idx, seed_prompt, lang="ru"):
     """The conversation a slot runs in, seeded with its agent's system prompt.
 
     The agent reads the conversation's messages as its chat context, so a
@@ -778,8 +825,14 @@ async def _prepare_pipeline_conversation(session_id, conversation_id, agent_id,
     once, including when two starts race on the same conversation: the check and
     the insert run in one transaction holding an advisory lock on the
     conversation, so the loser waits, then re-reads and finds the row the winner
-    committed (each statement in READ COMMITTED takes a fresh snapshot). A
-    conversation the client already created and seeded is reused as it is.
+    committed (each statement in READ COMMITTED takes a fresh snapshot).
+
+    `lang` is the language the frontend is showing for the UI slot; the other
+    slots pass the English default. When it differs from the language recorded
+    in the conversation's metadata, the stored system message is rewritten
+    before the turn runs — otherwise an existing chat would keep answering in
+    the language it was created in. The UI slot's fixed greeting is refreshed on
+    the same condition.
 
     A `conversation_id` is used when given (the client's own conversation for the
     tab, so it can render the turns); otherwise one is created in `session_id`.
@@ -816,17 +869,42 @@ async def _prepare_pipeline_conversation(session_id, conversation_id, agent_id,
                     raise HTTPException(status_code=404,
                                         detail="Conversation not found")
 
-            seeded = await conn.fetchval("""
-                SELECT 1 FROM messages
+            raw_meta = await conn.fetchval(
+                "SELECT metadata FROM conversations WHERE id = $1", conversation_id)
+            prompt_lang = _conversation_meta(raw_meta).get("prompt_lang")
+
+            system_msg = await conn.fetchrow("""
+                SELECT id FROM messages
                 WHERE conversation_id = $1 AND role = 'system'
+                ORDER BY created_at ASC
                 LIMIT 1
             """, conversation_id)
-            if not seeded:
+
+            changed = False
+            if system_msg is None:
                 await conn.execute("""
                     INSERT INTO messages
                         (id, conversation_id, role, content, content_type, metadata)
                     VALUES ($1, $2, 'system', $3, 'text', '{}')
                 """, str(uuid.uuid4()), conversation_id, seed_prompt)
+                changed = True
+            elif prompt_lang != lang:
+                await conn.execute(
+                    "UPDATE messages SET content = $2 WHERE id = $1",
+                    system_msg["id"], seed_prompt)
+                changed = True
+
+            if changed:
+                # The UI slot's greeting is broker-authored, not an agent
+                # answer: keep it in the same language as the instructions.
+                if agent_id == config.UI_AGENT_INDEX:
+                    await _refresh_ui_greeting(conn, conversation_id, lang)
+                await conn.execute("""
+                    UPDATE conversations
+                    SET metadata = COALESCE(metadata, '{}'::jsonb)
+                        || $2::jsonb
+                    WHERE id = $1
+                """, conversation_id, json.dumps({"prompt_lang": lang}))
 
     return conversation_id
 
@@ -1003,10 +1081,14 @@ async def _start_pipeline_job(*, slot, req, work) -> dict:
     """
     agent_id = _resolve_agent_id(slot)
     conv_idx = req.conv_idx
+    # Only the interview request carries a language. The other slots are
+    # always seeded in English; passing "en" here also normalises a
+    # conversation that was briefly reseeded in another language.
+    lang = getattr(req, "lang", "en")
 
     conversation_id = await _prepare_pipeline_conversation(
         req.session_id, req.conversation_id, agent_id, conv_idx,
-        _resolve_seed_prompt(slot))
+        _resolve_seed_prompt(slot, lang), lang)
     job_id = await _create_pipeline_job(slot, req.session_id, agent_id, conv_idx,
                                        conversation_id)
 
@@ -1097,7 +1179,8 @@ async def start_ui_pipeline(req: PipelineUiRequest):
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="message must not be empty")
     work = (lambda submit, on_attempt: pipeline.generate_interview_result(
-        submit, req.message, attempts=req.attempts, on_attempt=on_attempt))
+        submit, req.message, attempts=req.attempts,
+        on_attempt=on_attempt, lang=req.lang))
     return await _safe_start(slot="ui", req=req, work=work)
 
 
@@ -1139,7 +1222,7 @@ async def get_pipeline_job(job_id: str):
 
 
 @app.get("/pipeline/prompts")
-async def get_pipeline_prompts():
+async def get_pipeline_prompts(lang: PromptLang = "ru"):
     """The prompts the client seeds a conversation with, so it never retypes them.
 
     `ui` is the system prompt the interview slot starts with and `ui_greeting`
@@ -1148,10 +1231,14 @@ async def get_pipeline_prompts():
     is the requirements schema as data — the fields and their shapes — so the
     client can tell a finished interview from an incomplete reply against the
     same list the broker validates with, instead of a second copy of it.
+
+    `lang` is the frontend's chosen language and applies to the two prompts the
+    client seeds: `ui` and `ui_greeting`. `db` and `gen_des` are the English
+    instructions the pipeline itself runs with, returned for transparency.
     """
     return {
-        "ui": system_prompts.ui_prompt(),
-        "ui_greeting": user_prompts.init_ui_assistant_answer(),
+        "ui": system_prompts.ui_prompt(lang),
+        "ui_greeting": user_prompts.init_ui_assistant_answer(lang=lang),
         "db": system_prompts.DB,
         "gen_des": system_prompts.GenDES,
         "ui_schema": requirements_schema.as_dict(),
