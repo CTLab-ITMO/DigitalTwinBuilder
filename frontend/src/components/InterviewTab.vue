@@ -176,6 +176,17 @@ const canRetry = computed(() =>
   && lastUserMessage.value !== ''
 )
 
+// The turn that is still open for another attempt: the last one, and only while
+// the interview is unfinished. "Force retry" deliberately does not require the
+// last verdict to be a failure — it re-asks a reply the broker accepted (for
+// example one whose JSON is readable but whose content the user wants redone).
+const canForceRetry = computed(() =>
+  !isProcessing.value
+  && !store.interviewResult
+  && lastUserMessage.value !== ''
+  && !!turns.value[turns.value.length - 1]?.user
+)
+
 async function submitTurn(msg: string, retry: boolean) {
   if (starting.value) return
   starting.value = true
@@ -242,17 +253,27 @@ async function send() {
   await submitTurn(msg, false)
 }
 
-// Re-ask the last turn: the same question, submitted as a retry so the message
-// the user already sees is not shown a second time.
-async function retry() {
-  if (!canRetry.value) return
+// Re-ask the last turn as another attempt: the same question, submitted as a
+// retry so the message the user already sees is not shown a second time.
+async function reaskLastTurn() {
   // The new attempt is about to become the newest one; show it when it lands
   // even if the user had stepped back to an older attempt.
-  const lastTurn = turns.value[turns.value.length - 1]
-  if (lastTurn) {
-    attemptOffset.value = { ...attemptOffset.value, [lastTurn.key]: 0 }
+  const last = turns.value[turns.value.length - 1]
+  if (last) {
+    attemptOffset.value = { ...attemptOffset.value, [last.key]: 0 }
   }
   await submitTurn(lastUserMessage.value, true)
+}
+
+async function retry() {
+  if (!canRetry.value) return
+  await reaskLastTurn()
+}
+
+/** Re-ask the last turn even when the broker accepted the reply. */
+async function forceRetry() {
+  if (!canForceRetry.value) return
+  await reaskLastTurn()
 }
 </script>
 
@@ -285,54 +306,57 @@ async function retry() {
       </div>
 
       <div class="messages">
-        <template v-for="turn in renderedTurns" :key="turn.key">
+        <template v-for="(turn, turnIndex) in renderedTurns" :key="turn.key">
           <div v-if="turn.user" class="message user">
             <div class="msg-content">{{ turn.user.content }}</div>
           </div>
 
-          <template v-if="turn.attempt">
-            <div class="message assistant">
-              <details v-if="hasDetails(turn.attempt.reply)" class="reply-details">
-                <summary>{{ detailsLabel(turn.attempt.reply) }}</summary>
+          <div v-if="turn.attempt" class="message assistant">
+            <details v-if="hasDetails(turn.attempt.reply)" class="reply-details">
+              <summary>{{ detailsLabel(turn.attempt.reply) }}</summary>
 
-                <section v-if="turn.attempt.reply.think" class="reply-section">
-                  <div class="reply-section-head">{{ t('interview.reasoning') }}</div>
-                  <pre class="detail-body">{{ turn.attempt.reply.think }}</pre>
-                </section>
+              <section v-if="turn.attempt.reply.think" class="reply-section">
+                <div class="reply-section-head">{{ t('interview.reasoning') }}</div>
+                <pre class="detail-body">{{ turn.attempt.reply.think }}</pre>
+              </section>
 
-                <section v-if="turn.attempt.reply.json" class="reply-section">
-                  <div class="reply-section-head">
-                    <span>{{ t('interview.jsonAnswer') }}</span>
-                    <button type="button" class="copy-btn" @click="copyAttempt(turn.attempt)">
-                      {{ copiedId === turn.attempt.id ? t('interview.copied') : t('interview.copy') }}
-                    </button>
-                  </div>
-                  <pre class="detail-body">{{ turn.attempt.reply.json }}</pre>
-                </section>
+              <section v-if="turn.attempt.reply.json" class="reply-section">
+                <div class="reply-section-head">
+                  <span>{{ t('interview.jsonAnswer') }}</span>
+                  <button type="button" class="copy-btn" @click="copyAttempt(turn.attempt)">
+                    {{ copiedId === turn.attempt.id ? t('interview.copied') : t('interview.copy') }}
+                  </button>
+                </div>
+                <pre class="detail-body">{{ turn.attempt.reply.json }}</pre>
+              </section>
 
-                <section
-                  v-else-if="turn.attempt.reply.looksLikeJson && turn.attempt.reply.text"
-                  class="reply-section"
-                >
-                  <div class="reply-section-head">{{ t('interview.rawReply') }}</div>
-                  <pre class="detail-body">{{ turn.attempt.reply.text }}</pre>
-                </section>
-              </details>
+              <section
+                v-else-if="turn.attempt.reply.looksLikeJson && turn.attempt.reply.text"
+                class="reply-section"
+              >
+                <div class="reply-section-head">{{ t('interview.rawReply') }}</div>
+                <pre class="detail-body">{{ turn.attempt.reply.text }}</pre>
+              </section>
+            </details>
 
-              <div class="msg-content">
-                <template v-if="turn.attempt.reply.isJson">
-                  {{ turn.attempt.reply.text || t('interview.noText') }}
-                </template>
-                <template v-else-if="turn.attempt.reply.looksLikeJson">
-                  {{ t('interview.invalidReply') }}
-                </template>
-                <template v-else>
-                  {{ turn.attempt.reply.text || t('interview.noText') }}
-                </template>
-              </div>
+            <div class="msg-content">
+              <template v-if="turn.attempt.reply.isJson">
+                {{ turn.attempt.reply.text || t('interview.noText') }}
+              </template>
+              <template v-else-if="turn.attempt.reply.looksLikeJson">
+                {{ t('interview.invalidReply') }}
+              </template>
+              <template v-else>
+                {{ turn.attempt.reply.text || t('interview.noText') }}
+              </template>
             </div>
+          </div>
 
-            <div v-if="turn.attempts.length > 1" class="attempt-nav">
+          <div
+            v-if="turnIndex === renderedTurns.length - 1 && (turn.attempts.length > 1 || canForceRetry)"
+            class="attempt-nav"
+          >
+            <template v-if="turn.attempts.length > 1">
               <button
                 type="button"
                 class="attempt-arrow"
@@ -356,8 +380,19 @@ async function retry() {
               >
                 ›
               </button>
-            </div>
-          </template>
+            </template>
+
+            <button
+              v-if="canForceRetry"
+              type="button"
+              class="force-retry-btn"
+              :title="t('interview.forceRetryHint')"
+              @click="forceRetry"
+            >
+              <span aria-hidden="true">↻</span>
+              {{ t('interview.forceRetry') }}
+            </button>
+          </div>
         </template>
 
         <div v-if="isWaiting" class="message assistant">
@@ -529,6 +564,22 @@ async function retry() {
 }
 .attempt-arrow:disabled { opacity: 0.4; cursor: default; }
 .attempt-count { min-width: 90px; text-align: center; }
+
+/* "Force retry" sits next to the arrows: a new attempt on demand, even when the
+   broker already accepted the last reply. */
+.force-retry-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.force-retry-btn:hover { color: var(--text); border-color: var(--text-muted); }
 
 .param-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
 .param-row:last-child { margin-bottom: 0; }
