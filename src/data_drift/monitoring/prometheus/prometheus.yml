@@ -5,5 +5,5 @@ scrape_configs:
   - job_name: 'object_drift_api'
     metrics_path: /metrics
     static_configs:
-      - targets: ['api:8000']
+      - targets: ['drift-api:8000']
 

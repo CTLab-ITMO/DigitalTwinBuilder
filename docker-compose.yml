@@ -245,6 +245,13 @@ services:
       - ./anomaly/grafana/datasources:/etc/grafana/provisioning/datasources
       - ./anomaly/grafana/dashboards:/etc/grafana/provisioning/dashboards
       - ./anomaly/grafana/grafana.ini:/etc/grafana/grafana.ini
+      # Object/data drift stack (src/data_drift). The module ships its own
+      # dashboard provider, datasource and dashboard JSON; mounting them as
+      # separate files keeps the anomaly stack's provider and Postgres
+      # datasource intact while sharing this one Grafana.
+      - ./src/data_drift/monitoring/grafana/provisioning/datasources/datasource.yaml:/etc/grafana/provisioning/datasources/drift-prometheus.yaml:ro
+      - ./src/data_drift/monitoring/grafana/provisioning/dashboards/dashboards.yaml:/etc/grafana/provisioning/dashboards/drift-dashboards.yaml:ro
+      - ./src/data_drift/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       - anomaly-postgres
     # anomaly-api gates on this being healthy (its startup config load talks to
@@ -327,6 +334,66 @@ services:
       config-sync:
         condition: service_completed_successfully
 
+  # --- Object/data drift stack (src/data_drift) ---
+  #
+  # Part of the anomaly profile so `docker compose --profile anomaly up` brings
+  # up the whole local observability stack. Unlike the anomaly API/detector it
+  # does not depend on config-sync, so `up drift-api drift-prometheus grafana`
+  # works without DTB_API_URL/DTB_SESSION_ID.
+  #
+  # The API reads/writes DATA_DIR = os.getcwd()/data, i.e. /app/data here.
+  drift-api:
+    build:
+      context: ./src/data_drift/drift_detection
+      dockerfile: Dockerfile
+    profiles: ["anomaly"]
+    restart: unless-stopped
+    logging: *default-logging
+    ports:
+      # 8000 is dt-api and 8001 is anomaly-api; keep the drift API next to them.
+      - "8002:8000"
+    environment:
+      TZ: ${TZ:-Europe/Moscow}
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      # Trained models, uploaded CVAT archives, detection counts and processed
+      # frames. Without this the state is lost when the container is recreated.
+      - drift_data:/app/data
+    healthcheck:
+      # The API exposes /status, not /health.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/status')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      # Importing torch/ultralytics takes a while on a cold container.
+      start_period: 60s
+
+  drift-prometheus:
+    image: prom/prometheus:latest
+    profiles: ["anomaly"]
+    restart: unless-stopped
+    logging: *default-logging
+    # The repo lives on an NTFS mount with no SELinux xattrs, so the
+    # bind-mounted config is unlabeled; same workaround as grafana/postgres.
+    security_opt:
+      - label=disable
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./src/data_drift/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - drift-prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+    depends_on:
+      drift-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
 volumes:
   postgres-data:
   anomaly-postgres-data:
@@ -334,4 +401,6 @@ volumes:
   camera_frames:
   anomaly_frames:
   anomaly_config:
+  drift_data:
+  drift-prometheus-data:
   # python-bindings:

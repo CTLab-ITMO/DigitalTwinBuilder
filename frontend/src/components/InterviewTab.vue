@@ -1,10 +1,14 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, nextTick, watch } from 'vue'
 import { useAppStore } from '../stores/app'
 import { t } from '../i18n'
 
 const store = useAppStore()
 const input = ref('')
+const scrollArea = ref<HTMLElement | null>(null)
+// Covers the short window between the click and the store marking the session
+// running: a second Enter there would start a second turn in the same chat.
+const starting = ref(false)
 const temperature = ref(0.7)
 // The finished requirements object plus its `<think>` block runs past 1000
 // tokens, and a reply cut off mid-JSON is one the client cannot read at all —
@@ -26,18 +30,22 @@ const isProcessing = computed(() => store.uiRunning)
 // the second turn on: a repair is why the wait is longer than a single answer.
 const repairs = computed(() => Math.max((store.uiJob?.attempts.length ?? 1) - 1, 0))
 
-// Shows "Processing..." indicator: active poll, or old session with unanswered user message
-const isWaiting = computed(() => {
-  if (isProcessing.value) return true
-  // A finished run reported its verdict, and a recovered requirements object is
-  // the interview's outcome: neither is still waiting on the agent. The
-  // transcript can still end on a user turn — that is the broker's repair
-  // prompt, written to the conversation the agent read, not an open question.
-  if (store.uiVerdict || store.interviewResult) return false
-  const msgs = store.messages
-  if (msgs.length === 0) return false
-  return msgs[msgs.length - 1].role === 'user'
-})
+// Shows "Processing..." only while *this* chat has an interview job in flight.
+// It used to also infer a wait from the transcript ending on a user turn, which
+// made every chat whose last turn failed or was interrupted look like it was
+// still waiting — forever, in every session that was opened.
+const isWaiting = isProcessing
+
+// Keep the newest turn in view. The pane has no other scroll management, so a
+// message appended below the fold looked like it had never been rendered.
+watch(
+  () => `${store.messages.length}:${isWaiting.value}`,
+  async () => {
+    await nextTick()
+    const el = scrollArea.value
+    if (el) el.scrollTop = el.scrollHeight
+  },
+)
 
 // Seeded with the interview system prompt on creation: the agent takes its
 // instructions from the conversation, and a conversation without them is what
@@ -66,9 +74,13 @@ const canRetry = computed(() =>
 )
 
 async function submitTurn(msg: string, retry: boolean) {
+  if (starting.value) return
+  starting.value = true
   try {
-    // Auto-create session if none selected
-    if (!store.currentSessionId) {
+    // Auto-create session if none selected — and wait for a creation already in
+    // flight (the "+ New Chat" click) instead of starting a second one, which
+    // would wipe the greeting and the message about to be shown.
+    if (!store.currentSessionId || store.creatingSession) {
       const sid = await store.createSession()
       if (!sid) {
         store.error = t('error.createSession')
@@ -82,35 +94,47 @@ async function submitTurn(msg: string, retry: boolean) {
       return
     }
 
+    // Show the turn first, but only once the session and its conversation
+    // exist: creating either of them reloads `messages` from the server, so a
+    // push made before that is what used to vanish until the turn finished or
+    // the page was reloaded. The broker posts the authoritative copy, and the
+    // transcript is reloaded from it when the job finishes.
+    if (!retry) {
+      store.messages.push({
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: msg,
+      })
+    }
+
     // The broker posts the message, reads the reply as the schema's JSON, and
     // sends a correction back while it cannot be read — so an unparseable answer
     // never reaches the transcript-and-DB-tab disagreement this used to cause.
     // On a retry the broker posts its own copy of the re-ask, since the user's
     // question is already in the conversation.
-    await store.sendInterviewMessage(convId, msg, {
+    const pending = store.sendInterviewMessage(convId, msg, {
       temperature: temperature.value,
       max_tokens: maxTokens.value,
       retry,
     })
+    // `sendInterviewMessage` marks the session running before its first await,
+    // so the in-flight guard passes over to the store's per-session flag here.
+    starting.value = false
+    await pending
   } catch (e: any) {
     store.error = e?.message || String(e)
+  } finally {
+    starting.value = false
   }
 }
 
 async function send() {
+  if (starting.value || isProcessing.value) return
   const msg = input.value.trim()
   if (!msg) return
 
   // Clear input immediately
   input.value = ''
-
-  // Show the turn at once; the broker posts the authoritative copy, and the
-  // transcript is reloaded from it when the job finishes.
-  store.messages.push({
-    id: crypto.randomUUID(),
-    role: 'user',
-    content: msg,
-  })
 
   await submitTurn(msg, false)
 }
@@ -125,7 +149,7 @@ async function retry() {
 
 <template>
   <div class="interview-tab">
-    <div class="scroll-area">
+    <div ref="scrollArea" class="scroll-area">
       <h2>{{ t('interview.title') }}</h2>
 
       <div v-if="store.interviewResult" class="card completed">

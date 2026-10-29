@@ -159,7 +159,7 @@ def _read_value(client, spec: Dict[str, Any]) -> Optional[float]:
     value = decode_registers(data_type, list(response.registers))
     if value is None:
         return None
-    return value * _scale_of(spec)
+    return value / _scale_of(spec)
 
 
 def fetch_sensor_value(spec: Dict[str, Any]) -> Optional[float]:

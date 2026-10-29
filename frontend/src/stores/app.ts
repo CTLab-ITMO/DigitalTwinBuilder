@@ -12,6 +12,55 @@ const DES_CONV_IDX = 2
 const POLL_INTERVAL_MS = 1000
 const POLL_TIMEOUT_MS = 20 * 60 * 1000
 
+/** One session's interview slot: the job in flight and the last verdict. */
+interface UiSessionState {
+  running: boolean
+  job: PipelineJob | null
+  verdict: UiPipelineResult | null
+}
+
+/**
+ * The interview job a session is waiting on, remembered across a page reload.
+ *
+ * The poller lives in this tab, so a reload loses the wait even though the job
+ * keeps running server-side. `sessionStorage` is per-tab and dies with it, which
+ * is exactly the lifetime of the poller this lets us rebuild.
+ */
+const PENDING_UI_JOBS_KEY = 'dtb.pendingUiJobs'
+
+interface PendingUiJob {
+  jobId: string
+  conversationId: string
+}
+
+function readPendingUiJobs(): Record<string, PendingUiJob> {
+  try {
+    const raw = sessionStorage.getItem(PENDING_UI_JOBS_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function writePendingUiJob(sessionId: string, pending: PendingUiJob) {
+  try {
+    sessionStorage.setItem(PENDING_UI_JOBS_KEY, JSON.stringify({
+      ...readPendingUiJobs(),
+      [sessionId]: pending,
+    }))
+  } catch { /* private mode: resume is best-effort */ }
+}
+
+function clearPendingUiJob(sessionId: string) {
+  try {
+    const pending = readPendingUiJobs()
+    delete pending[sessionId]
+    sessionStorage.setItem(PENDING_UI_JOBS_KEY, JSON.stringify(pending))
+  } catch { /* ignore */ }
+}
+
 export const useAppStore = defineStore('app', () => {
   // State
   const sessions = ref<Session[]>([])
@@ -36,12 +85,37 @@ export const useAppStore = defineStore('app', () => {
   const desCode = ref<string | null>(null)
   const desVerdict = ref<DesPipelineResult | null>(null)
 
-  // Interview slot: its own job, verdict and in-flight flag — the DB/DES tab
-  // reads `pipelineJob` for its per-turn log, so the interview must not write
-  // over it (or the DES log would vanish mid-run).
-  const uiJob = ref<PipelineJob | null>(null)
-  const uiVerdict = ref<UiPipelineResult | null>(null)
-  const uiRunning = ref(false)
+  // Interview slot: the DB/DES tab reads `pipelineJob` for its per-turn log, so
+  // the interview must not write over it (or the DES log would vanish mid-run).
+  //
+  // Its job, verdict and in-flight flag are kept per session: a turn can keep
+  // running in one chat while the user opens another, so each chat carries its
+  // own state. A single set of globals made the spinner and the disabled input
+  // follow whichever chat was open — and let a job that landed late overwrite
+  // another session's transcript with its own.
+  const uiStates = ref<Record<string, UiSessionState>>({})
+
+  /** The state entry for a session, created on first use. */
+  function uiState(sessionId: string): UiSessionState {
+    if (!uiStates.value[sessionId]) {
+      uiStates.value[sessionId] = { running: false, job: null, verdict: null }
+    }
+    // The stored entry is the reactive proxy; the local literal above is not.
+    return uiStates.value[sessionId]
+  }
+
+  const uiRunning = computed(() => {
+    const id = currentSessionId.value
+    return id ? !!uiStates.value[id]?.running : false
+  })
+  const uiJob = computed(() => {
+    const id = currentSessionId.value
+    return id ? uiStates.value[id]?.job ?? null : null
+  })
+  const uiVerdict = computed(() => {
+    const id = currentSessionId.value
+    return id ? uiStates.value[id]?.verdict ?? null : null
+  })
 
   // The twin's two slots report their verdict here rather than in `uiVerdict` or
   // `desVerdict`, so the DES card's KPI panel is not overwritten by a
@@ -76,7 +150,27 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
-  async function createSession() {
+  // The sidebar starts a creation on click and the first send starts it again
+  // when no session is selected yet. Two concurrent creations reset `messages`
+  // twice, and the second reset is what used to make a message typed right
+  // after "+ New Chat" disappear until the session was reloaded — so both
+  // callers share one request. `creatingSession` lets a send wait for the
+  // sidebar's creation instead of racing it (and starting a second one).
+  const creatingSession = ref(false)
+  let createSessionInFlight: Promise<string | null> | null = null
+
+  function createSession(): Promise<string | null> {
+    if (!createSessionInFlight) {
+      creatingSession.value = true
+      createSessionInFlight = createSessionNow().finally(() => {
+        createSessionInFlight = null
+        creatingSession.value = false
+      })
+    }
+    return createSessionInFlight
+  }
+
+  async function createSessionNow(): Promise<string | null> {
     try {
       const data = await api.createSession()
       currentSessionId.value = data.session_id
@@ -90,8 +184,6 @@ export const useAppStore = defineStore('app', () => {
       dbVerdict.value = null
       desCode.value = null
       desVerdict.value = null
-      uiJob.value = null
-      uiVerdict.value = null
       twinVerdict.value = null
       anomalyConfig.value = null
       anomalyError.value = null
@@ -113,10 +205,8 @@ export const useAppStore = defineStore('app', () => {
       const data = await api.getSession(sessionId)
       currentSessionId.value = sessionId
       conversations.value = data.conversations
-      // The interview's job and verdict belong to the conversation that produced
-      // them; another session's report must not be shown over this one.
-      uiJob.value = null
-      uiVerdict.value = null
+      // The interview's job and verdict are kept per session (`uiStates`), so
+      // opening a chat reads its own state instead of whatever ran last.
       twinVerdict.value = null
       anomalyConfig.value = null
       anomalyError.value = null
@@ -142,7 +232,12 @@ export const useAppStore = defineStore('app', () => {
       // interview. `messages` is the interview transcript alone, so it is the
       // one slot that is also loaded into the chat pane.
       for (const conv of data.conversations) {
-        const loaded = await fetchConversation(conv.id, conv.agent_id, conv.conv_idx)
+        const loaded = await fetchConversation(conv.id, conv.agent_id, conv.conv_idx, false)
+        // The user may have clicked another session while a conversation was
+        // being fetched; that click owns the pane, so this replay must stop
+        // rather than paint the previous session's artifacts over it.
+        if (currentSessionId.value !== sessionId) return
+        applyConversation(loaded, conv.agent_id, conv.conv_idx)
         if (conv.agent_id === UI_AGENT && conv.conv_idx === 0) messages.value = loaded
       }
       // A session that has no interview conversation yet gets one here,
@@ -150,6 +245,10 @@ export const useAppStore = defineStore('app', () => {
       if (!data.conversations.some(c => c.agent_id === UI_AGENT && c.conv_idx === 0)) {
         await ensureConversation(UI_AGENT, 0)
       }
+      // A turn left running when this tab was last open: the poller died with
+      // the reload, but the job did not. Not awaited — resuming means waiting
+      // on the agent, and the chat below it must stay usable meanwhile.
+      void resumeUiJob(sessionId)
     } catch (e: any) {
       error.value = e.message
     }
@@ -191,12 +290,14 @@ export const useAppStore = defineStore('app', () => {
         dbVerdict.value = null
         desCode.value = null
         desVerdict.value = null
-        uiJob.value = null
-        uiVerdict.value = null
         twinVerdict.value = null
         anomalyConfig.value = null
         anomalyError.value = null
       }
+      // The session is gone, so nothing may keep waiting on it: drop its state
+      // and the reload marker a running poller would otherwise resume.
+      delete uiStates.value[sessionId]
+      clearPendingUiJob(sessionId)
       return true
     } catch (e: any) {
       error.value = e.message
@@ -230,23 +331,43 @@ export const useAppStore = defineStore('app', () => {
    * interview's `0, 0` for every conversation, as this used to — is what lets a
    * reload restore the DB tab and the twin, not just the chat.
    */
-  async function fetchConversation(conversationId: string, agentId: number, convIdx: number): Promise<Message[]> {
+  async function fetchConversation(
+    conversationId: string,
+    agentId: number,
+    convIdx: number,
+    applyArtifact = true,
+  ): Promise<Message[]> {
     const data = await api.getConversation(conversationId)
     // The broker's own correction prompts are stored as `user` turns so the
     // agent reads them as its chat context, but they are not the user's words.
     // Keep them out of the transcript: if the final repair turn failed, the
     // chat would otherwise end on the broker's prompt, shown as the user's.
     const shown = data.messages.filter(m => messageKind(m) !== 'repair')
+    // `applyArtifact` is off for a caller that has to re-check which session is
+    // open first: a conversation fetched for a session the user has already
+    // left must not write its artifact into the one now on screen.
+    if (applyArtifact) applyConversation(shown, agentId, convIdx)
+    return shown
+  }
+
+  /** Hand a conversation's assistant turns to the processor for its slot. */
+  function applyConversation(shown: Message[], agentId: number, convIdx: number) {
     for (const msg of shown) {
       if (msg.role === 'assistant') processResult(msg.content, agentId, convIdx)
     }
-    return shown
   }
 
   /** Reload the interview slot: its transcript, and the requirements in it. */
   async function loadConversation(conversationId: string) {
+    const sessionId = currentSessionId.value
     try {
-      messages.value = await fetchConversation(conversationId, UI_AGENT, 0)
+      const loaded = await fetchConversation(conversationId, UI_AGENT, 0, false)
+      // A switch can land while the fetch is in flight. The transcript belongs
+      // to the session that asked for it, so it may only be painted while that
+      // session is still the open one.
+      if (currentSessionId.value !== sessionId) return
+      applyConversation(loaded, UI_AGENT, 0)
+      messages.value = loaded
     } catch (e: any) {
       error.value = e.message
     }
@@ -449,10 +570,11 @@ export const useAppStore = defineStore('app', () => {
   async function ensureConversation(agentId: number, convIdx: number): Promise<string | null> {
     const existing = conversations.value.find(c => c.agent_id === agentId && c.conv_idx === convIdx)
     if (existing) return existing.id
-    if (!currentSessionId.value) return null
+    const sessionId = currentSessionId.value
+    if (!sessionId) return null
 
     try {
-      const data = await api.createConversation(currentSessionId.value, agentId, convIdx)
+      const data = await api.createConversation(sessionId, agentId, convIdx)
       if (agentId === UI_AGENT) {
         const p = await loadPrompts()
         if (p) {
@@ -466,7 +588,10 @@ export const useAppStore = defineStore('app', () => {
         // the interview the user is looking at.
         await loadConversation(data.conversation_id)
       }
-      const fresh = await api.getSession(currentSessionId.value)
+      // The user may have opened another session while the conversation was
+      // being created; its list must not be replaced by this session's.
+      if (currentSessionId.value !== sessionId) return data.conversation_id
+      const fresh = await api.getSession(sessionId)
       conversations.value = fresh.conversations
       return data.conversation_id
     } catch (e: any) {
@@ -681,13 +806,18 @@ export const useAppStore = defineStore('app', () => {
     content: string,
     params: Record<string, any> = {},
   ): Promise<UiPipelineResult | null> {
-    if (!currentSessionId.value) return null
+    const sessionId = currentSessionId.value
+    if (!sessionId) return null
     error.value = null
-    uiRunning.value = true
-    let parseFailed = false
+    const state = uiState(sessionId)
+    state.running = true
+    state.job = null
+    state.verdict = null
+
+    let finished = false
     try {
-      const started = await api.startUiPipeline({
-        session_id: currentSessionId.value,
+      const startedJob = await api.startUiPipeline({
+        session_id: sessionId,
         conversation_id: conversationId,
         message: content,
         conv_idx: 0,
@@ -695,43 +825,119 @@ export const useAppStore = defineStore('app', () => {
         attempts: params.attempts,
         retry: params.retry,
       })
-      const job = await waitForJob(started.job_id, j => { uiJob.value = j })
-      if (!job) {
-        error.value = t('error.agentTimeout')
-        return null
-      }
-      if (job.status === 'failed') {
-        error.value = job.error || t('error.agentError')
-        return null
-      }
-
-      const result = job.result as UiPipelineResult | null
-      if (!result) return null
-      uiVerdict.value = result
-
-      if (result.completed && result.requirements) {
-        interviewResult.value = result.requirements
-      } else if (!result.ok) {
-        // The reply could not be read as the schema's JSON even after the repair
-        // turns. Say it out loud and leave the input enabled — the alternative
-        // is a chat that looks finished while the DB tab says otherwise.
-        error.value = t('error.jsonParseFinal')
-        parseFailed = true
-      }
+      // Remember the job before waiting on it: a reload would otherwise lose the
+      // only handle to a run that is still going server-side, and the chat would
+      // re-open with its input enabled while the agent is still writing.
+      writePendingUiJob(sessionId, { jobId: startedJob.job_id, conversationId })
+      const job = await waitForJob(startedJob.job_id, j => { state.job = j })
+      const result = await completeUiJob(sessionId, conversationId, job)
+      finished = true
       return result
     } catch (e: any) {
-      error.value = e.message
+      // A failed request belongs to the chat that asked; another session must
+      // not show the banner for it.
+      if (currentSessionId.value === sessionId) error.value = e.message
       return null
     } finally {
-      // The user's turn, the reply and any repair turns were all written
-      // server-side, so the server's copy is the one to show.
-      await loadConversation(conversationId)
-      // The broker can end on a repair turn that timed out even though an
-      // earlier reply was a readable, complete answer — and the transcript
-      // above has just recovered that answer's `requirements`. Do not let the
-      // "could not be parsed" banner contradict a completed interview.
-      if (parseFailed && interviewResult.value) error.value = null
-      uiRunning.value = false
+      if (!finished) {
+        // The request never became a job, or the wait itself broke: there is
+        // nothing left to wait on or to resume, so drop the half-armed state
+        // instead of leaving the input off.
+        clearPendingUiJob(sessionId)
+        state.running = false
+        state.job = null
+      }
+    }
+  }
+
+  /**
+   * Settle a UI job: record its verdict, clear the reload marker, and — when its
+   * session is the one on screen — reload the transcript from the server.
+   *
+   * A job that finishes while another chat is open belongs to its own session:
+   * writing its reply into the visible pane, or its error into the banner, is
+   * what used to paint one session's result over another.
+   */
+  async function completeUiJob(
+    sessionId: string,
+    conversationId: string,
+    job: PipelineJob | null,
+  ): Promise<UiPipelineResult | null> {
+    const state = uiState(sessionId)
+    const current = currentSessionId.value === sessionId
+    let parseFailed = false
+
+    try {
+      if (!job) {
+        if (current) error.value = t('error.agentTimeout')
+      } else if (job.status === 'failed') {
+        if (current) error.value = job.error || t('error.agentError')
+      } else {
+        const result = job.result as UiPipelineResult | null
+        if (result) {
+          state.verdict = result
+          if (result.completed && result.requirements) {
+            if (current) interviewResult.value = result.requirements
+          } else if (!result.ok && current) {
+            // The reply could not be read as the schema's JSON even after the
+            // repair turns. Say it out loud and leave the input enabled — the
+            // alternative is a chat that looks finished while the DB tab says
+            // otherwise.
+            error.value = t('error.jsonParseFinal')
+            parseFailed = true
+          }
+        }
+      }
+
+      if (current) {
+        // The user's turn, the reply and any repair turns were all written
+        // server-side, so the server's copy is the one to show.
+        await loadConversation(conversationId)
+        // The broker can end on a repair turn that timed out even though an
+        // earlier reply was a readable, complete answer — and the transcript
+        // above has just recovered that answer's `requirements`. Do not let the
+        // "could not be parsed" banner contradict a completed interview.
+        if (parseFailed && interviewResult.value) error.value = null
+      }
+      return (job?.result as UiPipelineResult | null) ?? null
+    } finally {
+      clearPendingUiJob(sessionId)
+      state.running = false
+      state.job = null
+    }
+  }
+
+  /**
+   * Pick up an interview job that was still running when this tab was last open.
+   *
+   * The poller is client-side, so a reload loses the wait even though the job
+   * keeps running. The id `sessionStorage` kept is enough to ask the API for the
+   * job again: while it runs, that session shows the spinner and keeps its input
+   * disabled, and when it lands its verdict and transcript are applied exactly
+   * as they would have been without the reload.
+   */
+  async function resumeUiJob(sessionId: string) {
+    // Only the session on screen is resumed: opening another chat must not make
+    // this one start showing a spinner it cannot see.
+    if (currentSessionId.value !== sessionId) return
+    const pending = readPendingUiJobs()[sessionId]
+    if (!pending) return
+    const state = uiState(sessionId)
+    if (state.running) return
+    state.running = true
+    try {
+      let job: PipelineJob | null = await api.getPipelineJob(pending.jobId)
+      state.job = job
+      if (job.status === 'running') {
+        job = await waitForJob(pending.jobId, j => { state.job = j })
+      }
+      await completeUiJob(sessionId, pending.conversationId, job)
+    } catch {
+      // The job is not known to this API any more (the session was deleted, or a
+      // restart swept it): stop waiting instead of polling a dead id to timeout.
+      clearPendingUiJob(sessionId)
+      state.running = false
+      state.job = null
     }
   }
 
@@ -756,6 +962,7 @@ export const useAppStore = defineStore('app', () => {
     uiJob, uiVerdict, uiRunning,
     twinVerdict,
     anomalyConfig, anomalyBusy, anomalyError,
+    creatingSession,
     loading, error,
     // Getters
     currentSession,

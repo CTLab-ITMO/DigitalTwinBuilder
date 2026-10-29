@@ -5,6 +5,8 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglib2.0-0 \
+    libgomp1 \
+    tzdata \
   && rm -rf /var/lib/apt/lists/*
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \

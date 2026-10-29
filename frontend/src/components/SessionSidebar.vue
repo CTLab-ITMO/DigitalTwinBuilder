@@ -10,10 +10,12 @@ const store = useAppStore()
 const editingId = ref<string | null>(null)
 const draftTitle = ref('')
 
-function onNewChat() {
+async function onNewChat() {
   // One call: `createSession` already seeds the interview slot, greeting and
-  // all. Calling it twice made two sessions.
-  store.createSession()
+  // all. Await it so a message typed immediately after the click reuses the
+  // session being created instead of racing it (the store also de-duplicates
+  // the request and exposes `creatingSession` for the busy state).
+  await store.createSession()
 }
 
 function selectSession(id: string) {
@@ -68,7 +70,12 @@ async function onDelete(s: Session) {
   <aside class="sidebar">
     <div class="sidebar-header">
       <h2>{{ t('sidebar.sessions') }}</h2>
-      <button class="btn btn-primary" style="width:100%" @click="onNewChat">
+      <button
+        class="btn btn-primary"
+        style="width:100%"
+        :disabled="store.creatingSession"
+        @click="onNewChat"
+      >
         {{ t('sidebar.newChat') }}
       </button>
     </div>

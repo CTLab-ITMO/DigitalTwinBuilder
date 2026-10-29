@@ -239,6 +239,11 @@ html, body, #app {
 }
 .btn-primary:hover { background: var(--accent-hover); }
 
+.btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .btn-secondary {
   background: var(--surface2);
   color: var(--text);

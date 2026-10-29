@@ -6,7 +6,7 @@ datasources:
     uid: prometheus
     orgId: 1
     access: proxy
-    url: http://prometheus:9090
-    isDefault: true
+    url: http://drift-prometheus:9090
+    isDefault: false
     editable: false
     jsonData: {}
