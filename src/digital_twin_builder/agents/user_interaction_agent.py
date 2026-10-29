@@ -17,8 +17,13 @@ class UserInteractionAgent(BaseAgent):
         try:
             # self.model = pipeline("text-generation", model= model)
             self.tokenizer = AutoTokenizer.from_pretrained(UI_AGENT_MODEL)
+            # Load in fp16 instead of letting the loader upcast to fp32: 3B in
+            # fp32 is ~12 GiB, which is what kept this agent from sharing a
+            # card. fp16 (not bf16) because the 24 GiB nodes are sm_75, which
+            # has no bf16.
             self.model = AutoModelForCausalLM.from_pretrained(
                 UI_AGENT_MODEL,
+                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
                 device_map="auto"
             )
             # Inference, not training: eval mode disables dropout, so a turn is

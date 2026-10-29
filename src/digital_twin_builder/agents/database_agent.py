@@ -16,8 +16,13 @@ class DatabaseAgent(BaseAgent):
         try:
             # self.model = pipeline("text-generation", model= model)
             self.tokenizer = AutoTokenizer.from_pretrained(DB_AGENT_MODEL)
+            # The checkpoint is already fp16 (Qwen3-4B fine-tune); without this
+            # the loader upcasts it to fp32, doubling the weights to ~16 GiB and
+            # leaving no room for the KV cache on a 24 GiB card. fp16 rather
+            # than bf16 because the 24 GiB nodes are sm_75, which has no bf16.
             self.model = AutoModelForCausalLM.from_pretrained(
                 DB_AGENT_MODEL,
+                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
                 device_map="auto"
             )
         except Exception as e:
