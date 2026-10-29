@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { api } from '../api/client'
 import { t } from '../i18n'
+import { parseJsonObject } from '../utils/reply'
 import type { Session, Conversation, Message, AgentStatus, QueueStatus, PipelineJob, PipelinePrompts, SchemaField, DbPipelineResult, DesPipelineResult, UiPipelineResult, TwinPipelineResult, AnomalyConfig } from '../types'
 
 const UI_AGENT = 0
@@ -306,22 +307,6 @@ export const useAppStore = defineStore('app', () => {
   }
 
   /**
-   * A message's `metadata.kind`, or undefined when it carries none.
-   *
-   * The API returns `jsonb` as a JSON *string* rather than an object (asyncpg
-   * reads jsonb as text), so both spellings are accepted here.
-   */
-  function messageKind(msg: Message): string | undefined {
-    const raw = msg.metadata
-    if (!raw) return undefined
-    let meta: any = raw
-    if (typeof raw === 'string') {
-      try { meta = JSON.parse(raw) } catch { return undefined }
-    }
-    return meta && typeof meta === 'object' ? meta.kind : undefined
-  }
-
-  /**
    * Fetch a conversation and hand each assistant turn to the processor for the
    * slot it belongs to.
    *
@@ -338,21 +323,22 @@ export const useAppStore = defineStore('app', () => {
     applyArtifact = true,
   ): Promise<Message[]> {
     const data = await api.getConversation(conversationId)
-    // The broker's own correction prompts are stored as `user` turns so the
-    // agent reads them as its chat context, but they are not the user's words.
-    // Keep them out of the transcript: if the final repair turn failed, the
-    // chat would otherwise end on the broker's prompt, shown as the user's.
-    const shown = data.messages.filter(m => messageKind(m) !== 'repair')
+    // The broker's correction prompts stay in the list on purpose: they are the
+    // boundary between one attempt and the next, which is what lets the chat
+    // collapse a repaired turn into a single bubble with retry arrows. They are
+    // hidden when the transcript is grouped (`utils/transcript.ts`), never shown
+    // as the user's words.
+    //
     // `applyArtifact` is off for a caller that has to re-check which session is
     // open first: a conversation fetched for a session the user has already
     // left must not write its artifact into the one now on screen.
-    if (applyArtifact) applyConversation(shown, agentId, convIdx)
-    return shown
+    if (applyArtifact) applyConversation(data.messages, agentId, convIdx)
+    return data.messages
   }
 
   /** Hand a conversation's assistant turns to the processor for its slot. */
-  function applyConversation(shown: Message[], agentId: number, convIdx: number) {
-    for (const msg of shown) {
+  function applyConversation(conversation: Message[], agentId: number, convIdx: number) {
+    for (const msg of conversation) {
       if (msg.role === 'assistant') processResult(msg.content, agentId, convIdx)
     }
   }
@@ -370,61 +356,6 @@ export const useAppStore = defineStore('app', () => {
       messages.value = loaded
     } catch (e: any) {
       error.value = e.message
-    }
-  }
-
-  /**
-   * The first complete JSON object in a model reply, or null if there is none.
-   *
-   * Braces inside strings do not count, so the object ends at its own matching
-   * brace — not at the last brace in the text. That distinction matters: the
-   * agent answers with `<think>…</think>` plus the object, and a small model
-   * routinely miscounts the closing braces, leaving an extra `}` after the
-   * requirements. Slicing to the *last* brace then hands `JSON.parse` trailing
-   * junk and the whole reply is rejected, discarding requirements that are in
-   * fact complete.
-   */
-  function extractJsonObject(text: string): string | null {
-    const start = text.indexOf('{')
-    if (start === -1) return null
-    let depth = 0
-    let inString = false
-    let escaped = false
-    for (let i = start; i < text.length; i++) {
-      const ch = text[i]
-      if (escaped) { escaped = false; continue }
-      if (inString) {
-        if (ch === '\\') escaped = true
-        else if (ch === '"') inString = false
-        continue
-      }
-      if (ch === '"') inString = true
-      else if (ch === '{') depth++
-      else if (ch === '}' && --depth === 0) return text.slice(start, i + 1)
-    }
-    return null
-  }
-
-  /**
-   * The model's reasoning block, removed. SmolLM3 writes `<think>…</think>`
-   * before its answer, and a brace inside that prose would otherwise be read as
-   * the start of the JSON object. An opening tag with no closing one means the
-   * turn ended inside the reasoning, so everything from it is dropped.
-   */
-  function stripThink(text: string): string {
-    const closed = text.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '')
-    const open = closed.search(/<think(?:ing)?>/i)
-    return open === -1 ? closed : closed.slice(0, open)
-  }
-
-  /** Parse the first JSON object in a reply, or null if it is not readable. */
-  function parseJsonObject(text: string): any | null {
-    const raw = extractJsonObject(stripThink(text))
-    if (raw === null) return null
-    try {
-      return JSON.parse(raw)
-    } catch {
-      return null
     }
   }
 

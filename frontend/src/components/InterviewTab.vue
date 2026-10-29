@@ -2,6 +2,13 @@
 import { ref, computed, nextTick, watch } from 'vue'
 import { useAppStore } from '../stores/app'
 import { t } from '../i18n'
+import type { AssistantReply } from '../utils/reply'
+import {
+  groupTranscript,
+  lastUserMessage as findLastUserMessage,
+  type TranscriptAttempt,
+  type TranscriptTurn,
+} from '../utils/transcript'
 
 const store = useAppStore()
 const input = ref('')
@@ -19,7 +26,108 @@ const maxTokens = ref(3000)
 const agentId = 0
 const convIdx = 0
 
-const agentMessages = computed(() => store.messages)
+// The transcript as the chat shows it. The interview agent answers with a JSON
+// envelope and the broker may repair a reply more than once, so the stored
+// conversation is grouped into turns: one user message, then every attempt it
+// produced. Only the selected attempt is rendered, at most one bubble per turn.
+const turns = computed(() => groupTranscript(store.messages))
+
+// How far back from the newest attempt each turn is showing (0 = newest).
+// Keyed by turn, so paging one turn's retries does not move another.
+const attemptOffset = ref<Record<string, number>>({})
+
+function offsetFor(turn: TranscriptTurn): number {
+  return attemptOffset.value[turn.key] ?? 0
+}
+
+function attemptIndex(turn: TranscriptTurn): number {
+  const offset = Math.min(offsetFor(turn), Math.max(turn.attempts.length - 1, 0))
+  return Math.max(turn.attempts.length - 1 - offset, 0)
+}
+
+function canOlder(turn: TranscriptTurn): boolean {
+  return offsetFor(turn) < turn.attempts.length - 1
+}
+
+function canNewer(turn: TranscriptTurn): boolean {
+  return offsetFor(turn) > 0
+}
+
+/** ‹ steps back through the retries, › returns towards the newest attempt. */
+function stepAttempt(turn: TranscriptTurn, direction: number) {
+  const next = Math.min(
+    Math.max(offsetFor(turn) + direction, 0),
+    Math.max(turn.attempts.length - 1, 0),
+  )
+  attemptOffset.value = { ...attemptOffset.value, [turn.key]: next }
+}
+
+const renderedTurns = computed(() =>
+  turns.value.map(turn => {
+    const index = attemptIndex(turn)
+    return { ...turn, selectedIndex: index, attempt: turn.attempts[index] ?? null }
+  }),
+)
+
+/** Whether this attempt has anything for the Details fold. */
+function hasDetails(reply: AssistantReply | null | undefined): boolean {
+  return !!reply && (!!reply.think || !!reply.json || (reply.looksLikeJson && !!reply.text))
+}
+
+/** The fold's label names what is actually inside it. */
+function detailsLabel(reply: AssistantReply): string {
+  const hasThink = !!reply.think
+  const hasJson = !!reply.json
+  const hasRaw = !hasJson && reply.looksLikeJson && !!reply.text
+  if (hasThink && (hasJson || hasRaw)) return t('interview.details')
+  if (hasJson) return t('interview.jsonAnswer')
+  if (hasRaw) return t('interview.rawReply')
+  return t('interview.reasoning')
+}
+
+const copiedId = ref<string | null>(null)
+
+/**
+ * Copy a block of text.
+ *
+ * `navigator.clipboard` only exists in a secure context, and this app is
+ * routinely opened over plain HTTP on a LAN, so fall back to the old hidden
+ * textarea trick rather than making the button a no-op there.
+ */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+  } catch { /* fall through to the fallback */ }
+
+  try {
+    const area = document.createElement('textarea')
+    area.value = text
+    area.setAttribute('readonly', '')
+    area.style.position = 'fixed'
+    area.style.opacity = '0'
+    document.body.appendChild(area)
+    try {
+      area.select()
+      return document.execCommand('copy')
+    } finally {
+      document.body.removeChild(area)
+    }
+  } catch {
+    return false
+  }
+}
+
+async function copyAttempt(attempt: TranscriptAttempt) {
+  if (!attempt.reply.json) return
+  if (!await copyText(attempt.reply.json)) return
+  copiedId.value = attempt.id
+  setTimeout(() => {
+    if (copiedId.value === attempt.id) copiedId.value = null
+  }, 1500)
+}
 
 // The broker is answering: it posted the turn, waits for the agent, and may be
 // sending the reply back for a correction. Nothing else may be submitted while
@@ -55,14 +163,9 @@ async function getOrCreateConv(): Promise<string | null> {
 }
 
 // The last thing the user actually said. A failed turn ends the transcript on
-// this message — the broker's repair prompts are filtered out of it — so it is
-// what a retry re-asks.
-const lastUserMessage = computed(() => {
-  for (let i = store.messages.length - 1; i >= 0; i--) {
-    if (store.messages[i].role === 'user') return store.messages[i].content
-  }
-  return ''
-})
+// this message — the broker's repair prompts are skipped — so it is what a
+// retry re-asks.
+const lastUserMessage = computed(() => findLastUserMessage(store.messages))
 
 // A turn whose reply could not be read even after the broker's repairs is
 // retryable, as long as there is a user turn left to re-ask.
@@ -143,6 +246,12 @@ async function send() {
 // the user already sees is not shown a second time.
 async function retry() {
   if (!canRetry.value) return
+  // The new attempt is about to become the newest one; show it when it lands
+  // even if the user had stepped back to an older attempt.
+  const lastTurn = turns.value[turns.value.length - 1]
+  if (lastTurn) {
+    attemptOffset.value = { ...attemptOffset.value, [lastTurn.key]: 0 }
+  }
   await submitTurn(lastUserMessage.value, true)
 }
 </script>
@@ -176,13 +285,81 @@ async function retry() {
       </div>
 
       <div class="messages">
-        <div
-          v-for="msg in agentMessages"
-          :key="msg.id"
-          :class="['message', msg.role]"
-        >
-          <div class="msg-content">{{ msg.content }}</div>
-        </div>
+        <template v-for="turn in renderedTurns" :key="turn.key">
+          <div v-if="turn.user" class="message user">
+            <div class="msg-content">{{ turn.user.content }}</div>
+          </div>
+
+          <template v-if="turn.attempt">
+            <div class="message assistant">
+              <details v-if="hasDetails(turn.attempt.reply)" class="reply-details">
+                <summary>{{ detailsLabel(turn.attempt.reply) }}</summary>
+
+                <section v-if="turn.attempt.reply.think" class="reply-section">
+                  <div class="reply-section-head">{{ t('interview.reasoning') }}</div>
+                  <pre class="detail-body">{{ turn.attempt.reply.think }}</pre>
+                </section>
+
+                <section v-if="turn.attempt.reply.json" class="reply-section">
+                  <div class="reply-section-head">
+                    <span>{{ t('interview.jsonAnswer') }}</span>
+                    <button type="button" class="copy-btn" @click="copyAttempt(turn.attempt)">
+                      {{ copiedId === turn.attempt.id ? t('interview.copied') : t('interview.copy') }}
+                    </button>
+                  </div>
+                  <pre class="detail-body">{{ turn.attempt.reply.json }}</pre>
+                </section>
+
+                <section
+                  v-else-if="turn.attempt.reply.looksLikeJson && turn.attempt.reply.text"
+                  class="reply-section"
+                >
+                  <div class="reply-section-head">{{ t('interview.rawReply') }}</div>
+                  <pre class="detail-body">{{ turn.attempt.reply.text }}</pre>
+                </section>
+              </details>
+
+              <div class="msg-content">
+                <template v-if="turn.attempt.reply.isJson">
+                  {{ turn.attempt.reply.text || t('interview.noText') }}
+                </template>
+                <template v-else-if="turn.attempt.reply.looksLikeJson">
+                  {{ t('interview.invalidReply') }}
+                </template>
+                <template v-else>
+                  {{ turn.attempt.reply.text || t('interview.noText') }}
+                </template>
+              </div>
+            </div>
+
+            <div v-if="turn.attempts.length > 1" class="attempt-nav">
+              <button
+                type="button"
+                class="attempt-arrow"
+                :disabled="!canOlder(turn)"
+                :title="t('interview.olderAttempt')"
+                :aria-label="t('interview.olderAttempt')"
+                @click="stepAttempt(turn, 1)"
+              >
+                ‹
+              </button>
+              <span class="attempt-count">
+                {{ t('interview.attemptNav', { n: turn.selectedIndex + 1, total: turn.attempts.length }) }}
+              </span>
+              <button
+                type="button"
+                class="attempt-arrow"
+                :disabled="!canNewer(turn)"
+                :title="t('interview.newerAttempt')"
+                :aria-label="t('interview.newerAttempt')"
+                @click="stepAttempt(turn, -1)"
+              >
+                ›
+              </button>
+            </div>
+          </template>
+        </template>
+
         <div v-if="isWaiting" class="message assistant">
           <div class="msg-content">
             <span class="spinner" style="display:inline-block;vertical-align:middle" />
@@ -279,6 +456,79 @@ async function retry() {
 .message.system { display: none; }
 
 .msg-content { white-space: pre-wrap; word-break: break-word; font-size: 14px; line-height: 1.5; }
+
+/* One fold per assistant turn: the model's reasoning and, when the answer is
+   readable, its full JSON. Folded away by default — they are the "why" and the
+   envelope, not the message the user is meant to read. */
+.reply-details {
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.reply-details summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-muted);
+  user-select: none;
+}
+.reply-section { margin-top: 8px; }
+.reply-section + .reply-section { margin-top: 10px; }
+.reply-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.detail-body {
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+  background: rgba(0, 0, 0, 0.22);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.copy-btn {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.copy-btn:hover { color: var(--text); border-color: var(--text-muted); }
+
+/* Retry navigation: one small row directly under the assistant bubble. */
+.attempt-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: -4px;
+  padding-left: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+  align-self: flex-start;
+}
+.attempt-arrow {
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text);
+  border-radius: 6px;
+  width: 22px;
+  height: 22px;
+  line-height: 1;
+  cursor: pointer;
+  font-size: 14px;
+}
+.attempt-arrow:disabled { opacity: 0.4; cursor: default; }
+.attempt-count { min-width: 90px; text-align: center; }
 
 .param-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
 .param-row:last-child { margin-bottom: 0; }
