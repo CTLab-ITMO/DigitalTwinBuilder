@@ -1,0 +1,9 @@
+global:
+  scrape_interval: 500ms
+
+scrape_configs:
+  - job_name: 'object_drift_api'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['api:8000']
+

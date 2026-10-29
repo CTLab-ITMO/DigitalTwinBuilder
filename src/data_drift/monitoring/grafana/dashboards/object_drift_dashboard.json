@@ -1,0 +1,347 @@
+{
+  "annotations": {
+    "list": [
+      {"builtIn": 1, "datasource": {"type": "grafana", "uid": "-- Grafana --"}, "enable": true, "hide": true, "iconColor": "rgba(0, 211, 255, 1)", "name": "Annotations & Alerts", "type": "dashboard"}
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "PSI: сравнение распределений (RGB-гистограммы baseline vs текущее окно).",
+      "fieldConfig": {
+        "defaults": {"unit": "none", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0.2}]}},
+        "overrides": [{"matcher": {"id": "byName", "options": "segment"}, "properties": [{"id": "custom.axisPlacement", "value": "right"}, {"id": "min", "value": 0.5}, {"id": "max", "value": 20}, {"id": "color", "value": {"mode": "fixed", "fixedColor": "purple"}}]}]
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "minStep": "1s"},
+      "targets": [
+        {"expr": "(sum(rate(object_drift_psi_sum[5m])) / sum(rate(object_drift_psi_count[5m]))) and on() (object_drift_processing == 1)", "legendFormat": "mean", "refId": "A", "interval": "1s"},
+        {"expr": "object_drift_segment_index and on() (object_drift_processing == 1)", "legendFormat": "segment", "refId": "B", "interval": "1s"}
+      ],
+      "title": "PSI (порог дрейфа > 0.2)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "KL divergence по CNN-признакам (ResNet).",
+      "fieldConfig": {
+        "defaults": {"unit": "none", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}},
+        "overrides": [{"matcher": {"id": "byName", "options": "segment"}, "properties": [{"id": "custom.axisPlacement", "value": "right"}, {"id": "min", "value": 0.5}, {"id": "max", "value": 20}, {"id": "color", "value": {"mode": "fixed", "fixedColor": "purple"}}]}]
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "id": 2,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "minStep": "1s"},
+      "targets": [
+        {"expr": "(sum(rate(object_drift_kl_divergence_sum[5m])) / sum(rate(object_drift_kl_divergence_count[5m]))) and on() (object_drift_processing == 1)", "legendFormat": "mean", "refId": "A", "interval": "1s"},
+        {"expr": "object_drift_segment_index and on() (object_drift_processing == 1)", "legendFormat": "segment", "refId": "B", "interval": "1s"}
+      ],
+      "title": "KL divergence (порог дрейфа > 1.0)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "KS: статистика и p-value по распределению яркости. Дрейф при p-value < 0.05.",
+      "fieldConfig": {
+        "defaults": {"unit": "none", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 0.3}, {"color": "red", "value": 0.5}]}},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "p-value mean"}, "properties": [{"id": "unit", "value": "none"}, {"id": "custom.axisPlacement", "value": "right"}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 0.05}]}}]},
+          {"matcher": {"id": "byName", "options": "segment"}, "properties": [{"id": "custom.axisPlacement", "value": "right"}, {"id": "min", "value": 0.5}, {"id": "max", "value": 20}, {"id": "color", "value": {"mode": "fixed", "fixedColor": "purple"}}]}]
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "id": 3,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "minStep": "1s"},
+      "targets": [
+        {"expr": "(sum(rate(object_drift_ks_statistic_sum[5m])) / sum(rate(object_drift_ks_statistic_count[5m]))) and on() (object_drift_processing == 1)", "legendFormat": "KS statistic mean", "refId": "A", "interval": "1s"},
+        {"expr": "(sum(rate(object_drift_ks_pvalue_sum[5m])) / sum(rate(object_drift_ks_pvalue_count[5m]))) and on() (object_drift_processing == 1)", "legendFormat": "p-value mean", "refId": "B", "interval": "1s"},
+        {"expr": "object_drift_segment_index and on() (object_drift_processing == 1)", "legendFormat": "segment", "refId": "C", "interval": "1s"}
+      ],
+      "title": "KS statistic и p-value (порог дрейфа p-value < 0.05)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Wasserstein distance между распределениями яркости.",
+      "fieldConfig": {
+        "defaults": {"unit": "none", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 30}]}},
+        "overrides": [{"matcher": {"id": "byName", "options": "segment"}, "properties": [{"id": "custom.axisPlacement", "value": "right"}, {"id": "min", "value": 0.5}, {"id": "max", "value": 20}, {"id": "color", "value": {"mode": "fixed", "fixedColor": "purple"}}]}]
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "id": 7,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "minStep": "1s"},
+      "targets": [
+        {"expr": "(sum(rate(object_drift_wasserstein_sum[5m])) / sum(rate(object_drift_wasserstein_count[5m]))) and on() (object_drift_processing == 1)", "legendFormat": "mean", "refId": "A", "interval": "1s"},
+        {"expr": "object_drift_segment_index and on() (object_drift_processing == 1)", "legendFormat": "segment", "refId": "B", "interval": "1s"}
+      ],
+      "title": "Wasserstein distance (порог дрейфа > 30)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Jensen-Shannon divergence (симметричная).",
+      "fieldConfig": {
+        "defaults": {"unit": "none", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0.3}]}},
+        "overrides": [{"matcher": {"id": "byName", "options": "segment"}, "properties": [{"id": "custom.axisPlacement", "value": "right"}, {"id": "min", "value": 0.5}, {"id": "max", "value": 20}, {"id": "color", "value": {"mode": "fixed", "fixedColor": "purple"}}]}]
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "id": 8,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "minStep": "1s"},
+      "targets": [
+        {"expr": "(sum(rate(object_drift_js_divergence_sum[5m])) / sum(rate(object_drift_js_divergence_count[5m]))) and on() (object_drift_processing == 1)", "legendFormat": "mean", "refId": "A", "interval": "1s"},
+        {"expr": "object_drift_segment_index and on() (object_drift_processing == 1)", "legendFormat": "segment", "refId": "B", "interval": "1s"}
+      ],
+      "title": "Jensen-Shannon divergence (порог дрейфа > 0.3)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Взвешенная сумма нормализованных метрик (PSI, KL, KS, JS, Wasserstein). Серии: исходный mean, веса по умолчанию, акцент на Wasserstein, акцент на KL+PSI, max из компонент, сегмент.",
+      "fieldConfig": {
+        "defaults": {"unit": "none", "max": 1, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.3}, {"color": "red", "value": 0.5}]}},
+        "overrides": [{"matcher": {"id": "byName", "options": "segment"}, "properties": [{"id": "custom.axisPlacement", "value": "right"}, {"id": "min", "value": 0.5}, {"id": "max", "value": 20}, {"id": "color", "value": {"mode": "fixed", "fixedColor": "purple"}}]}]
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "id": 9,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "minStep": "1s"},
+      "targets": [
+        {"expr": "(sum(rate(object_drift_aggregate_score_sum[5m])) / sum(rate(object_drift_aggregate_score_count[5m]))) and on() (object_drift_processing == 1)", "legendFormat": "mean (исх.)", "refId": "A", "interval": "1s"},
+        {"expr": "object_drift_aggregate_weighted_default and on() (object_drift_processing == 1)", "legendFormat": "веса по умолч.", "refId": "C", "interval": "1s"},
+        {"expr": "object_drift_aggregate_weighted_wass and on() (object_drift_processing == 1)", "legendFormat": "Wasserstein 0.4", "refId": "D", "interval": "1s"},
+        {"expr": "object_drift_aggregate_weighted_kl_psi and on() (object_drift_processing == 1)", "legendFormat": "KL+PSI 0.35+0.35", "refId": "E", "interval": "1s"},
+        {"expr": "object_drift_aggregate_weighted_max and on() (object_drift_processing == 1)", "legendFormat": "max(компоненты)", "refId": "F", "interval": "1s"},
+        {"expr": "object_drift_segment_index and on() (object_drift_processing == 1)", "legendFormat": "segment", "refId": "B", "interval": "1s"}
+      ],
+      "title": "Агрегированная метрика дрейфа (порог внимания > 0.5)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Разные формулы агрегата и веса уверенности: v1=исходный agg, v2=0.85*agg+0.15*(1-conf), v3=agg*(2-conf), v4=0.6*agg+0.4*(1-conf), v5=agg/(0.5+0.5*conf). Сегменты справа.",
+      "fieldConfig": {
+        "defaults": {"unit": "none", "min": 0, "max": 1},
+        "overrides": [{"matcher": {"id": "byName", "options": "segment"}, "properties": [{"id": "custom.axisPlacement", "value": "right"}, {"id": "min", "value": 0.5}, {"id": "max", "value": 20}, {"id": "color", "value": {"mode": "fixed", "fixedColor": "purple"}}]}]
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+      "id": 15,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "minStep": "1s"},
+      "targets": [
+        {"expr": "object_drift_aggregate_v1 and on() (object_drift_processing == 1)", "legendFormat": "v1 agg", "refId": "A", "interval": "1s"},
+        {"expr": "object_drift_aggregate_v2 and on() (object_drift_processing == 1)", "legendFormat": "v2 0.85agg+0.15(1-conf)", "refId": "B", "interval": "1s"},
+        {"expr": "object_drift_aggregate_v3 and on() (object_drift_processing == 1)", "legendFormat": "v3 agg*(2-conf)", "refId": "C", "interval": "1s"},
+        {"expr": "object_drift_aggregate_v4 and on() (object_drift_processing == 1)", "legendFormat": "v4 0.6agg+0.4(1-conf)", "refId": "E", "interval": "1s"},
+        {"expr": "object_drift_aggregate_v5 and on() (object_drift_processing == 1)", "legendFormat": "v5 agg/(0.5+0.5*conf)", "refId": "F", "interval": "1s"},
+        {"expr": "object_drift_aggregate_v5_ema and on() (object_drift_processing == 1)", "legendFormat": "v5 EMA", "refId": "G", "interval": "1s"},
+        {"expr": "object_drift_segment_index and on() (object_drift_processing == 1)", "legendFormat": "segment", "refId": "D", "interval": "1s"}
+      ],
+      "title": "Вариации агрегированных метрик",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Количество детекций по классам во времени (X — время, Y — число детекций, серии по классам разными цветами).",
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+      "id": 12,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "minStep": "1s"},
+      "targets": [{"expr": "object_detections_by_class and on() (object_drift_processing == 1)", "legendFormat": "{{class}}", "refId": "A", "interval": "1s"}],
+      "title": "Детекции по классам (временной ряд)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Средняя уверенность модели на кадре/фото по каждому классу (X — время, Y — уверенность 0–1, серии по классам разными цветами).",
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32},
+      "id": 14,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "minStep": "1s"},
+      "targets": [{"expr": "object_detection_confidence_mean and on() (object_drift_processing == 1)", "legendFormat": "{{class}}", "refId": "A", "interval": "1s"}],
+      "title": "Средняя уверенность по классам",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Секунда текущего видео. При запуске нового видео обновляется одна серия — график по сути начинается заново.",
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 32},
+      "id": 10,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "minStep": "1s"},
+      "targets": [{"expr": "object_drift_video_seconds and on() (object_drift_processing == 1)", "legendFormat": "сек видео", "refId": "A", "interval": "1s"}],
+      "title": "Время видео (сек)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Алерты: 1 = сработал. drift — общая детекция дрейфа; Page-Hinkley — тест по последовательности метрик.",
+      "fieldConfig": {"defaults": {"unit": "none", "min": 0, "max": 1}, "overrides": []},
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 40},
+      "id": 11,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "minStep": "1s"},
+      "targets": [
+        {"expr": "object_drift_alert and on() (object_drift_processing == 1)", "legendFormat": "drift", "refId": "A", "interval": "1s"},
+        {"expr": "object_drift_ph_alert and on() (object_drift_processing == 1)", "legendFormat": "Page-Hinkley", "refId": "B", "interval": "1s"}
+      ],
+      "title": "Алерты дрейфа",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Отличие детекций на кадр (по классам) в % от предыдущих запусков с тем же video_id за тот же час. Заполняется при указании video_id.",
+      "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 40},
+      "id": 16,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "minStep": "1s"},
+      "targets": [{"expr": "object_drift_detection_rate_diff_pct and on() (object_drift_processing == 1)", "legendFormat": "diff %", "refId": "A", "interval": "1s"}],
+      "title": "Отличие детекций/кадр % (video_id)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Все линии 0–1: нормализованные PSI, KL, JS, KS, Wass + v5 и база agg. segment справа — смена сегмента. Смотрите, какая линия вспыхнула вместе с v5.",
+      "fieldConfig": {
+        "defaults": {"unit": "none", "min": 0, "max": 1},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "segment"}, "properties": [{"id": "custom.axisPlacement", "value": "right"}, {"id": "min", "value": 0.5}, {"id": "max", "value": 20}, {"id": "color", "value": {"mode": "fixed", "fixedColor": "purple"}}]},
+          {"matcher": {"id": "byName", "options": "v5"}, "properties": [{"id": "custom.lineWidth", "value": 3}, {"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]}
+        ]
+      },
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 46},
+      "id": 22,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "minStep": "1s"},
+      "targets": [
+        {"expr": "object_drift_aggregate_v5 and on() (object_drift_processing == 1)", "legendFormat": "v5", "refId": "V5", "interval": "1s"},
+        {"expr": "object_drift_component_psi_n and on() (object_drift_processing == 1)", "legendFormat": "PSI норм", "refId": "PSI", "interval": "1s"},
+        {"expr": "object_drift_component_kl_n and on() (object_drift_processing == 1)", "legendFormat": "KL норм", "refId": "KL", "interval": "1s"},
+        {"expr": "object_drift_component_js_n and on() (object_drift_processing == 1)", "legendFormat": "JS норм", "refId": "JS", "interval": "1s"},
+        {"expr": "object_drift_component_ks_n and on() (object_drift_processing == 1)", "legendFormat": "KS норм", "refId": "KS", "interval": "1s"},
+        {"expr": "object_drift_component_wass_n and on() (object_drift_processing == 1)", "legendFormat": "Wass норм", "refId": "WASS", "interval": "1s"},
+        {"expr": "object_drift_segment_index and on() (object_drift_processing == 1)", "legendFormat": "segment", "refId": "SEG", "interval": "1s"}
+      ],
+      "title": "v5 и составляющие (норм. 0–1) + сегменты",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Площадь под v5 за последние drift_window_sec секунд (как окно дрейфа). Не растёт бесконечно: при низком v5 почти плоская. segment — смена сегмента.",
+      "fieldConfig": {
+        "defaults": {"unit": "none"},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "segment"}, "properties": [{"id": "custom.axisPlacement", "value": "right"}, {"id": "min", "value": 0.5}, {"id": "max", "value": 20}, {"id": "color", "value": {"mode": "fixed", "fixedColor": "purple"}}]},
+          {"matcher": {"id": "byName", "options": "площадь под v5"}, "properties": [{"id": "custom.lineWidth", "value": 3}, {"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]}
+        ]
+      },
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 54},
+      "id": 23,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "minStep": "1s"},
+      "targets": [
+        {"expr": "object_drift_v5_area_cumulative and on() (object_drift_processing == 1)", "legendFormat": "площадь v5 (окно)", "refId": "A", "interval": "1s"},
+        {"expr": "object_drift_segment_index and on() (object_drift_processing == 1)", "legendFormat": "segment", "refId": "B", "interval": "1s"}
+      ],
+      "title": "Сегменты и площадь v5 (за окно drift_window_sec)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "4 метрики качества: насколько v5 (agg/(0.5+0.5*conf)) поднимается около границ сегментов из segments_file и не поднимается внутри сегментов. Во время обработки показывается текущая оценка по накопленным точкам; после завершения — финальное значение.",
+      "fieldConfig": {"defaults": {"unit": "none"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 62},
+      "id": 17,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "minStep": "1s"},
+      "targets": [
+        {"expr": "object_drift_eval_pr_auc and on() (object_drift_processing == 1)", "legendFormat": "PR-AUC", "refId": "A", "interval": "1s"},
+        {"expr": "object_drift_eval_tpr_at_fpr and on() (object_drift_processing == 1)", "legendFormat": "TPR@FPR", "refId": "B", "interval": "1s"},
+        {"expr": "object_drift_eval_delta_mean and on() (object_drift_processing == 1)", "legendFormat": "Δmean", "refId": "C", "interval": "1s"},
+        {"expr": "object_drift_eval_event_recall and on() (object_drift_processing == 1)", "legendFormat": "event recall", "refId": "D", "interval": "1s"}
+      ],
+      "title": "Оценка: v5 vs границы сегментов (segments_file)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Итоговые PR-AUC по выбранным агрегатам (после завершения обработки).",
+      "fieldConfig": {"defaults": {"unit": "none", "min": 0, "max": 1}, "overrides": []},
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 70},
+      "id": 18,
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [{"expr": "object_drift_eval_pr_auc_by_agg{agg=~\"v1|v2|v3|v4|v5|v5_ema|weighted_default|weighted_wass|weighted_kl_psi\"}", "legendFormat": "{{agg}}", "refId": "A", "interval": "1s"}],
+      "title": "Final PR-AUC (цифры)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Итоговые TPR@FPR по выбранным агрегатам (после завершения обработки).",
+      "fieldConfig": {"defaults": {"unit": "none", "min": 0, "max": 1}, "overrides": []},
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 70},
+      "id": 19,
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [{"expr": "object_drift_eval_tpr_at_fpr_by_agg{agg=~\"v1|v2|v3|v4|v5|v5_ema|weighted_default|weighted_wass|weighted_kl_psi\"}", "legendFormat": "{{agg}}", "refId": "A", "interval": "1s"}],
+      "title": "Final TPR@FPR (цифры)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Итоговые Δmean по выбранным агрегатам (после завершения обработки).",
+      "fieldConfig": {"defaults": {"unit": "none"}, "overrides": []},
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 76},
+      "id": 20,
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [{"expr": "object_drift_eval_delta_mean_by_agg{agg=~\"v1|v2|v3|v4|v5|v5_ema|weighted_default|weighted_wass|weighted_kl_psi\"}", "legendFormat": "{{agg}}", "refId": "A", "interval": "1s"}],
+      "title": "Final Δmean (цифры)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Итоговые event recall по выбранным агрегатам (после завершения обработки).",
+      "fieldConfig": {"defaults": {"unit": "none", "min": 0, "max": 1}, "overrides": []},
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 76},
+      "id": 21,
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [{"expr": "object_drift_eval_event_recall_by_agg{agg=~\"v1|v2|v3|v4|v5|v5_ema|weighted_default|weighted_wass|weighted_kl_psi\"}", "legendFormat": "{{agg}}", "refId": "A", "interval": "1s"}],
+      "title": "Final event recall (цифры)",
+      "type": "stat"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["drift", "object"],
+  "templating": {"list": []},
+  "time": {"from": "now-30m", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Object Drift Monitoring",
+  "uid": "object-drift",
+  "version": 5
+}
