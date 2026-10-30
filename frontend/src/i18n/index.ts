@@ -55,8 +55,10 @@ const en = {
   'interview.repair': 'reply not parsed, repair {n}',
   'interview.placeholder': 'Enter information about your production...',
   'interview.send': 'Send',
-  'interview.temperature': 'Temperature',
+  'interview.agentSettings': 'Agent settings',
   'interview.maxTokens': 'Max Tokens',
+  'interview.maxAttempts': 'Max attempts',
+  'interview.maxAttemptsHint': 'including the first reply',
 
   'db.title': 'Database setup',
   'db.needInterview': 'Please complete the interview on the "Interview" tab',
@@ -205,8 +207,10 @@ const ru: Record<MessageKey, string> = {
   'interview.repair': 'ответ не разобран, исправление {n}',
   'interview.placeholder': 'Введите информацию о вашем производстве...',
   'interview.send': 'Отправить',
-  'interview.temperature': 'Температура',
+  'interview.agentSettings': 'Настройки агента',
   'interview.maxTokens': 'Макс. токенов',
+  'interview.maxAttempts': 'Макс. попыток',
+  'interview.maxAttemptsHint': 'включая первый ответ',
 
   'db.title': 'Настройка базы данных',
   'db.needInterview': 'Пожалуйста, завершите интервью на вкладке «Интервью»',

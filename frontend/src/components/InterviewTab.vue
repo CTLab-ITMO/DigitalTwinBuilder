@@ -16,12 +16,21 @@ const scrollArea = ref<HTMLElement | null>(null)
 // Covers the short window between the click and the store marking the session
 // running: a second Enter there would start a second turn in the same chat.
 const starting = ref(false)
-const temperature = ref(0.7)
 // The finished requirements object plus its `<think>` block runs past 1000
 // tokens, and a reply cut off mid-JSON is one the client cannot read at all —
 // so the default matches the DB slot's budget rather than the smallest value
 // that fits a chat answer.
 const maxTokens = ref(3000)
+// Total attempts for one answer, including the first reply. The broker's
+// `attempts` field counts the corrections that follow it, so one is subtracted
+// when the turn is submitted; 3 matches the backend's default (2 corrections).
+const maxAttempts = ref(3)
+
+/** The correction count for the chosen budget, clamped to the allowed range. */
+function repairAttempts(): number {
+  const total = Math.min(Math.max(Math.trunc(Number(maxAttempts.value)) || 1, 1), 5)
+  return total - 1
+}
 
 const agentId = 0
 const convIdx = 0
@@ -227,8 +236,10 @@ async function submitTurn(msg: string, retry: boolean) {
     // On a retry the broker posts its own copy of the re-ask, since the user's
     // question is already in the conversation.
     const pending = store.sendInterviewMessage(convId, msg, {
-      temperature: temperature.value,
       max_tokens: maxTokens.value,
+      // The API's `attempts` is the number of corrections after the first
+      // reply; the setting is the total number of attempts.
+      attempts: repairAttempts(),
       retry,
     })
     // `sendInterviewMessage` marks the session running before its first await,
@@ -408,17 +419,18 @@ async function forceRetry() {
     </div>
 
     <div class="bottom-bar">
-      <div class="card params-card">
-        <div class="param-row">
-          <label>{{ t('interview.temperature') }}</label>
-          <input type="range" min="0" max="2" step="0.1" v-model.number="temperature" />
-          <span class="param-value">{{ temperature }}</span>
-        </div>
+      <details class="card params-card">
+        <summary class="params-title">{{ t('interview.agentSettings') }}</summary>
         <div class="param-row">
           <label>{{ t('interview.maxTokens') }}</label>
           <input type="number" v-model.number="maxTokens" min="100" max="10000" />
         </div>
-      </div>
+        <div class="param-row">
+          <label>{{ t('interview.maxAttempts') }}</label>
+          <input type="number" v-model.number="maxAttempts" min="1" max="5" />
+          <span class="param-hint">{{ t('interview.maxAttemptsHint') }}</span>
+        </div>
+      </details>
 
       <div class="input-area">
         <input
@@ -584,8 +596,7 @@ async function forceRetry() {
 .param-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
 .param-row:last-child { margin-bottom: 0; }
 .param-row label { font-size: 13px; color: var(--text-muted); min-width: 100px; }
-.param-row input[type="range"] { flex: 1; }
-.param-value { font-size: 13px; min-width: 30px; text-align: right; }
+.param-hint { font-size: 11px; color: var(--text-muted); }
 .param-row input[type="number"] { width: 100px; }
 
 .bottom-bar {
@@ -598,6 +609,17 @@ async function forceRetry() {
 .params-card {
   margin-bottom: 8px !important;
 }
+
+/* Collapsed by default: the two knobs are rarely changed, and the input row
+   below is what the user actually needs while a dialogue is running. */
+.params-title {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  user-select: none;
+}
+.params-card[open] .params-title { margin-bottom: 10px; }
 
 .input-area { display: flex; gap: 8px; }
 .input-area input { flex: 1; }
