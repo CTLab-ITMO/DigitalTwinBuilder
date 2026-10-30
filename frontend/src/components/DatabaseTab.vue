@@ -44,7 +44,7 @@ async function generateSchema() {
       </div>
 
       <button
-        v-if="!store.dbSchema"
+        v-if="!store.dbSchema || store.dbVerdict?.ok === false"
         class="btn btn-primary"
         :disabled="generating"
         @click="generateSchema"

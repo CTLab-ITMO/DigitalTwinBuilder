@@ -834,6 +834,14 @@ async def _prepare_pipeline_conversation(session_id, conversation_id, agent_id,
     the language it was created in. The UI slot's fixed greeting is refreshed on
     the same condition.
 
+    The non-UI slots start each run from a clean conversation. Their
+    conversation is only input for the agent, never a chat the user reads, and
+    the agent re-reads all of it on every turn. Keeping the previous run's turns
+    made every press of "Generate" re-post the whole requirements JSON and every
+    rejected reply on top of the last, so the context grew with each retry. Only
+    the system prompt is written back before the run posts its first turn. The
+    interview slot is the dialogue itself and is left untouched.
+
     A `conversation_id` is used when given (the client's own conversation for the
     tab, so it can render the turns); otherwise one is created in `session_id`.
     """
@@ -868,6 +876,14 @@ async def _prepare_pipeline_conversation(session_id, conversation_id, agent_id,
                 if not exists:
                     raise HTTPException(status_code=404,
                                         detail="Conversation not found")
+
+            # Regeneration slots: drop everything from the previous run. Only
+            # the system prompt below is written back, so this run's first turn
+            # is the only copy of the requirements in the conversation.
+            if agent_id != config.UI_AGENT_INDEX:
+                await conn.execute(
+                    "DELETE FROM messages WHERE conversation_id = $1",
+                    conversation_id)
 
             raw_meta = await conn.fetchval(
                 "SELECT metadata FROM conversations WHERE id = $1", conversation_id)
