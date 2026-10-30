@@ -82,6 +82,12 @@ Return only JSON. This is repair attempt {attempt} of {total_attempts}."""
     return prompt
 
 def make_gen_conf(requirements, db_schema, *args):
+    """Deprecated: prompt for the standalone twin-configuration slot.
+
+    Only `/pipeline/gen_conf` (deprecated) and its tests use this. The frontend
+    no longer generates the configuration; the requirements and the DB schema
+    feed the PyChrono/DES slots directly.
+    """
     prompt = f"""Create a comprehensive digital twin configuration for the industrial facility.
 
 Requirements:

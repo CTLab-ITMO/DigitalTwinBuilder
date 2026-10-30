@@ -7,11 +7,8 @@ local transformers model, so no GPU or Slurm allocation is needed.
 """
 import sys
 import os
-import time
 import importlib.util
 from pathlib import Path
-
-import requests
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../'))
 
@@ -35,10 +32,7 @@ from digital_twin_builder.config import (
     OPENROUTER_APP_NAME,
     OPENROUTER_IGNORE_PROVIDERS,
 )
-
-# Retry transient provider failures (rate limits, upstream 5xx).
-RETRYABLE_STATUS = {429, 500, 502, 503, 504}
-MAX_ATTEMPTS = 4
+from digital_twin_builder.openrouter_client import OpenRouterClient
 
 
 class DigitalTwinAgentOpenRouter(BaseAgent):
@@ -49,77 +43,19 @@ class DigitalTwinAgentOpenRouter(BaseAgent):
         self.running = False
         self.base_url = OPENROUTER_BASE_URL.rstrip('/')
         self.model = OPENROUTER_MODEL
-        if not OPENROUTER_API_KEY:
-            raise ValueError("OPENROUTER_API_KEY is not set")
-        self.headers = {
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json",
-        }
-        if OPENROUTER_SITE_URL:
-            self.headers["HTTP-Referer"] = OPENROUTER_SITE_URL
-        if OPENROUTER_APP_NAME:
-            self.headers["X-Title"] = OPENROUTER_APP_NAME
-        self.ignore_providers = [
-            p.strip() for p in OPENROUTER_IGNORE_PROVIDERS.split(",") if p.strip()
-        ]
+        self.client = OpenRouterClient(
+            model=self.model,
+            api_key=OPENROUTER_API_KEY,
+            base_url=OPENROUTER_BASE_URL,
+            site_url=OPENROUTER_SITE_URL,
+            app_name=OPENROUTER_APP_NAME,
+            ignore_providers=OPENROUTER_IGNORE_PROVIDERS,
+            logger=self.logger,
+        )
         self.logger.info(f"Using OpenRouter model {self.model} at {self.base_url}")
-        if self.ignore_providers:
-            self.logger.info(f"Avoiding providers: {', '.join(self.ignore_providers)}")
-
-    def generate(self, messages, max_tokens=1000, temperature=0.7):
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-        }
-        if self.ignore_providers:
-            # Keep routing deterministic-ish: skip upstreams known to drop the
-            # completion text (see OPENROUTER_IGNORE_PROVIDERS).
-            payload["provider"] = {"ignore": self.ignore_providers}
-
-        last_error = None
-        for attempt in range(1, MAX_ATTEMPTS + 1):
-            try:
-                response = requests.post(
-                    f"{self.base_url}/chat/completions",
-                    headers=self.headers,
-                    json=payload,
-                    timeout=300,
-                )
-            except requests.exceptions.RequestException as e:
-                last_error = f"Request failed: {e}"
-            else:
-                if response.status_code == 200:
-                    data = response.json()
-                    choices = data.get("choices") or []
-                    if not choices:
-                        raise RuntimeError(f"OpenRouter returned no choices: {data}")
-                    content = choices[0]["message"].get("content")
-                    if isinstance(content, str) and content.strip():
-                        return content
-                    # Some upstream providers (observed: Novita) sporadically
-                    # answer 200 with content=null. There is no answer in that
-                    # response, so retry instead of handing null to the API
-                    # (which rejects it with a 422 and loses the task).
-                    last_error = (
-                        f"empty content (finish_reason={choices[0].get('finish_reason')}, "
-                        f"provider={data.get('provider')}, "
-                        f"completion_tokens="
-                        f"{(data.get('usage') or {}).get('completion_tokens')})"
-                    )
-                else:
-                    last_error = f"HTTP {response.status_code}: {response.text}"
-                    if response.status_code not in RETRYABLE_STATUS:
-                        raise RuntimeError(f"OpenRouter request failed: {last_error}")
-
-            self.logger.warning(
-                f"OpenRouter attempt {attempt}/{MAX_ATTEMPTS} failed: {last_error}"
-            )
-            if attempt < MAX_ATTEMPTS:
-                time.sleep(min(2 ** attempt, 15))
-
-        raise RuntimeError(f"OpenRouter request failed after {MAX_ATTEMPTS} attempts: {last_error}")
+        if self.client.ignore_providers:
+            self.logger.info(
+                f"Avoiding providers: {', '.join(self.client.ignore_providers)}")
 
     def process_task(self, task):
         conversation_id = task.get("conversation_id", "")
@@ -132,7 +68,7 @@ class DigitalTwinAgentOpenRouter(BaseAgent):
             if not context:
                 raise RuntimeError(f"Empty conversation context for {conversation_id}")
 
-            assistant_response = self.generate(
+            assistant_response = self.client.chat(
                 context,
                 max_tokens=params.get("max_tokens", 1000),
                 temperature=params.get("temperature", 0.7),

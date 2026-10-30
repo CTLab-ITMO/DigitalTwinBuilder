@@ -254,6 +254,12 @@ python src/digital_twin_builder/agents_starter.py --api-url http://localhost:800
 python -m digital_twin_builder.agents.user_interaction_agent --api-url http://localhost:8000
 python -m digital_twin_builder.agents.database_agent --api-url http://localhost:8000
 python -m digital_twin_builder.agents.digital_twin_agent --api-url http://localhost:8000
+
+# Or the OpenRouter-backed interview agent (DeepSeek V4.1 Flash, no GPU needed).
+# Run it as a file: `-m` would import the agents package and its local torch
+# models. It claims the same UI_AGENT_INDEX as the local agent, so run one or
+# the other, never both.
+python src/digital_twin_builder/agents/user_interaction_agent_openrouter.py
 ```
 
 ### Using Docker (Recommended for Full Stack)

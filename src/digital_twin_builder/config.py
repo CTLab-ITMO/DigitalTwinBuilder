@@ -36,6 +36,12 @@ DT_AGENT_INDEX = int(os.getenv("DT_AGENT_INDEX", "2"))
 UI_AGENT_MODEL = os.getenv("UI_AGENT_MODEL", "")
 DB_AGENT_MODEL = os.getenv("DB_AGENT_MODEL", "")
 DT_AGENT_MODEL = os.getenv("DT_AGENT_MODEL", "")
+# OpenRouter slug of the interview agent's model. Separate from
+# OPENROUTER_MODEL so the digital-twin OpenRouter variant keeps its own choice;
+# override it here if OpenRouter publishes DeepSeek V4.1 Flash under a
+# different id.
+UI_AGENT_OPENROUTER_MODEL = os.getenv(
+    "UI_AGENT_OPENROUTER_MODEL", "deepseek/deepseek-v4.1-flash")
 
 # DES (SimPy) model execution. The generated model is run by the interpreter in
 # DES_PYTHON, which must have simpy installed; DES_REPAIR_ATTEMPTS is how many
@@ -48,6 +54,10 @@ DES_REPAIR_ATTEMPTS = int(os.getenv("DES_REPAIR_ATTEMPTS", "3"))
 # local model with thinking on, so a single turn is slow.
 DES_GEN_TIMEOUT_S = int(os.getenv("DES_GEN_TIMEOUT_S", "900"))
 DES_MAX_TOKENS = int(os.getenv("DES_MAX_TOKENS", "8000"))
+# The PyChrono program is a long document; the old 3000-token default cut most
+# of it off. The gen_sim slot is one turn, so this is the reply budget, not an
+# attempt count.
+GEN_SIM_MAX_TOKENS = int(os.getenv("GEN_SIM_MAX_TOKENS", "10000"))
 
 # DB (PostgreSQL) schema validation. The generated schema is checked
 # structurally — parse-only, no server is contacted — and DB_REPAIR_ATTEMPTS is
@@ -110,11 +120,13 @@ __all__ = [
     "UI_AGENT_MODEL",
     "DB_AGENT_MODEL",
     "DT_AGENT_MODEL",
+    "UI_AGENT_OPENROUTER_MODEL",
     "DES_PYTHON",
     "DES_EXEC_TIMEOUT_S",
     "DES_REPAIR_ATTEMPTS",
     "DES_GEN_TIMEOUT_S",
     "DES_MAX_TOKENS",
+    "GEN_SIM_MAX_TOKENS",
     "DB_REPAIR_ATTEMPTS",
     "UI_REPAIR_ATTEMPTS",
     "UI_MAX_TOKENS",

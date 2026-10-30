@@ -257,9 +257,10 @@ class PipelineDesRequest(BaseModel):
     attempts: Optional[int] = None
 
 class PipelineGenConfRequest(BaseModel):
-    """Start the twin-configuration slot. `db_schema` is the schema the DB slot
-    produced; the broker builds the engineered prompt from both it and the
-    interview result, so the client never types the prompt out."""
+    """Deprecated twin-configuration slot. Kept for older clients; the frontend
+    no longer calls it because its artifact had no consumer. `db_schema` is the
+    schema the DB slot produced; the broker builds the prompt from both it and
+    the interview result."""
     session_id: Optional[str] = None
     conversation_id: Optional[str] = None
     requirements: Any = None
@@ -268,13 +269,13 @@ class PipelineGenConfRequest(BaseModel):
     max_tokens: int = 3000
 
 class PipelineGenSimRequest(BaseModel):
-    """Start the PyChrono-simulation slot, the configuration slot's next step."""
+    """Start the PyChrono-simulation slot (one turn)."""
     session_id: Optional[str] = None
     conversation_id: Optional[str] = None
     requirements: Any = None
     db_schema: str = ""
     conv_idx: int = 1
-    max_tokens: int = 3000
+    max_tokens: int = config.GEN_SIM_MAX_TOKENS
 
 class PipelineUiRequest(BaseModel):
     """Answer one interview turn. `message` is the user's turn: the broker posts
@@ -755,7 +756,8 @@ def _resolve_agent_id(slot: str) -> int:
     """The agent a slot talks to.
 
     The interview is agent 0 and SQL is agent 1; the DES model and the twin's
-    configuration and simulation all come from the digital-twin agent.
+    simulation come from the digital-twin agent. The deprecated gen_conf slot
+    also uses that agent, at its old conv_idx 0.
     """
     if slot == "ui":
         return config.UI_AGENT_INDEX
@@ -777,6 +779,7 @@ def _resolve_seed_prompt(slot: str, lang: str = "ru") -> str:
     if slot == "db":
         return system_prompts.DB
     if slot == "gen_conf":
+        # Deprecated slot, kept for older clients.
         return system_prompts.GenConf
     if slot == "gen_sim":
         return system_prompts.GenSim
@@ -1153,15 +1156,15 @@ async def start_des_pipeline(req: PipelineDesRequest):
     return await _safe_start(slot="des", req=req, work=work)
 
 
-@app.post("/pipeline/gen_conf")
+@app.post("/pipeline/gen_conf", deprecated=True)
 async def start_gen_conf_pipeline(req: PipelineGenConfRequest):
-    """Generate the digital twin's configuration for a finished interview.
+    """Deprecated: generate a separate digital-twin configuration.
 
-    Same job/poll contract as the other slots, and one turn: nothing in this
-    repo validates a configuration, so there is no report to repair against.
-    The broker owns the turn all the same, for two reasons — the engineered
-    `make_gen_conf` prompt lives in `prompts/`, and a reply this long outlasts a
-    client's own poll budget, which is how the finished turn used to be lost.
+    The frontend no longer calls this. The configuration's only use was as a
+    display artifact — the DB schema, DES model and PyChrono program are all
+    generated from the interview requirements directly — so the step was
+    removed. The endpoint is kept for older clients and is marked deprecated in
+    the OpenAPI schema.
     """
     work = (lambda submit, on_attempt: pipeline.generate_twin_config(
         submit, req.requirements, req.db_schema, on_attempt=on_attempt))
@@ -1170,9 +1173,10 @@ async def start_gen_conf_pipeline(req: PipelineGenConfRequest):
 
 @app.post("/pipeline/gen_sim")
 async def start_gen_sim_pipeline(req: PipelineGenSimRequest):
-    """Generate the PyChrono simulation program for the twin's configuration.
+    """Generate the PyChrono simulation program for the twin.
 
-    Same one-turn contract as the configuration slot.
+    One turn; the previous gen_conf step is deprecated and is no longer a
+    prerequisite (its artifact had no consumer).
     """
     work = (lambda submit, on_attempt: pipeline.generate_twin_simulation(
         submit, req.requirements, req.db_schema, on_attempt=on_attempt))
@@ -1427,7 +1431,7 @@ async def root():
             "get_queue": "GET /queue/{agent_id}",
             "start_db_pipeline": "POST /pipeline/db",
             "start_des_pipeline": "POST /pipeline/des",
-            "start_gen_conf_pipeline": "POST /pipeline/gen_conf",
+            "start_gen_conf_pipeline": "POST /pipeline/gen_conf (deprecated)",
             "start_gen_sim_pipeline": "POST /pipeline/gen_sim",
             "start_ui_pipeline": "POST /pipeline/ui",
             "get_pipeline_job": "GET /pipeline/jobs/{job_id}",

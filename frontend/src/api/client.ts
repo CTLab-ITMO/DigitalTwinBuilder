@@ -121,20 +121,10 @@ export const api = {
     return request('/pipeline/des', { method: 'POST', body: JSON.stringify(body) })
   },
 
-  // The twin's two slots. Neither artifact has a validator, so these are one
-  // turn each — but the broker still builds the engineered prompt and waits for
-  // it, which is what the client used to get wrong.
-  startGenConfPipeline(body: {
-    session_id: string
-    conversation_id?: string
-    requirements: any
-    db_schema?: string
-    conv_idx?: number
-    max_tokens?: number
-  }): Promise<{ job_id: string; slot: string; conversation_id: string }> {
-    return request('/pipeline/gen_conf', { method: 'POST', body: JSON.stringify(body) })
-  },
-
+  // The PyChrono slot. The artifact has no validator, so it is one turn — but
+  // the broker still builds the engineered prompt and waits for it, which is
+  // what the client used to get wrong. (The old gen_conf slot is deprecated
+  // and no longer called from this client.)
   startGenSimPipeline(body: {
     session_id: string
     conversation_id?: string

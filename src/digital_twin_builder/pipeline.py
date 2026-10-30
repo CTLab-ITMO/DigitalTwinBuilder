@@ -209,11 +209,12 @@ def _ask_once(submit, prompt, on_attempt=None) -> dict:
 
 
 def generate_twin_config(submit, requirements, schema, *, on_attempt=None) -> dict:
-    """Produce the digital twin's configuration for a finished interview.
+    """Deprecated: produce a standalone digital-twin configuration.
 
-    The first turn — the only turn — asks `make_gen_conf(requirements, schema)`.
-    Returns the agent's reply in the runners' outcome shape: the reply itself,
-    its attempt count, and a report when the turn produced no answer at all.
+    Kept for `/pipeline/gen_conf` and older clients. The frontend no longer
+    requests it: its artifact had no consumer, and the simulation is generated
+    from the interview requirements and the DB schema directly. The one turn
+    asks `make_gen_conf(requirements, schema)`.
     """
     req = _prompt_requirements(requirements)
     return _ask_once(submit, user_prompts.make_gen_conf(req, schema),
@@ -221,9 +222,10 @@ def generate_twin_config(submit, requirements, schema, *, on_attempt=None) -> di
 
 
 def generate_twin_simulation(submit, requirements, schema, *, on_attempt=None) -> dict:
-    """Produce the PyChrono simulation program for the twin's configuration.
+    """Produce the PyChrono simulation program for the twin.
 
-    Same one-turn contract as `generate_twin_config`, asking `make_gen_sim`.
+    One turn, asking `make_gen_sim`. It no longer waits for the deprecated
+    `gen_conf` step: the prompt reads the requirements and the DB schema.
     """
     req = _prompt_requirements(requirements)
     return _ask_once(submit, user_prompts.make_gen_sim(req, schema),

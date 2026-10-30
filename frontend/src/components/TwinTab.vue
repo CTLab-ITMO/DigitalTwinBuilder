@@ -5,7 +5,6 @@ import { apiBaseUrl } from '../api/client'
 import { t } from '../i18n'
 
 const store = useAppStore()
-const generatingConfig = ref(false)
 const generatingSim = ref(false)
 const generatingDes = ref(false)
 
@@ -51,25 +50,12 @@ async function copyCommand() {
   }
 }
 
-// Both twin slots go through the broker now: it seeds the conversation with the
-// agent's system prompt and builds the engineered `make_gen_conf` /
-// `make_gen_sim` text, then waits for the turn on this side's long poll. The
-// client's own ad-hoc prompt and 60-second give-up are gone.
-async function generateConfig() {
-  if (!store.currentSessionId || !store.interviewResult) return
-  generatingConfig.value = true
-  try {
-    const convId = await store.ensureConversation(agentId, 0)
-    if (!convId) {
-      store.error = t('error.createConversation')
-      return
-    }
-    await store.generateTwinConfig(convId)
-  } finally {
-    generatingConfig.value = false
-  }
-}
-
+// The PyChrono slot goes through the broker: it seeds the conversation with the
+// agent's system prompt, builds the engineered `make_gen_sim` text, and waits
+// for the turn on this side's long poll. The client's own ad-hoc prompt and
+// 60-second give-up are gone. The old `gen_conf` step was removed: its output
+// had no consumer, and the simulation is generated from the interview
+// requirements and the DB schema directly.
 async function generateSim() {
   if (!store.currentSessionId || !store.interviewResult) return
   generatingSim.value = true
@@ -141,24 +127,7 @@ function regenSim() {
         </button>
       </div>
 
-      <div v-if="!store.twinConfig" class="card">
-        <button class="btn btn-primary" :disabled="generatingConfig" @click="generateConfig">
-          {{ generatingConfig ? t('common.generating') : t('twin.generateConfig') }}
-        </button>
-        <p v-if="!generatingConfig && store.twinVerdict?.slot === 'gen_conf' && !store.twinVerdict.ok" class="verdict bad">
-          {{ store.twinVerdict.report || t('twin.noReply') }}
-        </p>
-      </div>
-
-      <div v-if="store.twinConfig" class="card">
-        <h3>{{ t('twin.configHeading') }}</h3>
-        <details open>
-          <summary>{{ t('twin.viewConfig') }}</summary>
-          <pre class="code-block"><code>{{ JSON.stringify(store.twinConfig, null, 2) }}</code></pre>
-        </details>
-      </div>
-
-      <div v-if="store.twinConfig" class="card">
+      <div class="card">
         <h3>{{ t('twin.anomalyHeading') }}</h3>
         <p class="hint">{{ t('twin.anomalyHint') }}</p>
 
@@ -216,7 +185,7 @@ function regenSim() {
         </template>
       </div>
 
-      <div v-if="store.twinConfig" class="card">
+      <div class="card">
         <h3>{{ t('twin.simHeading') }}</h3>
         <div v-if="!store.simulationCode">
           <button class="btn btn-primary" :disabled="generatingSim" @click="generateSim">
@@ -242,7 +211,7 @@ function regenSim() {
         </div>
       </div>
 
-      <div v-if="store.twinConfig" class="card">
+      <div class="card">
         <h3>{{ t('twin.desHeading') }}</h3>
 
         <div v-if="!store.desCode">

@@ -103,11 +103,12 @@ export interface DesPipelineResult {
 }
 
 /**
- * The twin's two slots — the configuration and the PyChrono program. Neither
- * artifact has a validator in the backend, so these slots are one turn and
- * `artifact` is the agent's reply as it was written: the client reads the
- * configuration's JSON and strips the thinking block off the program, as it
- * always did. `report` is set only when the turn produced no reply at all.
+ * The twin slots' verdict. The frontend only requests `gen_sim` (the PyChrono
+ * program); `gen_conf` is deprecated — it had no consumer and the client no
+ * longer requests it, but the backend still returns that slot to old clients.
+ * Neither artifact has a validator, so a slot is one turn and `artifact` is the
+ * agent's reply as it was written; the client strips the thinking block off the
+ * program. `report` is set only when the turn produced no reply at all.
  */
 export interface TwinPipelineResult {
   slot: 'gen_conf' | 'gen_sim'
@@ -139,6 +140,7 @@ export interface UiPipelineResult {
 
 export interface PipelineJob {
   id: string
+  /** `gen_conf` is deprecated: the endpoint still exists for old clients. */
   slot: 'db' | 'des' | 'ui' | 'gen_conf' | 'gen_sim'
   agent_id: number
   conv_idx: number

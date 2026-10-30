@@ -1,3 +1,5 @@
+# Deprecated with the gen_conf slot: the frontend no longer generates a separate
+# twin configuration. Kept because the deprecated endpoint still seeds it.
 GenConf = """
 You are an expert in designing digital twins for industrial facilities.
 Based on requirements and a database schema, produce a structured JSON configuration.
