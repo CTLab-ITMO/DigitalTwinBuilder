@@ -21,6 +21,43 @@ jobs:
             echo "Pulling latest code..."
             git fetch origin dev
             git reset --hard origin/dev
+
+            # The VPS cannot reach Docker Hub reliably; base images are pulled
+            # through the GCR mirror. Keep this self-healing so a rebuilt VPS
+            # does not fail every deploy again.
+            if [ ! -f /etc/docker/daemon.json ] || ! grep -q 'mirror.gcr.io' /etc/docker/daemon.json; then
+              mkdir -p /etc/docker
+              python3 - <<'PY'
+            import json, pathlib
+            p = pathlib.Path('/etc/docker/daemon.json')
+            cfg = {}
+            if p.exists() and p.read_text().strip():
+                cfg = json.loads(p.read_text())
+            mirrors = cfg.setdefault('registry-mirrors', [])
+            if 'https://mirror.gcr.io' not in mirrors:
+                mirrors.append('https://mirror.gcr.io')
+            p.write_text(json.dumps(cfg, indent=2) + '\n')
+            PY
+
+              systemctl restart docker
+            fi
+
+            # Build before touching the running containers: a failed build must
+            # leave the previous deployment serving traffic.
+            echo "Building images..."
+            built=0
+            for attempt in 1 2 3; do
+              if docker compose --profile full build; then
+                built=1
+                break
+              fi
+              echo "Build failed (attempt $attempt), retrying in 15s..."
+              sleep 15
+            done
+            if [ "$built" -ne 1 ]; then
+              echo "Build failed after 3 attempts; leaving the previous containers running."
+              exit 1
+            fi
+
             echo "Restarting Docker containers..."
-            docker compose down
-            docker compose --profile full up -d --build
+            docker compose --profile full up -d
